@@ -149,6 +149,7 @@ jobs:
         run: |
           set -uo pipefail
           MANIFEST="config/snapshots/$SNAPSHOT_ID/manifest.json"
+          ANVIL_STATE="config/snapshots/$SNAPSHOT_ID/anvil-state/state.json"
           EXTRA=""
           if [ -n "${DECIMALS:-}" ] && [ "${DECIMALS}" != "null" ]; then
             EXTRA="$EXTRA --fee-token-decimals $DECIMALS"
@@ -171,14 +172,18 @@ jobs:
               --rebuild \
               --skip-post-capture-verify || echo "init exited/timed out on attempt $attempt"
             echo "::endgroup::"
-            if [ -f "$MANIFEST" ]; then
+            if [ -f "$MANIFEST" ] && [ -s "$ANVIL_STATE" ]; then
               echo "snapshot captured on attempt $attempt"
               break
             fi
-            echo "attempt $attempt produced no snapshot; resetting and retrying"
+            if [ -f "$MANIFEST" ]; then
+              echo "attempt $attempt produced a manifest without non-empty Anvil state"
+            fi
+            echo "attempt $attempt produced an incomplete snapshot; resetting and retrying"
             docker compose -f docker/docker-compose.yaml -p arbitrum-testnode down -v || true
           done
           test -f "$MANIFEST"
+          test -s "$ANVIL_STATE"
 
       - name: Dump docker state on failure
         if: failure()

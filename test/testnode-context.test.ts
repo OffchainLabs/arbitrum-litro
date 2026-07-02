@@ -137,6 +137,35 @@ describe("prepare-testnode-context", () => {
 		expect(metadata.nitroContractsVersion).toBe("v2.1");
 	});
 
+	it("fails when the snapshot Anvil state file is missing", () => {
+		const rootDir = createTempDir();
+		const snapshotDir = createSnapshotFixture(rootDir);
+		const outputDir = join(rootDir, "context");
+		rmSync(join(snapshotDir, "anvil-state", "state.json"), { force: true });
+
+		let stderr = "";
+		try {
+			execFileSync(
+				"node",
+				[
+					resolve("scripts/ci/prepare-testnode-context.mjs"),
+					"--variant",
+					"l3-eth",
+					"--snapshot-dir",
+					snapshotDir,
+					"--output-dir",
+					outputDir,
+				],
+				{ cwd: resolve("."), stdio: "pipe" },
+			);
+		} catch (error) {
+			stderr = String((error as { stderr?: Buffer }).stderr ?? "");
+		}
+
+		expect(stderr).toContain("Snapshot missing non-empty Anvil state file");
+		expect(existsSync(outputDir)).toBe(false);
+	});
+
 	it("echoes the testnode name into metadata when provided", () => {
 		const rootDir = createTempDir();
 		const snapshotDir = createSnapshotFixture(rootDir);

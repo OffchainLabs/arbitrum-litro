@@ -20,6 +20,7 @@ export const SNAPSHOT_VERSION = 1;
 export const DEFAULT_SNAPSHOT_ID = "default";
 export const SNAPSHOTS_DIRNAME = "snapshots";
 export const ANVIL_STATE_DIRNAME = "anvil-state";
+export const ANVIL_STATE_FILENAME = "state.json";
 
 export interface SnapshotManifest {
 	version: number;
@@ -189,6 +190,16 @@ function assertSnapshotFilesExist(
 	}
 }
 
+function assertNonEmptyFile(path: string, message: string): void {
+	if (!existsSync(path)) {
+		throw new Error(`${message}: ${path}`);
+	}
+	const stats = statSync(path);
+	if (!stats.isFile() || stats.size === 0) {
+		throw new Error(`${message}: ${path}`);
+	}
+}
+
 function assertSnapshotChecksums(snapshotDir: string, checksums: Record<string, string>): void {
 	for (const [filename, checksum] of Object.entries(checksums)) {
 		const fullPath = join(snapshotDir, "config", filename);
@@ -214,6 +225,10 @@ export function verifySnapshotManifest(
 
 	const snapshotDir = getSnapshotDir(configDir, snapshotId);
 	assertSnapshotFilesExist(snapshotDir, manifest.requiredFiles, "required file");
+	assertNonEmptyFile(
+		join(snapshotDir, ANVIL_STATE_DIRNAME, ANVIL_STATE_FILENAME),
+		"Snapshot missing non-empty Anvil state file",
+	);
 	assertSnapshotFilesExist(snapshotDir, manifest.volumeArchives, "volume archive");
 	assertSnapshotChecksums(snapshotDir, manifest.configChecksums);
 
@@ -226,6 +241,10 @@ export function buildSnapshotManifest(
 	snapshotId = DEFAULT_SNAPSHOT_ID,
 ): SnapshotManifest {
 	assertRequiredConfigFiles(configDir);
+	assertNonEmptyFile(
+		join(getAnvilStateDir(configDir), ANVIL_STATE_FILENAME),
+		"Snapshot source missing non-empty Anvil state file",
+	);
 
 	const l2Deployment = parseDeploymentFile(configDir, "l2");
 	const l3Deployment = parseDeploymentFile(configDir, "l3");
@@ -249,7 +268,7 @@ export function buildSnapshotManifest(
 		},
 		requiredFiles: [
 			...CRITICAL_CONFIG_FILES.map((file) => join("config", file)),
-			ANVIL_STATE_DIRNAME,
+			join(ANVIL_STATE_DIRNAME, ANVIL_STATE_FILENAME),
 		],
 		configChecksums,
 		volumeArchives: SNAPSHOT_VOLUME_ARCHIVES.map(({ archiveName }) => join("volumes", archiveName)),
