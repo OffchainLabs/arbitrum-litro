@@ -41,7 +41,7 @@ describe("init chain steps deploy rollups through a local RollupCreator", () => 
 	});
 
 	it("persists Anvil state while L1 is running", () => {
-		expect(composeSource).toContain("--state=/state");
+		expect(composeSource).toContain("--state=/state/state.json");
 		expect(composeSource).toContain("--state-interval=1");
 	});
 
