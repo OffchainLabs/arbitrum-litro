@@ -15,7 +15,7 @@ services:
       - --balance=1000000
       - --mnemonic=indoor dish desk flag debris potato excuse depart ticket judge file exit
       - --chain-id=1337
-      - --state=/state
+      - --state=/state/state.json
       - --state-interval=1
     volumes:
       - ../config/anvil-state:/state
