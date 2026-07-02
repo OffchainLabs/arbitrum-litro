@@ -1,3 +1,5 @@
+import { existsSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { waitForRpc } from "../docker.js";
 import {
 	finishActiveRun,
@@ -10,8 +12,10 @@ import {
 import { resetRuntime, startL1Container, startNitroFromSnapshot, stopRuntime } from "../runtime.js";
 import { installSnapshotRelease } from "../snapshot-release.js";
 import {
+	ANVIL_STATE_FILENAME,
 	DEFAULT_SNAPSHOT_ID,
 	captureSnapshot,
+	getAnvilStateDir,
 	hasSnapshot,
 	restoreSnapshot,
 	verifySnapshotSemanticState,
@@ -26,6 +30,30 @@ export { createInitContext, type InitContext } from "./context.js";
 const L1_RPC = "http://127.0.0.1:8545";
 const L2_RPC = "http://127.0.0.1:8547";
 const L3_RPC = "http://127.0.0.1:8549";
+const ANVIL_STATE_CAPTURE_WAIT_MS = 30_000;
+const ANVIL_STATE_CAPTURE_POLL_MS = 250;
+
+function isNonEmptyFile(path: string): boolean {
+	if (!existsSync(path)) {
+		return false;
+	}
+	const stats = statSync(path);
+	return stats.isFile() && stats.size > 0;
+}
+
+async function waitForAnvilStateFile(configDir: string): Promise<void> {
+	const statePath = join(getAnvilStateDir(configDir), ANVIL_STATE_FILENAME);
+	const deadline = Date.now() + ANVIL_STATE_CAPTURE_WAIT_MS;
+	while (Date.now() < deadline) {
+		if (isNonEmptyFile(statePath)) {
+			return;
+		}
+		await new Promise((resolve) => setTimeout(resolve, ANVIL_STATE_CAPTURE_POLL_MS));
+	}
+	throw new Error(
+		`Snapshot source missing non-empty Anvil state file after waiting ${ANVIL_STATE_CAPTURE_WAIT_MS}ms: ${statePath}`,
+	);
+}
 
 async function runInitLoop(
 	runtime: InitRuntime,
@@ -348,6 +376,7 @@ async function finalizeFreshInit(
 		projectName: "arbitrum-testnode",
 		configDir: runtime.configDir,
 	});
+	await waitForAnvilStateFile(runtime.configDir);
 	const snapshot = captureSnapshot(runtime.configDir, runtime.composeFile, snapshotId);
 	if (skipPostCaptureVerify) {
 		const totalElapsed = Date.now() - totalStart;
