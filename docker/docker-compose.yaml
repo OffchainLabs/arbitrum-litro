@@ -2,8 +2,16 @@ services:
   # L1 anvil chain. 8545 is published so both host tooling (127.0.0.1:8545) and
   # Nitro containers (host.docker.internal:8545) reach it. State persists to the
   # bind-mounted config/anvil-state so snapshots work.
+  #
+  # The foundry image runs as the non-root `foundry` user (uid 1000). On Linux CI
+  # runners the bind-mounted config/anvil-state directory is owned by the runner
+  # user, so anvil (uid 1000) cannot write /state/state.json and the periodic /
+  # on-exit state dump silently fails, leaving no snapshot. (Docker Desktop on
+  # macOS hides this by mapping bind-mount writes to the host user regardless of
+  # container uid, so it only breaks in CI.) Run as root so the dump always lands.
   l1:
     image: ghcr.io/foundry-rs/foundry:v1.3.5
+    user: "0:0"
     ports:
       - "8545:8545"
     entrypoint: ["anvil"]
