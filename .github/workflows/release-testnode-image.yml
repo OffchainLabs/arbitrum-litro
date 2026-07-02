@@ -206,6 +206,7 @@ jobs:
             # job; 1500s comfortably exceeds a healthy ~10-15min init and keeps
             # 3 attempts within timeout-minutes: 75. The retry loop resets with
             # `docker compose ... down -v` below so a timed-out attempt recovers.
+            set +e
             timeout 1500 pnpm dev init \
               --nitro-contracts-version "$NC_VERSION" \
               $EXTRA \
@@ -213,6 +214,7 @@ jobs:
               --rebuild \
               --skip-post-capture-verify
             INIT_EXIT=$?
+            set -e
             echo "::endgroup::"
             if [ -f "$MANIFEST" ] && [ -s "$ANVIL_STATE" ]; then
               echo "snapshot captured on attempt $attempt"
