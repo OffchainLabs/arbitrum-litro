@@ -5,9 +5,9 @@ on:
   workflow_dispatch:
     inputs:
       snapshot-version:
-        description: "Snapshot release tag to install (defaults to latest snapshot release)"
+        description: "Snapshot release tag to install"
         required: false
-        default: ""
+        default: "v0.1.6"
         type: string
 
 jobs:
@@ -31,14 +31,8 @@ jobs:
       - name: Install snapshot
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SNAPSHOT_VERSION: ${{ inputs.snapshot-version }}
           TESTNODE_SNAPSHOT_GH_REPO: ${{ github.repository }}
-        run: |
-          args=(snapshot install --force)
-          if [ -n "${SNAPSHOT_VERSION:-}" ]; then
-            args+=(--release-tag "$SNAPSHOT_VERSION")
-          fi
-          pnpm dev "${args[@]}"
+        run: pnpm dev snapshot install --force --release-tag "${{ inputs.snapshot-version || 'v0.1.6' }}"
 
       - name: Prepare testnode context
         run: node scripts/ci/prepare-testnode-context.mjs --variant l3-eth --snapshot-id default
