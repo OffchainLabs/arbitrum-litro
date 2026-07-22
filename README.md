@@ -94,6 +94,93 @@ pnpm dev clean          # Remove containers and saved data
 pnpm dev status         # Show service and init state
 ```
 
+## Custom snapshots
+
+Downstream repos can bake their **own** testnode images: boot the base stack, run a
+setup script against it (deploy contracts, seed activity, drop extra files into the
+config dir), snapshot the result, and build a runnable Docker image. The stock CLI and
+GitHub Action then boot those custom images.
+
+### Setup-command environment contract
+
+The setup command runs on the **host** against the already-booted base stack. It
+receives these environment variables:
+
+| Variable | Description |
+|----------|-------------|
+| `ARBITRUM_TESTNODE_L1_RPC_URL` | L1 (Anvil) RPC endpoint (`http://127.0.0.1:8545`) |
+| `ARBITRUM_TESTNODE_L2_RPC_URL` | L2 (Nitro) RPC endpoint (`http://127.0.0.1:8547`) |
+| `ARBITRUM_TESTNODE_L3_RPC_URL` | L3 (Orbit) RPC endpoint (`http://127.0.0.1:8549`) |
+| `ARBITRUM_TESTNODE_CONFIG_DIR` | Config dir; files written here ride along into the snapshot and config export |
+| `ARBITRUM_TESTNODE_DEPLOYMENT_JSON` | Path to the exported `deployment.json` in the config dir |
+
+A non-zero exit from the setup command aborts the bake with a clear error.
+
+### One-shot local bake
+
+`testnode bake` boots the base stack (by default it restores the installed base
+snapshot; `--rebuild` runs a full init instead), runs the setup command, captures a
+snapshot, and builds the image:
+
+```bash
+pnpm dev bake \
+  --setup-command "./scripts/deploy-and-seed.sh" \
+  --image-ref ghcr.io/acme/arbitrum-testnode:governance \
+  --snapshot-id custom \
+  --push            # optional; docker login is your responsibility
+```
+
+To bake straight from an existing snapshot (no setup step), use the à-la-carte
+subcommand:
+
+```bash
+pnpm dev snapshot bake --id custom --image-ref ghcr.io/acme/arbitrum-testnode:governance --push
+```
+
+### CI bake via the composite action
+
+The `bake` subdirectory action wraps the same flow. Registry login is the consumer's
+job — log in before invoking it:
+
+```yaml
+- uses: docker/login-action@v3
+  with:
+    registry: ghcr.io
+    username: ${{ github.actor }}
+    password: ${{ secrets.GITHUB_TOKEN }}
+
+- uses: OffchainLabs/arbitrum-testnode/bake@v0.2.6
+  with:
+    setup-command: ./scripts/deploy-and-seed.sh
+    image-ref: ghcr.io/acme/arbitrum-testnode:governance
+    push: true
+    github-token: ${{ secrets.GITHUB_TOKEN }}   # base snapshot download
+```
+
+By default the action installs a base snapshot release (via `github-token`) and
+restores it; set `rebuild: true` to run a full init instead.
+
+### Booting a custom image
+
+Both the CLI and the action accept a full `image-ref` that bypasses variant/version
+tag resolution. The `variant` governs host ports and the `TESTNODE_VARIANT` env, and
+defaults to `l2` (pass `l3-eth` for an L3-enabled image).
+
+Locally:
+
+```bash
+pnpm dev start --image-ref ghcr.io/acme/arbitrum-testnode:governance
+```
+
+In CI:
+
+```yaml
+- uses: OffchainLabs/arbitrum-testnode@v0.2.6
+  with:
+    image-ref: ghcr.io/acme/arbitrum-testnode:governance
+    github-token: ${{ secrets.GITHUB_TOKEN }}
+```
+
 ## Architecture
 
 ```
@@ -107,7 +194,8 @@ packages/
 
 docker/                   # Testnode, token bridge, and compose assets
 scripts/ci/               # Release image context preparation helpers
-action.yml                # Root composite action contract
+action.yml                # Root composite action contract (boot an image)
+bake/action.yml           # Composite action for baking a custom image
 ```
 
 ## Published Variants

@@ -1,0 +1,95 @@
+name: Bake Custom Arbitrum Testnode Image
+description: >-
+  Boot a base Arbitrum testnode, run a downstream setup command against it,
+  snapshot the result, and build (optionally push) a runnable custom image.
+inputs:
+  setup-command:
+    required: true
+    description: >-
+      Shell command run against the booted base stack. Receives
+      ARBITRUM_TESTNODE_L1_RPC_URL, ARBITRUM_TESTNODE_L2_RPC_URL,
+      ARBITRUM_TESTNODE_L3_RPC_URL, ARBITRUM_TESTNODE_CONFIG_DIR and
+      ARBITRUM_TESTNODE_DEPLOYMENT_JSON in its environment.
+  image-ref:
+    required: true
+    description: "Full image reference incl. tag to build (e.g. ghcr.io/acme/testnode:custom)"
+  push:
+    required: false
+    default: "true"
+    description: "docker push the baked image (registry login is the caller's responsibility)"
+  snapshot-id:
+    required: false
+    default: "custom"
+    description: "Snapshot id the customized stack is captured under"
+  rebuild:
+    required: false
+    default: "false"
+    description: "Run a full init for the base stack instead of installing/restoring a base snapshot"
+  base-snapshot-id:
+    required: false
+    default: "default"
+    description: "Base snapshot id to install and restore when not rebuilding"
+  snapshot-repo:
+    required: false
+    default: "OffchainLabs/arbitrum-testnode"
+    description: "owner/repo hosting base snapshot releases (used when not rebuilding)"
+  version:
+    required: false
+    default: ""
+    description: "Base snapshot release tag to install (defaults to latest) when not rebuilding"
+  nitro-contracts-version:
+    required: false
+    default: "v3.2"
+    description: "Nitro contracts version passed through to a rebuild init"
+  github-token:
+    required: false
+    default: ""
+    description: "Token used to download base snapshot releases (the snapshot-install path)"
+runs:
+  using: composite
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20
+
+    - name: Setup pnpm
+      uses: pnpm/action-setup@v4
+
+    - name: Build the testnode CLI
+      shell: bash
+      working-directory: ${{ github.action_path }}/..
+      run: |
+        pnpm install --frozen-lockfile
+        pnpm build
+
+    - name: Install base snapshot
+      if: ${{ inputs.rebuild != 'true' }}
+      shell: bash
+      working-directory: ${{ github.action_path }}/..
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        TESTNODE_SNAPSHOT_GH_REPO: ${{ inputs.snapshot-repo }}
+      run: |
+        set -euo pipefail
+        node apps/cli/dist/index.js snapshot install \
+          --id "${{ inputs.base-snapshot-id }}" \
+          --force \
+          ${{ inputs.version != '' && format('--releaseTag {0}', inputs.version) || '' }}
+
+    - name: Bake custom testnode image
+      shell: bash
+      working-directory: ${{ github.action_path }}/..
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        TESTNODE_SNAPSHOT_GH_REPO: ${{ inputs.snapshot-repo }}
+      run: |
+        set -euo pipefail
+        node apps/cli/dist/index.js bake \
+          --setup-command "${{ inputs.setup-command }}" \
+          --image-ref "${{ inputs.image-ref }}" \
+          --snapshot-id "${{ inputs.snapshot-id }}" \
+          --base-snapshot-id "${{ inputs.base-snapshot-id }}" \
+          --nitro-contracts-version "${{ inputs.nitro-contracts-version }}" \
+          ${{ inputs.rebuild == 'true' && '--rebuild' || '' }} \
+          ${{ inputs.push == 'true' && '--push' || '' }}
