@@ -125,6 +125,31 @@ describe("buildActionTestnodeState", () => {
 		expect(args).not.toContain("redis:7-alpine");
 	});
 
+	it("bypasses variant/version image resolution when an image-ref is given", () => {
+		const state = buildActionTestnodeState({
+			imageRef: "ghcr.io/acme/testnode:custom",
+			runnerTemp: "/tmp/runner",
+			version: "v1.2.3",
+		});
+
+		expect(state.imageRef).toBe("ghcr.io/acme/testnode:custom");
+		expect(state.variant).toBe("l2");
+		expect(state.rpcUrls.l3).toBe("");
+	});
+
+	it("uses an explicit variant with an image-ref for L3 ports", () => {
+		const state = buildActionTestnodeState({
+			imageRef: "ghcr.io/acme/testnode:custom-l3",
+			variant: "l3-eth",
+			runnerTemp: "/tmp/runner",
+			version: "v1.2.3",
+		});
+
+		expect(state.imageRef).toBe("ghcr.io/acme/testnode:custom-l3");
+		expect(state.variant).toBe("l3-eth");
+		expect(state.rpcUrls.l3).toBe("http://127.0.0.1:3347");
+	});
+
 	it("defaults to v3.2 when contractsVersion is not provided", () => {
 		const state = buildActionTestnodeState({
 			l3Enabled: "true",

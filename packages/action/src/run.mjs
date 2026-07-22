@@ -23,11 +23,13 @@ const state = buildActionTestnodeState({
 	containerName: process.env["INPUT_CONTAINER_NAME"],
 	contractsVersion: process.env["INPUT_NITRO_CONTRACTS_VERSION"],
 	feeTokenDecimals: process.env["INPUT_FEE_TOKEN_DECIMALS"],
+	imageRef: process.env["INPUT_IMAGE_REF"],
 	imageRepository: process.env["INPUT_IMAGE_REPOSITORY"],
 	l3Enabled: process.env["INPUT_L3_ENABLED"],
 	outputDir: process.env["INPUT_OUTPUT_DIR"],
 	runnerTemp: process.env["RUNNER_TEMP"],
 	timeboostEnabled: process.env["INPUT_TIMEBOOST_ENABLED"],
+	variant: process.env["INPUT_VARIANT"],
 	version: process.env["INPUT_VERSION"],
 	workspace: process.env["GITHUB_WORKSPACE"],
 });

@@ -105,6 +105,31 @@ describe("resolveStartInput", () => {
 		]);
 	});
 
+	it("reads image-ref and variant from CLI options", () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "start-image-ref-"));
+
+		const resolved = resolveStartInput(
+			{ imageRef: "ghcr.io/acme/testnode:custom", variant: "l3-eth" },
+			cwd,
+		);
+
+		expect(resolved.imageRef).toBe("ghcr.io/acme/testnode:custom");
+		expect(resolved.variant).toBe("l3-eth");
+	});
+
+	it("reads image-ref and variant from the config file", () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "start-image-ref-file-"));
+		fs.writeFileSync(
+			path.join(cwd, "testnode.start.json"),
+			JSON.stringify({ imageRef: "ghcr.io/acme/testnode:from-file", variant: "l2" }),
+		);
+
+		const resolved = resolveStartInput({}, cwd);
+
+		expect(resolved.imageRef).toBe("ghcr.io/acme/testnode:from-file");
+		expect(resolved.variant).toBe("l2");
+	});
+
 	it("uses the default image version when flags and config omit one", () => {
 		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "start-version-"));
 		expect(resolveStartInput({}, cwd).version).toBe(DEFAULT_START_IMAGE_VERSION);

@@ -361,14 +361,21 @@ function buildTestnodeState({
 	containerName,
 	contractsVersion,
 	feeTokenDecimals,
+	imageRef,
 	imageRepository,
 	l3Enabled,
 	outputDir,
 	timeboostEnabled,
+	variant: variantOverride,
 	version,
 	defaultOutputDir,
 }) {
-	const variant = resolveVariant({ feeTokenDecimals, l3Enabled, timeboostEnabled });
+	// A full image ref bypasses variant/version image resolution; the variant then
+	// only governs host ports and the TESTNODE_VARIANT env, defaulting to l2.
+	const useImageRef = Boolean(imageRef);
+	const variant = useImageRef
+		? variantOverride || "l2"
+		: resolveVariant({ feeTokenDecimals, l3Enabled, timeboostEnabled });
 	const definition = VARIANTS[variant];
 	if (!definition) {
 		throw new Error(`Unknown variant ${variant}`);
@@ -391,12 +398,14 @@ function buildTestnodeState({
 		configDir,
 		containerName: resolvedContainerName,
 		contractsVersion: resolvedContractsVersion,
-		imageRef: buildTestnodeImageRef({
-			contractsVersion: resolvedContractsVersion,
-			imageRepository,
-			variant,
-			version: resolvedVersion,
-		}),
+		imageRef: imageRef
+			? imageRef
+			: buildTestnodeImageRef({
+					contractsVersion: resolvedContractsVersion,
+					imageRepository,
+					variant,
+					version: resolvedVersion,
+				}),
 		outputDir: resolvedOutputDir,
 		paths: {
 			l1BridgeUiConfig: join(configDir, "l1-l2-admin", "bridgeUiConfig.json"),
@@ -420,11 +429,13 @@ export function buildActionTestnodeState({
 	containerName,
 	contractsVersion,
 	feeTokenDecimals,
+	imageRef,
 	imageRepository,
 	l3Enabled,
 	outputDir,
 	runnerTemp,
 	timeboostEnabled,
+	variant,
 	version,
 	workspace,
 }) {
@@ -432,6 +443,7 @@ export function buildActionTestnodeState({
 		containerName,
 		contractsVersion,
 		feeTokenDecimals,
+		imageRef,
 		imageRepository,
 		l3Enabled,
 		outputDir: outputDir
@@ -440,6 +452,7 @@ export function buildActionTestnodeState({
 				: resolve(workspace || process.cwd(), outputDir)
 			: undefined,
 		timeboostEnabled,
+		variant,
 		version,
 		defaultOutputDir: ({ variant, version: nextVersion }) =>
 			defaultActionOutputDir({ runnerTemp, variant, version: nextVersion }),
@@ -452,16 +465,19 @@ export function buildStartTestnodeState({
 	contractsVersion,
 	cwd,
 	feeTokenDecimals,
+	imageRef,
 	imageRepository,
 	l3Enabled,
 	outputDir,
 	timeboostEnabled,
+	variant,
 	version,
 }) {
 	return buildTestnodeState({
 		containerName,
 		contractsVersion,
 		feeTokenDecimals,
+		imageRef,
 		imageRepository,
 		l3Enabled,
 		outputDir: outputDir
@@ -470,6 +486,7 @@ export function buildStartTestnodeState({
 				: resolve(cwd, outputDir)
 			: undefined,
 		timeboostEnabled,
+		variant,
 		version,
 		defaultOutputDir: ({ variant, version: nextVersion }) =>
 			defaultStartOutputDir({ cwd, variant, version: nextVersion }),
