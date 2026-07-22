@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	ANVIL_STATE_DIRNAME,
+	ANVIL_STATE_FILENAME,
 	DEFAULT_SNAPSHOT_ID,
 	buildSnapshotManifest,
 	buildWethGatewayChecks,
@@ -75,6 +76,12 @@ function copyConfigFixtureToSnapshot(configDir: string): void {
 	}
 }
 
+function writeSnapshotAnvilState(configDir: string, content = "{}"): void {
+	const snapshotAnvilDir = join(configDir, "snapshots", DEFAULT_SNAPSHOT_ID, ANVIL_STATE_DIRNAME);
+	mkdirSync(snapshotAnvilDir, { recursive: true });
+	writeFileSync(join(snapshotAnvilDir, ANVIL_STATE_FILENAME), content);
+}
+
 afterEach(() => {
 	while (tempDirs.length > 0) {
 		const dir = tempDirs.pop();
@@ -99,9 +106,7 @@ describe("snapshot manifest", () => {
 		const snapshotVolumesDir = getSnapshotVolumesDir(configDir, DEFAULT_SNAPSHOT_ID);
 
 		copyConfigFixtureToSnapshot(configDir);
-		mkdirSync(join(configDir, "snapshots", DEFAULT_SNAPSHOT_ID, ANVIL_STATE_DIRNAME), {
-			recursive: true,
-		});
+		writeSnapshotAnvilState(configDir);
 		for (const archiveName of ["sequencer-data.tar", "validator-data.tar", "l3node-data.tar"]) {
 			mkdirSync(snapshotVolumesDir, { recursive: true });
 			writeFileSync(join(snapshotVolumesDir, archiveName), archiveName);
@@ -110,6 +115,7 @@ describe("snapshot manifest", () => {
 
 		const verified = verifySnapshotManifest(configDir);
 		expect(verified.nitroNodeImage).toBe("offchainlabs/nitro-node:v3.9.5-test");
+		expect(verified.requiredFiles).toContain(join(ANVIL_STATE_DIRNAME, ANVIL_STATE_FILENAME));
 		expect(verified.rollups.l2).toBe("0xl2_deployment.json");
 		expect(verified.rollups.l3).toBe("0xl3_deployment.json");
 	});
@@ -130,9 +136,7 @@ describe("snapshot manifest", () => {
 
 		copyConfigFixtureToSnapshot(configDir);
 		writeFileSync(join(snapshotConfigDir, "localNetwork.json"), "tampered");
-		mkdirSync(join(configDir, "snapshots", DEFAULT_SNAPSHOT_ID, ANVIL_STATE_DIRNAME), {
-			recursive: true,
-		});
+		writeSnapshotAnvilState(configDir);
 		for (const archiveName of ["sequencer-data.tar", "validator-data.tar", "l3node-data.tar"]) {
 			mkdirSync(snapshotVolumesDir, { recursive: true });
 			writeFileSync(join(snapshotVolumesDir, archiveName), archiveName);
@@ -141,6 +145,32 @@ describe("snapshot manifest", () => {
 
 		expect(() => verifySnapshotManifest(configDir)).toThrow(
 			"Checksum mismatch for snapshot file localNetwork.json",
+		);
+	});
+
+	it("fails verification if the Anvil state file is empty", () => {
+		const configDir = createTempDir();
+		writeFixtureTree(configDir);
+
+		const composeFile = join(configDir, "docker-compose.yaml");
+		writeFileSync(
+			composeFile,
+			"services:\n  sequencer:\n    image: offchainlabs/nitro-node:v3.9.5-test\n",
+		);
+
+		const manifest = buildSnapshotManifest(configDir, composeFile);
+		const snapshotVolumesDir = getSnapshotVolumesDir(configDir, DEFAULT_SNAPSHOT_ID);
+
+		copyConfigFixtureToSnapshot(configDir);
+		writeSnapshotAnvilState(configDir, "");
+		for (const archiveName of ["sequencer-data.tar", "validator-data.tar", "l3node-data.tar"]) {
+			mkdirSync(snapshotVolumesDir, { recursive: true });
+			writeFileSync(join(snapshotVolumesDir, archiveName), archiveName);
+		}
+		writeFileSync(getSnapshotManifestPath(configDir), JSON.stringify(manifest, null, 2));
+
+		expect(() => verifySnapshotManifest(configDir)).toThrow(
+			"Snapshot missing non-empty Anvil state file",
 		);
 	});
 

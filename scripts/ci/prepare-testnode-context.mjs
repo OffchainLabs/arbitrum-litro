@@ -55,6 +55,16 @@ function extractArchive(archivePath, destination) {
 	execFileSync("tar", ["-xf", archivePath, "-C", destination]);
 }
 
+function assertNonEmptyFile(path) {
+	if (!existsSync(path)) {
+		throw new Error(`Snapshot missing non-empty Anvil state file: ${path}`);
+	}
+	const stats = statSync(path);
+	if (!stats.isFile() || stats.size === 0) {
+		throw new Error(`Snapshot missing non-empty Anvil state file: ${path}`);
+	}
+}
+
 const variant = readArg("--variant");
 if (!variant) {
 	throw new Error("Missing required argument --variant");
@@ -87,6 +97,9 @@ const runtimeConfigDir = join(outputDir, "runtime-config");
 const exportConfigDir = join(outputDir, "export-config");
 const runtimeDir = join(outputDir, "runtime");
 const volumeDir = join(snapshotDir, "volumes");
+const anvilStateFile = join(snapshotDir, "anvil-state", "state.json");
+
+assertNonEmptyFile(anvilStateFile);
 
 rmSync(outputDir, { force: true, recursive: true });
 mkdirSync(outputDir, { recursive: true });

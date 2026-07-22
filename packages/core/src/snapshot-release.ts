@@ -6,6 +6,7 @@ import {
 	mkdtempSync,
 	readFileSync,
 	readdirSync,
+	renameSync,
 	rmSync,
 	statSync,
 	writeFileSync,
@@ -14,6 +15,8 @@ import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { execOrThrow } from "./exec.js";
 import {
+	ANVIL_STATE_DIRNAME,
+	ANVIL_STATE_FILENAME,
 	DEFAULT_SNAPSHOT_ID,
 	type SnapshotManifest,
 	getSnapshotDir,
@@ -315,6 +318,7 @@ export function installSnapshotArchive(
 			invalidateSnapshot(configDir, snapshotId);
 		}
 		cpSync(extractedDir, targetSnapshotDir, { recursive: true });
+		normalizeLegacyAnvilStateFile(targetSnapshotDir);
 		try {
 			const manifest = verifySnapshotManifest(configDir, snapshotId);
 			assertSnapshotImageCompatibility(manifest, composeFile);
@@ -326,6 +330,18 @@ export function installSnapshotArchive(
 	} finally {
 		rmSync(extractRoot, { recursive: true, force: true });
 	}
+}
+
+function normalizeLegacyAnvilStateFile(snapshotDir: string): void {
+	const anvilStatePath = join(snapshotDir, ANVIL_STATE_DIRNAME);
+	if (!existsSync(anvilStatePath) || !statSync(anvilStatePath).isFile()) {
+		return;
+	}
+
+	const legacyStatePath = `${anvilStatePath}.legacy`;
+	renameSync(anvilStatePath, legacyStatePath);
+	mkdirSync(anvilStatePath, { recursive: true });
+	renameSync(legacyStatePath, join(anvilStatePath, ANVIL_STATE_FILENAME));
 }
 
 export async function installSnapshotRelease(

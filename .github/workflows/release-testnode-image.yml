@@ -149,6 +149,7 @@ jobs:
         run: |
           set -uo pipefail
           MANIFEST="config/snapshots/$SNAPSHOT_ID/manifest.json"
+          ANVIL_STATE="config/snapshots/$SNAPSHOT_ID/anvil-state/state.json"
           EXTRA=""
           if [ -n "${DECIMALS:-}" ] && [ "${DECIMALS}" != "null" ]; then
             EXTRA="$EXTRA --fee-token-decimals $DECIMALS"
@@ -156,6 +157,47 @@ jobs:
           if [ "${TIMEBOOST:-}" = "true" ]; then
             EXTRA="$EXTRA --timeboost-enabled"
           fi
+          dump_init_diagnostics() {
+            local attempt="$1"
+            local exit_code="$2"
+            echo "::group::init diagnostics attempt $attempt/$max ($SNAPSHOT_ID)"
+            echo "init exit code: $exit_code"
+            if [ -f config/state.json ]; then
+              echo "config/state.json:"
+              cat config/state.json
+            else
+              echo "config/state.json missing"
+            fi
+            if [ -f config/current-run.json ]; then
+              echo "config/current-run.json:"
+              cat config/current-run.json
+              node --input-type=module - <<'NODE' || true
+          import { existsSync, readFileSync } from "node:fs";
+          const run = JSON.parse(readFileSync("config/current-run.json", "utf8"));
+          for (const [label, path] of Object.entries({
+            events: run.paths?.eventsFile,
+            output: run.paths?.logFile,
+          })) {
+            if (!path || !existsSync(path)) {
+              console.log(`${label} log missing: ${path ?? "(unset)"}`);
+              continue;
+            }
+            const lines = readFileSync(path, "utf8").trimEnd().split("\n").slice(-80);
+            console.log(`\nlast ${lines.length} ${label} log lines (${path}):`);
+            console.log(lines.join("\n"));
+          }
+          NODE
+            else
+              echo "config/current-run.json missing"
+            fi
+            echo "snapshot files:"
+            find "config/snapshots/$SNAPSHOT_ID" -maxdepth 4 -type f -print 2>/dev/null || true
+            echo "docker compose ps:"
+            docker compose -f docker/docker-compose.yaml -p arbitrum-testnode ps || true
+            echo "docker compose logs tail:"
+            docker compose -f docker/docker-compose.yaml -p arbitrum-testnode logs --tail=80 || true
+            echo "::endgroup::"
+          }
           max=3
           for attempt in $(seq 1 "$max"); do
             echo "::group::init attempt $attempt/$max ($SNAPSHOT_ID)"
@@ -164,21 +206,29 @@ jobs:
             # job; 1500s comfortably exceeds a healthy ~10-15min init and keeps
             # 3 attempts within timeout-minutes: 75. The retry loop resets with
             # `docker compose ... down -v` below so a timed-out attempt recovers.
+            set +e
             timeout 1500 pnpm dev init \
               --nitro-contracts-version "$NC_VERSION" \
               $EXTRA \
               --capture-id "$SNAPSHOT_ID" \
               --rebuild \
-              --skip-post-capture-verify || echo "init exited/timed out on attempt $attempt"
+              --skip-post-capture-verify
+            INIT_EXIT=$?
+            set -e
             echo "::endgroup::"
-            if [ -f "$MANIFEST" ]; then
+            if [ -f "$MANIFEST" ] && [ -s "$ANVIL_STATE" ]; then
               echo "snapshot captured on attempt $attempt"
               break
             fi
-            echo "attempt $attempt produced no snapshot; resetting and retrying"
+            if [ -f "$MANIFEST" ]; then
+              echo "attempt $attempt produced a manifest without non-empty Anvil state"
+            fi
+            dump_init_diagnostics "$attempt" "$INIT_EXIT"
+            echo "attempt $attempt produced an incomplete snapshot; resetting and retrying"
             docker compose -f docker/docker-compose.yaml -p arbitrum-testnode down -v || true
           done
           test -f "$MANIFEST"
+          test -s "$ANVIL_STATE"
 
       - name: Dump docker state on failure
         if: failure()
