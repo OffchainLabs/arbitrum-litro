@@ -51,7 +51,10 @@ runs:
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: 20
+        # Node 20 abandons an unsettled promise as a silent exit-13 (losing all
+        # output) in the bake's async restore path; 22 propagates errors
+        # normally. Node 20 is also deprecated on GitHub runners.
+        node-version: 22
 
     - name: Setup pnpm
       uses: pnpm/action-setup@v4
