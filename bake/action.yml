@@ -126,6 +126,9 @@ runs:
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
         TESTNODE_SNAPSHOT_GH_REPO: ${{ inputs.snapshot-repo }}
+        # Booting nitro from the restored snapshot is slower on cold CI runners
+        # than the default 120s budget.
+        TESTNODE_RPC_TIMEOUT_MS: "300000"
       run: |
         set -euo pipefail
         node apps/cli/dist/index.js bake \
