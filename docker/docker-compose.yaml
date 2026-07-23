@@ -4,6 +4,13 @@ services:
   # bind-mounted config/anvil-state so snapshots work.
   l1:
     image: ghcr.io/foundry-rs/foundry:v1.3.5
+    # The foundry image runs as uid 1000 (foundry), but the bind-mounted
+    # anvil-state dir is created by the host user (uid 1001 on GitHub runners),
+    # so the default user cannot write state.json — the snapshot then captures
+    # an empty L1 and the restored sequencer finds no rollup contracts. Run as
+    # root so anvil can always persist state to the bind mount. (macOS Docker
+    # Desktop ignores mount ownership, which is why this only bit Linux CI.)
+    user: root
     ports:
       - "8545:8545"
     entrypoint: ["anvil"]
