@@ -16,6 +16,11 @@ services:
       - --mnemonic=indoor dish desk flag debris potato excuse depart ticket judge file exit
       - --chain-id=1337
       - --state=/state
+      # Flush state to disk every second so snapshot capture always sees the
+      # deployed rollup contracts. Without this, anvil only dumps state on
+      # graceful shutdown, which is unreliable on slow/contended CI runners —
+      # the restored L1 then has no contract code and the sequencer aborts.
+      - --state-interval=1
     volumes:
       - ../config/anvil-state:/state
 
