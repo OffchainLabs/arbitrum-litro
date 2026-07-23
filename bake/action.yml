@@ -75,7 +75,50 @@ runs:
         node apps/cli/dist/index.js snapshot install \
           --id "${{ inputs.base-snapshot-id }}" \
           --force \
-          ${{ inputs.version != '' && format('--releaseTag {0}', inputs.version) || '' }}
+          ${{ inputs.version != '' && format('--release-tag {0}', inputs.version) || '' }}
+
+    # No base-snapshot release exists for the default variant, so rebuild the
+    # base stack from scratch and capture it locally. init needs a
+    # token-bridge-contracts checkout with installed deps (it deploys the bridge
+    # via ts-node) and is intermittently flaky on cold runners, so provision the
+    # pinned checkout and retry until the snapshot manifest lands. The
+    # subsequent bake then restores this local snapshot — isolating the flaky
+    # init from the expensive setup-command.
+    - name: Rebuild and capture base snapshot
+      if: ${{ inputs.rebuild == 'true' }}
+      shell: bash
+      working-directory: ${{ github.action_path }}/..
+      env:
+        TOKEN_BRIDGE_COMMIT: 5975d8f7360816341be7f94fd333ef240f4aec23
+        TOKEN_BRIDGE_LOCAL_DIR: ${{ runner.temp }}/token-bridge-contracts
+      run: |
+        set -euxo pipefail
+        npm install -g yarn@1.22.22
+        if [ ! -f "$TOKEN_BRIDGE_LOCAL_DIR/node_modules/ts-node/dist/bin.js" ]; then
+          mkdir -p "$TOKEN_BRIDGE_LOCAL_DIR"
+          (
+            cd "$TOKEN_BRIDGE_LOCAL_DIR"
+            git init .
+            git remote add origin https://github.com/OffchainLabs/token-bridge-contracts.git
+            git fetch --depth 1 origin "$TOKEN_BRIDGE_COMMIT"
+            git checkout --detach FETCH_HEAD
+            yarn install --frozen-lockfile
+            yarn build
+          )
+        fi
+        base="${{ inputs.base-snapshot-id }}"
+        for attempt in 1 2 3; do
+          if node apps/cli/dist/index.js init --rebuild --capture-id "$base" \
+               --skip-post-capture-verify \
+             && test -f "config/snapshots/$base/manifest.json"; then
+            echo "base snapshot '$base' captured"
+            exit 0
+          fi
+          echo "init attempt $attempt did not capture; cleaning and retrying"
+          node apps/cli/dist/index.js clean || true
+        done
+        echo "base init failed to capture after 3 attempts" >&2
+        exit 1
 
     - name: Bake custom testnode image
       shell: bash
@@ -87,9 +130,9 @@ runs:
         set -euo pipefail
         node apps/cli/dist/index.js bake \
           --setup-command "${{ inputs.setup-command }}" \
+          --setup-working-directory "${{ github.workspace }}" \
           --image-ref "${{ inputs.image-ref }}" \
           --snapshot-id "${{ inputs.snapshot-id }}" \
           --base-snapshot-id "${{ inputs.base-snapshot-id }}" \
           --nitro-contracts-version "${{ inputs.nitro-contracts-version }}" \
-          ${{ inputs.rebuild == 'true' && '--rebuild' || '' }} \
           ${{ inputs.push == 'true' && '--push' || '' }}

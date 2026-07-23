@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { waitForRpc } from "@arbitrum/testnode-core/docker.js";
 import { createInitContext, runInitCommand } from "@arbitrum/testnode-core/init-runner.js";
@@ -11,6 +12,7 @@ import { bakeSnapshotImage } from "@arbitrum/testnode-core/snapshot-image.js";
 import {
 	DEFAULT_SNAPSHOT_ID,
 	captureSnapshot,
+	getSnapshotDir,
 	hasSnapshot,
 	restoreSnapshot,
 	verifySnapshotSemanticState,
@@ -30,6 +32,10 @@ const bakeOptions = z.object({
 	setupCommand: z
 		.string()
 		.describe("Shell command run against the booted base stack to customize it"),
+	setupWorkingDirectory: z
+		.string()
+		.optional()
+		.describe("Working directory for the setup command (default: current directory)"),
 	imageRef: z
 		.string()
 		.describe("Full image reference including tag (e.g. ghcr.io/acme/testnode:custom)"),
@@ -105,10 +111,15 @@ async function ensureBaseStack(
  * the command sees live L1/L2 RPCs and can write extra files into the config dir
  * (they ride along into the snapshot + config export).
  */
-function runSetupCommand(setupCommand: string, configDir: string): void {
+function runSetupCommand(
+	setupCommand: string,
+	configDir: string,
+	setupWorkingDirectory?: string,
+): void {
 	const result = spawnSync(setupCommand, {
 		shell: true,
 		stdio: "inherit",
+		...(setupWorkingDirectory ? { cwd: resolve(setupWorkingDirectory) } : {}),
 		env: {
 			...process.env,
 			ARBITRUM_TESTNODE_L1_RPC_URL: RPCS.l1,
@@ -139,31 +150,48 @@ export const bakeCli = Cli.create("bake", {
 		const composeFile = resolve(root, "docker/docker-compose.yaml");
 		const snapshotId = c.options.snapshotId ?? "custom";
 
-		await ensureBaseStack(root, configDir, composeFile, c.options);
+		const contextDir = resolve(root, ".testnode-context");
+		let captureStarted = false;
 
-		runSetupCommand(c.options.setupCommand, configDir);
+		try {
+			await ensureBaseStack(root, configDir, composeFile, c.options);
+			runSetupCommand(c.options.setupCommand, configDir, c.options.setupWorkingDirectory);
 
-		// Capture the customized stack. Verify while running, then stop so the
-		// docker volumes are exported consistently (mirrors `snapshot build`).
-		await verifySnapshotSemanticState(configDir, RPCS);
-		stopRuntime({ composeFile, projectName: PROJECT_NAME, configDir });
-		captureSnapshot(configDir, composeFile, snapshotId);
+			// Verify while the customized stack is live, then stop it before
+			// exporting volumes so the snapshot is internally consistent.
+			await verifySnapshotSemanticState(configDir, RPCS);
+			stopRuntime({ composeFile, projectName: PROJECT_NAME, configDir });
+			captureStarted = true;
+			captureSnapshot(configDir, composeFile, snapshotId);
 
-		const result = bakeSnapshotImage({
-			configDir,
-			snapshotId,
-			imageRef: c.options.imageRef,
-			projectRoot: root,
-			...(c.options.push !== undefined ? { push: c.options.push } : {}),
-		});
+			const result = bakeSnapshotImage({
+				configDir,
+				snapshotId,
+				imageRef: c.options.imageRef,
+				projectRoot: root,
+				...(c.options.push !== undefined ? { push: c.options.push } : {}),
+			});
 
-		return {
-			success: true,
-			snapshotId,
-			imageRef: result.imageRef,
-			l3Enabled: result.l3Enabled,
-			pushed: result.pushed,
-			contextDir: result.contextDir,
-		};
+			return {
+				success: true,
+				snapshotId,
+				imageRef: result.imageRef,
+				l3Enabled: result.l3Enabled,
+				pushed: result.pushed,
+				contextDir: result.contextDir,
+			};
+		} catch (error) {
+			// A failed capture/build must not leave an apparently usable custom
+			// snapshot or docker context for the next attempt.
+			if (captureStarted) {
+				rmSync(getSnapshotDir(configDir, snapshotId), { recursive: true, force: true });
+			}
+			rmSync(contextDir, { recursive: true, force: true });
+			throw error;
+		} finally {
+			// Setup commands are arbitrary trusted build code. Always tear down the
+			// shared runtime, including when setup or semantic verification fails.
+			stopRuntime({ composeFile, projectName: PROJECT_NAME, configDir });
+		}
 	},
 });
