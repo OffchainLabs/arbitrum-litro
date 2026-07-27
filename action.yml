@@ -2,8 +2,9 @@ name: Run Arbitrum Testnode
 description: "Boot a snapshot-backed Arbitrum testnode in GitHub CI and export its config files"
 inputs:
   version:
-    required: true
-    description: "Pinned release version used to resolve the testnode image tag"
+    required: false
+    default: ""
+    description: "Pinned release version; required unless image-ref is set"
   github-token:
     required: false
     description: "Token used for private GHCR authentication"
@@ -11,6 +12,10 @@ inputs:
     required: false
     default: "ghcr.io/offchainlabs/arbitrum-testnode-ci"
     description: "Container repository prefix used to resolve the testnode image"
+  image-ref:
+    required: false
+    default: ""
+    description: "Full image reference (incl. tag) to boot, bypassing variant/version resolution"
   l3-enabled:
     required: false
     default: "false"
@@ -85,6 +90,7 @@ runs:
       env:
         INPUT_CONTAINER_NAME: ${{ inputs.container-name }}
         INPUT_FEE_TOKEN_DECIMALS: ${{ inputs.fee-token-decimals }}
+        INPUT_IMAGE_REF: ${{ inputs.image-ref }}
         INPUT_IMAGE_REPOSITORY: ${{ inputs.image-repository }}
         INPUT_L3_ENABLED: ${{ inputs.l3-enabled }}
         INPUT_NITRO_CONTRACTS_VERSION: ${{ inputs.nitro-contracts-version }}
@@ -95,7 +101,7 @@ runs:
       run: node "${{ github.action_path }}/packages/action/src/resolve.mjs"
 
     - name: Log in to GHCR
-      if: ${{ startsWith(inputs.image-repository, 'ghcr.io/') }}
+      if: ${{ startsWith(steps.resolve.outputs.image-ref, 'ghcr.io/') }}
       shell: bash
       run: |
         if [ -z "${{ inputs.github-token }}" ]; then
@@ -105,7 +111,7 @@ runs:
         echo "${{ inputs.github-token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
     - name: Pull testnode image
-      if: ${{ !startsWith(inputs.image-repository, 'local/') }}
+      if: ${{ !startsWith(steps.resolve.outputs.image-ref, 'local/') }}
       shell: bash
       run: docker pull "${{ steps.resolve.outputs.image-ref }}"
 
@@ -114,6 +120,7 @@ runs:
       env:
         INPUT_CONTAINER_NAME: ${{ inputs.container-name }}
         INPUT_FEE_TOKEN_DECIMALS: ${{ inputs.fee-token-decimals }}
+        INPUT_IMAGE_REF: ${{ inputs.image-ref }}
         INPUT_IMAGE_REPOSITORY: ${{ inputs.image-repository }}
         INPUT_L3_ENABLED: ${{ inputs.l3-enabled }}
         INPUT_NITRO_CONTRACTS_VERSION: ${{ inputs.nitro-contracts-version }}

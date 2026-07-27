@@ -5,6 +5,7 @@ import {
 	startNitroFromSnapshot,
 	stopRuntime,
 } from "@arbitrum/testnode-core/runtime.js";
+import { bakeSnapshotImage } from "@arbitrum/testnode-core/snapshot-image.js";
 import {
 	installSnapshotRelease,
 	packageSnapshotRelease,
@@ -48,6 +49,18 @@ const snapshotInstallOptions = z.object({
 		.describe("GitHub repo in owner/repo form (defaults to TESTNODE_SNAPSHOT_GH_REPO)"),
 	releaseTag: z.string().optional().describe("GitHub release tag to install (defaults to latest)"),
 	url: z.string().optional().describe("Direct snapshot archive URL override"),
+});
+
+const snapshotBakeOptions = z.object({
+	id: z.string().optional().describe("Snapshot identifier to bake (default: default)"),
+	imageRef: z
+		.string()
+		.describe("Full image reference including tag (e.g. ghcr.io/acme/testnode:custom)"),
+	push: z.boolean().optional().describe("docker push the image after building"),
+	l3Enabled: z
+		.boolean()
+		.optional()
+		.describe("Force L3 on/off (default: whether the snapshot carries an l3node archive)"),
 });
 
 const snapshotPackOptions = z.object({
@@ -206,6 +219,31 @@ snapshotCli.command("pack", {
 			checksum: result.checksum,
 			checksumName: result.checksumName,
 			checksumPath: result.checksumPath,
+		};
+	},
+});
+
+snapshotCli.command("bake", {
+	description: "Build a runnable testnode docker image from a snapshot",
+	options: snapshotBakeOptions,
+	run(c) {
+		const CONFIG_DIR = resolve(projectRoot(), "config");
+		const snapshotId = c.options.id ?? DEFAULT_SNAPSHOT_ID;
+		const result = bakeSnapshotImage({
+			configDir: CONFIG_DIR,
+			snapshotId,
+			imageRef: c.options.imageRef,
+			projectRoot: projectRoot(),
+			...(c.options.push !== undefined ? { push: c.options.push } : {}),
+			...(c.options.l3Enabled !== undefined ? { l3Enabled: c.options.l3Enabled } : {}),
+		});
+		return {
+			success: true,
+			snapshotId,
+			imageRef: result.imageRef,
+			l3Enabled: result.l3Enabled,
+			pushed: result.pushed,
+			contextDir: result.contextDir,
 		};
 	},
 });

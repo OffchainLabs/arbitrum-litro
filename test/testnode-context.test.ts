@@ -18,6 +18,13 @@ function writeTarFixture(sourceDir: string, archivePath: string, marker: string)
 	execFileSync("tar", ["-cf", archivePath, "-C", sourceDir, "."]);
 }
 
+function runPrepare(args: string[]): void {
+	execFileSync("node", [resolve("scripts/ci/prepare-testnode-context.mjs"), ...args], {
+		cwd: resolve("."),
+		stdio: "pipe",
+	});
+}
+
 function createSnapshotFixture(rootDir: string, snapshotId = "default"): string {
 	const snapshotDir = join(rootDir, "snapshots", snapshotId);
 	const configDir = join(snapshotDir, "config");
@@ -44,6 +51,7 @@ function createSnapshotFixture(rootDir: string, snapshotId = "default"): string 
 	writeFileSync(join(configDir, "localNetwork.json"), "{}\n");
 	writeFileSync(join(configDir, "l1l2_network.json"), "{}\n");
 	writeFileSync(join(configDir, "l2l3_network.json"), "{}\n");
+	writeFileSync(join(configDir, "custom-artifact.bin"), Buffer.from([0, 255, 1, 254]));
 	mkdirSync(join(snapshotDir, "anvil-state"), { recursive: true });
 	writeFileSync(join(snapshotDir, "anvil-state", "state.json"), "{}");
 	mkdirSync(volumeDir, { recursive: true });
@@ -58,6 +66,24 @@ function createSnapshotFixture(rootDir: string, snapshotId = "default"): string 
 		"val.txt",
 	);
 	writeTarFixture(join(rootDir, "l3node-data"), join(volumeDir, "l3node-data.tar"), "l3.txt");
+	writeFileSync(
+		join(snapshotDir, "manifest.json"),
+		`${JSON.stringify({
+			version: 1,
+			snapshotId,
+			createdAt: "2026-01-01T00:00:00.000Z",
+			nitroNodeImage: "offchainlabs/nitro-node:test",
+			chainIds: { l1: 1337, l2: 412346, l3: 333333 },
+			rollups: { l2: "0x0", l3: "0x0" },
+			requiredFiles: [],
+			configChecksums: {},
+			volumeArchives: [
+				"volumes/sequencer-data.tar",
+				"volumes/validator-data.tar",
+				"volumes/l3node-data.tar",
+			],
+		})}\n`,
+	);
 
 	return snapshotDir;
 }
@@ -77,19 +103,7 @@ describe("prepare-testnode-context", () => {
 		const snapshotDir = createSnapshotFixture(rootDir);
 		const outputDir = join(rootDir, "context");
 
-		execFileSync(
-			"node",
-			[
-				resolve("scripts/ci/prepare-testnode-context.mjs"),
-				"--variant",
-				"l3-eth",
-				"--snapshot-dir",
-				snapshotDir,
-				"--output-dir",
-				outputDir,
-			],
-			{ cwd: resolve("."), stdio: "pipe" },
-		);
+		runPrepare(["--variant", "l3-eth", "--snapshot-dir", snapshotDir, "--output-dir", outputDir]);
 
 		expect(
 			readFileSync(join(outputDir, "runtime-config", "l2-nodeConfig.json"), "utf-8"),
@@ -100,6 +114,9 @@ describe("prepare-testnode-context", () => {
 		expect(existsSync(join(outputDir, "runtime", "sequencer", ".arbitrum", "seq.txt"))).toBe(true);
 		expect(existsSync(join(outputDir, "runtime", "validator", ".arbitrum", "val.txt"))).toBe(true);
 		expect(existsSync(join(outputDir, "runtime", "l3node", ".arbitrum", "l3.txt"))).toBe(true);
+		expect(readFileSync(join(outputDir, "runtime-config", "custom-artifact.bin"))).toEqual(
+			Buffer.from([0, 255, 1, 254]),
+		);
 
 		const metadata = JSON.parse(readFileSync(join(outputDir, "metadata.json"), "utf-8"));
 		expect(metadata).toEqual({
@@ -116,21 +133,16 @@ describe("prepare-testnode-context", () => {
 		const snapshotDir = createSnapshotFixture(rootDir, "l3-custom-18-v2.1");
 		const outputDir = join(rootDir, "context");
 
-		execFileSync(
-			"node",
-			[
-				resolve("scripts/ci/prepare-testnode-context.mjs"),
-				"--variant",
-				"l3-custom-18",
-				"--nitro-contracts-version",
-				"v2.1",
-				"--snapshot-dir",
-				snapshotDir,
-				"--output-dir",
-				outputDir,
-			],
-			{ cwd: resolve("."), stdio: "pipe" },
-		);
+		runPrepare([
+			"--variant",
+			"l3-custom-18",
+			"--nitro-contracts-version",
+			"v2.1",
+			"--snapshot-dir",
+			snapshotDir,
+			"--output-dir",
+			outputDir,
+		]);
 
 		const metadata = JSON.parse(readFileSync(join(outputDir, "metadata.json"), "utf-8"));
 		expect(metadata.snapshotId).toBe("l3-custom-18-v2.1");
@@ -145,19 +157,7 @@ describe("prepare-testnode-context", () => {
 
 		let stderr = "";
 		try {
-			execFileSync(
-				"node",
-				[
-					resolve("scripts/ci/prepare-testnode-context.mjs"),
-					"--variant",
-					"l3-eth",
-					"--snapshot-dir",
-					snapshotDir,
-					"--output-dir",
-					outputDir,
-				],
-				{ cwd: resolve("."), stdio: "pipe" },
-			);
+			runPrepare(["--variant", "l3-eth", "--snapshot-dir", snapshotDir, "--output-dir", outputDir]);
 		} catch (error) {
 			stderr = String((error as { stderr?: Buffer }).stderr ?? "");
 		}
@@ -171,21 +171,16 @@ describe("prepare-testnode-context", () => {
 		const snapshotDir = createSnapshotFixture(rootDir);
 		const outputDir = join(rootDir, "context");
 
-		execFileSync(
-			"node",
-			[
-				resolve("scripts/ci/prepare-testnode-context.mjs"),
-				"--variant",
-				"l3-eth",
-				"--snapshot-dir",
-				snapshotDir,
-				"--output-dir",
-				outputDir,
-				"--testnode-name",
-				"fast",
-			],
-			{ cwd: resolve("."), stdio: "pipe" },
-		);
+		runPrepare([
+			"--variant",
+			"l3-eth",
+			"--snapshot-dir",
+			snapshotDir,
+			"--output-dir",
+			outputDir,
+			"--testnode-name",
+			"fast",
+		]);
 
 		const metadata = JSON.parse(readFileSync(join(outputDir, "metadata.json"), "utf-8"));
 		expect(metadata.testnodeName).toBe("fast");

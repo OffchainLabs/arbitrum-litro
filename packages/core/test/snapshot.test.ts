@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -9,10 +9,12 @@ import {
 	buildSnapshotManifest,
 	buildWethGatewayChecks,
 	getSnapshotConfigDir,
+	getSnapshotDir,
 	getSnapshotManifestPath,
 	getSnapshotVolumesDir,
 	invalidateSnapshot,
 	verifySnapshotManifest,
+	withSnapshotReplacementRollback,
 } from "../src/snapshot.js";
 
 const ZERO = "0x0000000000000000000000000000000000000000";
@@ -230,5 +232,53 @@ describe("snapshot manifest", () => {
 
 		expect(invalidateSnapshot(configDir)).toBe(true);
 		expect(invalidateSnapshot(configDir)).toBe(false);
+	});
+
+	it("commits a successful snapshot replacement", async () => {
+		const configDir = createTempDir();
+		const snapshotDir = getSnapshotDir(configDir, "custom");
+		mkdirSync(snapshotDir, { recursive: true });
+		writeFileSync(join(snapshotDir, "marker"), "old");
+
+		const result = await withSnapshotReplacementRollback(configDir, "custom", () => {
+			mkdirSync(snapshotDir, { recursive: true });
+			writeFileSync(join(snapshotDir, "marker"), "new");
+			return "built";
+		});
+
+		expect(result).toBe("built");
+		expect(readFileSync(join(snapshotDir, "marker"), "utf-8")).toBe("new");
+	});
+
+	it("restores the previous snapshot when replacement fails", async () => {
+		const configDir = createTempDir();
+		const snapshotDir = getSnapshotDir(configDir, "custom");
+		mkdirSync(snapshotDir, { recursive: true });
+		writeFileSync(join(snapshotDir, "marker"), "old");
+
+		await expect(
+			withSnapshotReplacementRollback(configDir, "custom", () => {
+				mkdirSync(snapshotDir, { recursive: true });
+				writeFileSync(join(snapshotDir, "marker"), "partial");
+				throw new Error("docker push failed");
+			}),
+		).rejects.toThrow("docker push failed");
+
+		expect(readFileSync(join(snapshotDir, "marker"), "utf-8")).toBe("old");
+	});
+
+	it("removes a partial first snapshot when replacement fails", async () => {
+		const configDir = createTempDir();
+		const snapshotDir = getSnapshotDir(configDir, "custom");
+
+		await expect(
+			withSnapshotReplacementRollback(configDir, "custom", () => {
+				mkdirSync(snapshotDir, { recursive: true });
+				writeFileSync(join(snapshotDir, "marker"), "partial");
+				throw new Error("capture failed");
+			}),
+		).rejects.toThrow("capture failed");
+
+		expect(existsSync(snapshotDir)).toBe(false);
 	});
 });

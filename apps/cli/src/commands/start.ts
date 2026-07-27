@@ -16,6 +16,7 @@ export { DEFAULT_START_IMAGE_VERSION };
 const startFileSchema = z.object({
 	containerName: z.string().optional(),
 	feeTokenDecimals: z.number().optional(),
+	imageRef: z.string().optional(),
 	imageRepository: z.string().optional(),
 	l3Enabled: z.boolean().optional(),
 	networkConfigPath: z.union([z.string(), z.array(z.string())]).optional(),
@@ -33,6 +34,7 @@ interface StartResolvedInput {
 	containerName: string | undefined;
 	cwd: string;
 	feeTokenDecimals: number | undefined;
+	imageRef: string | undefined;
 	imageRepository: string | undefined;
 	l3Enabled: boolean;
 	networkConfigPaths: string[];
@@ -147,6 +149,7 @@ export function resolveStartInput(
 		config?: string | undefined;
 		containerName?: string | undefined;
 		feeTokenDecimals?: number | undefined;
+		imageRef?: string | undefined;
 		imageRepository?: string | undefined;
 		l3Enabled?: boolean | undefined;
 		networkConfigPath?: string | undefined;
@@ -166,6 +169,7 @@ export function resolveStartInput(
 		containerName: options.containerName ?? fileConfig.containerName,
 		cwd,
 		feeTokenDecimals: options.feeTokenDecimals ?? fileConfig.feeTokenDecimals,
+		imageRef: options.imageRef ?? fileConfig.imageRef,
 		imageRepository: options.imageRepository ?? fileConfig.imageRepository,
 		l3Enabled: options.l3Enabled ?? fileConfig.l3Enabled ?? true,
 		networkConfigPaths: resolveMergedNetworkConfigPaths({
@@ -204,6 +208,7 @@ export function runStart(
 		contractsVersion: input.nitroContractsVersion,
 		cwd: input.cwd,
 		feeTokenDecimals: input.feeTokenDecimals,
+		imageRef: input.imageRef,
 		imageRepository: input.imageRepository,
 		l3Enabled: input.l3Enabled,
 		outputDir: input.outputDir,
@@ -251,6 +256,10 @@ export const startCli = Cli.create("start", {
 			.number()
 			.optional()
 			.describe("Custom fee token decimals (6, 16, 18, or 20) for L3 start"),
+		imageRef: z
+			.string()
+			.optional()
+			.describe("Full image reference (incl. tag) to boot, bypassing variant/version resolution"),
 		imageRepository: z
 			.string()
 			.optional()

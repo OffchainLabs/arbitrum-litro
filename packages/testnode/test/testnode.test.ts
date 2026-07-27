@@ -90,6 +90,40 @@ describe("buildStartTestnodeState", () => {
 		expect(state.paths.l2l3Network).toBe("");
 	});
 
+	it("boots a full image-ref without changing variant resolution", () => {
+		const state = buildStartTestnodeState({
+			cwd: "/workspace/project",
+			imageRef: "ghcr.io/acme/testnode:custom",
+			l3Enabled: false,
+			version: "v1.2.3",
+		});
+
+		expect(state.imageRef).toBe("ghcr.io/acme/testnode:custom");
+		expect(state.variant).toBe("l2");
+		expect(state.rpcUrls.l1).toBe("http://127.0.0.1:8545");
+		expect(state.rpcUrls.l2).toBe("http://127.0.0.1:8547");
+		expect(state.rpcUrls.l3).toBe("");
+		const args = testnodeDockerRunArgs(state);
+		expect(args).toEqual(expect.arrayContaining(["TESTNODE_VARIANT=l2"]));
+		expect(args).toContain("ghcr.io/acme/testnode:custom");
+	});
+
+	it("uses the existing l3-enabled option with an image-ref", () => {
+		const state = buildStartTestnodeState({
+			cwd: "/workspace/project",
+			imageRef: "ghcr.io/acme/testnode:custom-l3",
+			l3Enabled: true,
+			version: "v1.2.3",
+		});
+
+		expect(state.imageRef).toBe("ghcr.io/acme/testnode:custom-l3");
+		expect(state.variant).toBe("l3-eth");
+		expect(state.rpcUrls.l3).toBe("http://127.0.0.1:3347");
+		expect(testnodeDockerRunArgs(state)).toEqual(
+			expect.arrayContaining(["TESTNODE_VARIANT=l3-eth"]),
+		);
+	});
+
 	it("enables Timeboost", () => {
 		const state = buildStartTestnodeState({
 			containerName: "custom-testnode",
