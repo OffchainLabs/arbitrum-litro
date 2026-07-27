@@ -58,6 +58,24 @@ Start exports config under `outputDir/config` and boots these host RPCs:
 | L2 | `http://127.0.0.1:8547` |
 | L3 | `http://127.0.0.1:3347` |
 
+### Docker image configuration
+
+Set `TESTNODE_PARENT_CHAIN_POLL_INTERVAL` to a Go duration to override Nitro's parent-chain
+polling interval when the container starts:
+
+```bash
+docker run \
+  -e TESTNODE_PARENT_CHAIN_POLL_INTERVAL=100ms \
+  ghcr.io/offchainlabs/arbitrum-testnode-ci:<tag>
+```
+
+The value is applied to `node.parent-chain-reader.poll-interval`,
+`execution.parent-chain-reader.poll-interval`, and
+`node.delayed-sequencer.rescan-interval` in every runtime config included in the image. Both
+L2-only and L2+L3 images are supported. Values such as `100ms`, `1s`, and `2.5s` are accepted;
+Nitro validates the value when it starts. When the variable is unset, the bundled runtime configs
+and existing polling behavior are unchanged.
+
 ### GitHub Action
 
 ```yaml
