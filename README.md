@@ -58,6 +58,24 @@ Start exports config under `outputDir/config` and boots these host RPCs:
 | L2 | `http://127.0.0.1:8547` |
 | L3 | `http://127.0.0.1:3347` |
 
+### Docker image configuration
+
+Set `TESTNODE_PARENT_CHAIN_POLL_INTERVAL` to a Go duration to override Nitro's parent-chain
+polling interval when the container starts:
+
+```bash
+docker run \
+  -e TESTNODE_PARENT_CHAIN_POLL_INTERVAL=100ms \
+  ghcr.io/offchainlabs/arbitrum-testnode-ci:<tag>
+```
+
+The value is applied to `node.parent-chain-reader.poll-interval`,
+`execution.parent-chain-reader.poll-interval`, and
+`node.delayed-sequencer.rescan-interval` in every runtime config included in the image. Both
+L2-only and L2+L3 images are supported. Values such as `100ms`, `1s`, and `2.5s` are accepted;
+Nitro validates the value when it starts. When the variable is unset, the bundled runtime configs
+and existing polling behavior are unchanged.
+
 ### GitHub Action
 
 ```yaml
@@ -79,6 +97,38 @@ The action starts a fully initialized testnode and exports environment variables
 | `ARBITRUM_TESTNODE_LOCAL_NETWORK_PATH` | Path to `localNetwork.json` with all deployed contract addresses |
 | `ARBITRUM_TESTNODE_CONFIG_DIR` | Directory with all exported config files |
 | `ARBITRUM_TESTNODE_VARIANT` | Resolved variant name, such as `l3-eth` |
+
+### Embedded token-bridge-contracts workspace
+
+The published testnode image also contains a prebuilt `token-bridge-contracts` workspace, so
+consumers can run scripts from that workspace without another image or build step:
+
+```yaml
+- uses: OffchainLabs/arbitrum-testnode@v0.2.10
+  id: testnode
+  with:
+    version: v0.2.10
+    github-token: ${{ secrets.GITHUB_TOKEN }}
+
+- name: Run contract deployment command
+  run: |
+    docker run --rm --network host \
+      --workdir /workspace \
+      --entrypoint yarn \
+      -e BASECHAIN_RPC=http://127.0.0.1:8545 \
+      -e BASECHAIN_DEPLOYER_KEY="$BASECHAIN_DEPLOYER_KEY" \
+      -e BASECHAIN_WETH="$BASECHAIN_WETH" \
+      -e GAS_LIMIT_FOR_L2_FACTORY_DEPLOYMENT=10000000 \
+      -e POLLING_INTERVAL=100 \
+      -e DISABLE_CONTRACT_VERIFICATION=true \
+      ghcr.io/offchainlabs/arbitrum-testnode-ci:v0.2.10-nc3.2-l2 \
+      deploy:token-bridge-creator
+```
+
+The explicit entrypoint and working directory select the embedded workspace. Running the image
+normally retains its single-purpose testnode entrypoint. `POLLING_INTERVAL=100` reduces JSON-RPC
+polling to 100 ms for local deployments, while `DISABLE_CONTRACT_VERIFICATION=true` skips explorer
+verification.
 
 Snapshots built by `init --timeboost-enabled` deploy a local Timeboost `ExpressLaneAuction` contract on L2 and write its proxy address to `timeboost-auction.json`. The snapshot build starts a local compose Redis service only while building the snapshot. When `timeboost-enabled` / `timeboostEnabled` is true, the action and `start` command resolve the L2-only `l2-timeboost` image tag, for example `ghcr.io/offchainlabs/arbitrum-testnode-ci:v0.2.2-nc3.2-l2-timeboost`. The published image uses the deployed address by default; `TESTNODE_TIMEBOOST_AUCTION_CONTRACT_ADDRESS` can still override it. Published Timeboost stacks require an external Redis endpoint supplied through `TESTNODE_TIMEBOOST_REDIS_URL`; `start` and the action do not deploy Redis.
 

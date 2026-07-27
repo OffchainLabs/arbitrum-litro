@@ -2,15 +2,16 @@ services:
   # L1 anvil chain. 8545 is published so both host tooling (127.0.0.1:8545) and
   # Nitro containers (host.docker.internal:8545) reach it. State persists to the
   # bind-mounted config/anvil-state so snapshots work.
+  #
+  # The foundry image runs as the non-root `foundry` user (uid 1000). On Linux CI
+  # runners the bind-mounted config/anvil-state directory is owned by the runner
+  # user, so anvil (uid 1000) cannot write /state/state.json and the periodic /
+  # on-exit state dump silently fails, leaving no snapshot. (Docker Desktop on
+  # macOS hides this by mapping bind-mount writes to the host user regardless of
+  # container uid, so it only breaks in CI.) Run as root so the dump always lands.
   l1:
     image: ghcr.io/foundry-rs/foundry:v1.3.5
-    # The foundry image runs as uid 1000 (foundry), but the bind-mounted
-    # anvil-state dir is created by the host user (uid 1001 on GitHub runners),
-    # so the default user cannot write state.json — the snapshot then captures
-    # an empty L1 and the restored sequencer finds no rollup contracts. Run as
-    # root so anvil can always persist state to the bind mount. (macOS Docker
-    # Desktop ignores mount ownership, which is why this only bit Linux CI.)
-    user: root
+    user: "0:0"
     ports:
       - "8545:8545"
     entrypoint: ["anvil"]
@@ -22,11 +23,7 @@ services:
       - --balance=1000000
       - --mnemonic=indoor dish desk flag debris potato excuse depart ticket judge file exit
       - --chain-id=1337
-      - --state=/state
-      # Flush state to disk every second so snapshot capture always sees the
-      # deployed rollup contracts. Without this, anvil only dumps state on
-      # graceful shutdown, which is unreliable on slow/contended CI runners —
-      # the restored L1 then has no contract code and the sequencer aborts.
+      - --state=/state/state.json
       - --state-interval=1
     volumes:
       - ../config/anvil-state:/state
