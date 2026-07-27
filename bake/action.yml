@@ -37,10 +37,17 @@ inputs:
     required: false
     default: ""
     description: "Base snapshot release tag to install (defaults to latest) when not rebuilding"
-  nitro-contracts-version:
+  nitro-contracts-ref:
     required: false
-    default: "v3.2"
-    description: "Nitro contracts version passed through to a rebuild init"
+    default: "v3.2.0"
+    description: >-
+      Nitro contracts release, branch, or commit used during a rebuild init.
+  fee-token-decimals:
+    required: false
+    default: ""
+    description: >-
+      Custom L3 fee-token decimals (6, 16, 18, or 20) for a rebuild init.
+      Empty = ETH-fee (no custom fee token).
   github-token:
     required: false
     default: ""
@@ -93,12 +100,29 @@ runs:
       working-directory: ${{ github.action_path }}/..
       env:
         BASE_SNAPSHOT_ID_INPUT: ${{ inputs.base-snapshot-id }}
-        NITRO_CONTRACTS_VERSION_INPUT: ${{ inputs.nitro-contracts-version }}
+        FEE_TOKEN_DECIMALS_INPUT: ${{ inputs.fee-token-decimals }}
+        NITRO_CONTRACTS_REF_INPUT: ${{ inputs.nitro-contracts-ref }}
+        NITRO_CONTRACTS_DEFAULT_COMMIT: 2695e7b3e3f460531e2b77fed48a60561c54d90e
+        NITRO_CONTRACTS_LOCAL_DIR: ${{ runner.temp }}/nitro-contracts
         TOKEN_BRIDGE_COMMIT: 5975d8f7360816341be7f94fd333ef240f4aec23
         TOKEN_BRIDGE_LOCAL_DIR: ${{ runner.temp }}/token-bridge-contracts
       run: |
         set -euxo pipefail
         npm install -g yarn@1.22.22
+        if [ ! -f "$NITRO_CONTRACTS_LOCAL_DIR/package.json" ]; then
+          mkdir -p "$NITRO_CONTRACTS_LOCAL_DIR"
+          (
+            cd "$NITRO_CONTRACTS_LOCAL_DIR"
+            git init .
+            git remote add origin https://github.com/OffchainLabs/nitro-contracts.git
+            git fetch --depth 1 origin "$NITRO_CONTRACTS_REF_INPUT"
+            git checkout --detach FETCH_HEAD
+            git submodule update --init --recursive --depth 1
+            if [ "$NITRO_CONTRACTS_REF_INPUT" = "v3.2.0" ]; then
+              test "$(git rev-parse HEAD)" = "$NITRO_CONTRACTS_DEFAULT_COMMIT"
+            fi
+          )
+        fi
         if [ ! -f "$TOKEN_BRIDGE_LOCAL_DIR/node_modules/ts-node/dist/bin.js" ]; then
           mkdir -p "$TOKEN_BRIDGE_LOCAL_DIR"
           (
@@ -113,7 +137,9 @@ runs:
         fi
         base="$BASE_SNAPSHOT_ID_INPUT"
         init_args=(--rebuild --capture-id "$base" --skip-post-capture-verify)
-        init_args+=(--nitro-contracts-version "$NITRO_CONTRACTS_VERSION_INPUT")
+        if [ -n "$FEE_TOKEN_DECIMALS_INPUT" ]; then
+          init_args+=(--fee-token-decimals "$FEE_TOKEN_DECIMALS_INPUT")
+        fi
         for attempt in 1 2 3; do
           if node apps/cli/dist/index.js init "${init_args[@]}" \
              && test -f "config/snapshots/$base/manifest.json"; then
@@ -143,5 +169,4 @@ runs:
           --image-ref "${{ inputs.image-ref }}" \
           --snapshot-id "${{ inputs.snapshot-id }}" \
           --base-snapshot-id "${{ inputs.base-snapshot-id }}" \
-          --nitro-contracts-version "${{ inputs.nitro-contracts-version }}" \
           ${{ inputs.push == 'true' && '--push' || '' }}

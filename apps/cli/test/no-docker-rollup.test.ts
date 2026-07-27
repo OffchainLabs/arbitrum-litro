@@ -18,7 +18,7 @@ describe("init chain steps deploy rollups through a local RollupCreator", () => 
 
 	it("uses Docker only to provision the RollupCreator contracts", () => {
 		expect(initSource).toContain("deployRollupCreatorViaDocker");
-		expect(initSource).toContain("CONTRACT_DEPLOYER_IMAGE");
+		expect(initSource).toContain("resolveDeployerImageSpec");
 		expect(initSource).not.toContain("ROLLUPCREATOR_IMAGE");
 	});
 

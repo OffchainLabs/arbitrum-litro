@@ -26,6 +26,11 @@ import {
 } from "../token-bridge.js";
 import { ensureValidatorWalletStaked } from "../validator-wallet.js";
 import type { InitRuntime } from "./context.js";
+import {
+	type DeployerImageSpec,
+	type NitroContractsSource,
+	resolveDeployerImageSpec,
+} from "./nitro-contracts-source.js";
 
 const L1_RPC = "http://127.0.0.1:8545";
 const L1_BEACON_RPC = "http://127.0.0.1:5555";
@@ -43,7 +48,6 @@ const L3_DEPOSIT_TARGET_WEI = 50n * 10n ** 18n;
 const L3_DEPOSIT_RESERVE_WEI = 1n * 10n ** 18n;
 const L3_DEPOSIT_READY_THRESHOLD_WEI = 10n * 10n ** 18n;
 const L2_OWNER_DEPLOYER_FUNDING_WEI = 100n * 10n ** 18n;
-const CONTRACT_DEPLOYER_IMAGE = "nitro-testnode-contract-deployer:latest";
 const CONTRACT_DEPLOYER_POLLING_INTERVAL_MS = 100;
 const CONTRACT_DEPLOYER_CREATE2_CONFIRMATIONS = 1;
 const WASM_MODULE_ROOT = "0xdb698a2576298f25448bc092e52cf13b1e24141c997135d70f217d674bbeb69a";
@@ -80,15 +84,19 @@ const builtContractDeployerImages = new Set<string>();
 
 async function ensureContractDeployerImage(
 	runtime: InitRuntime,
-	image: string = CONTRACT_DEPLOYER_IMAGE,
-	dockerfile = "docker/contract-deployer.Dockerfile",
+	spec: DeployerImageSpec,
 	forceRebuild = false,
 ): Promise<void> {
-	if (builtContractDeployerImages.has(image) && !forceRebuild) {
-		console.log(`[init] Contract deployer image already checked: ${image}`);
+	const { image, dockerfile, buildContext, reuseImage } = spec;
+	// forceRebuild (stale-image recovery) must rebuild even if we already built
+	// this tag this run; drop the in-run marker so the build below actually runs.
+	if (forceRebuild) {
+		builtContractDeployerImages.delete(image);
+	} else if (reuseImage && builtContractDeployerImages.has(image)) {
+		console.log(`[init] Contract deployer image already built this run: ${image}`);
 		return;
 	}
-	if (!forceRebuild) {
+	if (!forceRebuild && reuseImage) {
 		console.log(`[init] Checking contract deployer image: ${image}`);
 		const inspect = exec("docker", ["image", "inspect", image], {
 			timeout: 30_000,
@@ -99,12 +107,17 @@ async function ensureContractDeployerImage(
 			return;
 		}
 	}
+	// Named contexts require BuildKit. Set this explicitly so older daemons do
+	// not fall back to the classic builder.
+	process.env["DOCKER_BUILDKIT"] ??= "1";
 	console.log(`[init] Building contract deployer image: ${image}`);
 	execOrThrow(
 		"docker",
 		[
 			"build",
 			"--progress=plain",
+			"--build-context",
+			`nitrocontracts=${buildContext}`,
 			"-t",
 			image,
 			"-f",
@@ -114,7 +127,9 @@ async function ensureContractDeployerImage(
 		{ timeout: 1_800_000 },
 	);
 	console.log(`[init] Contract deployer image built: ${image}`);
-	builtContractDeployerImages.add(image);
+	if (reuseImage) {
+		builtContractDeployerImages.add(image);
+	}
 }
 
 async function deployRollupCreatorViaDocker(
@@ -124,15 +139,14 @@ async function deployRollupCreatorViaDocker(
 		dockerParentRpc: string;
 		deployerKey: string;
 		maxDataSize: string;
-		image?: string;
-		dockerfile?: string;
+		nitroContractsSource: NitroContractsSource;
 		retryAfterImageRebuild?: boolean;
 	},
 ): Promise<RollupCreatorDeployment> {
 	const retryAfterImageRebuild = params.retryAfterImageRebuild ?? true;
-	const image = params.image ?? CONTRACT_DEPLOYER_IMAGE;
-	const dockerfile = params.dockerfile ?? "docker/contract-deployer.Dockerfile";
-	await ensureContractDeployerImage(runtime, image, dockerfile);
+	const spec = resolveDeployerImageSpec(params.nitroContractsSource);
+	const image = spec.image;
+	await ensureContractDeployerImage(runtime, spec);
 	await waitForRpc(params.hostParentRpc);
 	console.log(`[init] Deploying RollupCreator on ${params.dockerParentRpc}`);
 	const args = [
@@ -173,7 +187,7 @@ async function deployRollupCreatorViaDocker(
 	if (!output.stakeToken) {
 		if (retryAfterImageRebuild) {
 			console.warn("[init] Contract deployer image is stale; rebuilding and retrying once");
-			await ensureContractDeployerImage(runtime, image, dockerfile, true);
+			await ensureContractDeployerImage(runtime, spec, true);
 			return deployRollupCreatorViaDocker(runtime, {
 				...params,
 				retryAfterImageRebuild: false,
@@ -195,9 +209,11 @@ async function deployTimeboostAuctionViaDocker(
 		hostRpc: string;
 		dockerRpc: string;
 		deployerKey: string;
+		nitroContractsSource: NitroContractsSource;
 	},
 ): Promise<TimeboostAuctionDeployment> {
-	await ensureContractDeployerImage(runtime);
+	const spec = resolveDeployerImageSpec(params.nitroContractsSource);
+	await ensureContractDeployerImage(runtime, spec);
 	await waitForRpc(params.hostRpc);
 	console.log(`[init] Deploying Timeboost auction contract on ${params.dockerRpc}`);
 	const args = [
@@ -227,7 +243,7 @@ async function deployTimeboostAuctionViaDocker(
 		`TIMEBOOST_BENEFICIARY_ADDRESS=${accounts.l2owner.address}`,
 		"-e",
 		"TIMEBOOST_AUCTION_OUTPUT=/config/timeboost-auction.json",
-		CONTRACT_DEPLOYER_IMAGE,
+		spec.image,
 		"hardhat",
 		"run",
 		"--no-compile",
@@ -286,7 +302,10 @@ function createL1Steps(runtime: InitRuntime): Record<string, StepRunner> {
 	};
 }
 
-function createL2DeploySteps(runtime: InitRuntime): Record<string, StepRunner> {
+function createL2DeploySteps(
+	runtime: InitRuntime,
+	nitroContractsSource: NitroContractsSource,
+): Record<string, StepRunner> {
 	return {
 		"deploy-l2-rollup": async (state) => {
 			writeChainConfig(runtime.configDir, "l2_chain_config.json", {
@@ -298,6 +317,7 @@ function createL2DeploySteps(runtime: InitRuntime): Record<string, StepRunner> {
 				dockerParentRpc: L1_RPC_DOCKER,
 				deployerKey: accounts.l2owner.privateKey,
 				maxDataSize: "117964",
+				nitroContractsSource,
 			});
 			await deployRollupViaSdk({
 				chainConfigPath: resolve(runtime.configDir, "l2_chain_config.json"),
@@ -382,7 +402,10 @@ function createL2DeploySteps(runtime: InitRuntime): Record<string, StepRunner> {
 	};
 }
 
-function createL2RuntimeSteps(runtime: InitRuntime): Record<string, StepRunner> {
+function createL2RuntimeSteps(
+	runtime: InitRuntime,
+	nitroContractsSource: NitroContractsSource,
+): Record<string, StepRunner> {
 	return {
 		"start-l2": async (state) => {
 			composeUp(["sequencer", "validator"], runtime.dockerOpts);
@@ -397,6 +420,7 @@ function createL2RuntimeSteps(runtime: InitRuntime): Record<string, StepRunner> 
 				hostRpc: L2_RPC,
 				dockerRpc: L2_RPC_DOCKER,
 				deployerKey: accounts.l2owner.privateKey,
+				nitroContractsSource,
 			});
 			return markStepDone(state, "deploy-timeboost-auction", { ...deployment });
 		},
@@ -509,7 +533,6 @@ async function fundL3DeployerAccounts(): Promise<void> {
 
 async function deployCustomFeeToken(
 	feeTokenDecimals?: number,
-	deployPricer = true,
 ): Promise<{ feeTokenAddress?: string; feeTokenPricerAddress?: string }> {
 	if (feeTokenDecimals === undefined) {
 		return {};
@@ -531,10 +554,6 @@ async function deployCustomFeeToken(
 	console.log(
 		`[init] Custom fee token deployed at ${feeTokenAddress} with ${feeTokenDecimals} decimals`,
 	);
-	if (!deployPricer) {
-		// v2.1 AnyTrust custom-gas rollups have no feeTokenPricer parameter.
-		return { feeTokenAddress };
-	}
 	// Custom-gas Rollup chains require a non-zero feeTokenPricer.
 	// Deploy a constant-rate pricer on the parent chain (L2), using
 	// the same deployer key the rollup uses.
@@ -585,33 +604,24 @@ async function deployL3Rollup(
 	state: InitState,
 	runtime: InitRuntime,
 	feeTokenDecimals: number | undefined,
-	isV21: boolean,
+	nitroContractsSource: NitroContractsSource,
 ): Promise<InitState> {
 	await fundL3DeployerAccounts();
 	writeChainConfig(runtime.configDir, "l3_chain_config.json", {
 		chainId: 333333,
 		owner: accounts.l3owner.address,
-		...(isV21 ? { dataAvailabilityCommittee: true } : {}),
 	});
 	await applyGasEstimationWorkaround();
 
-	// If custom fee token is requested, deploy an ERC20 (+ pricer for v3.2) on L2
-	const { feeTokenAddress, feeTokenPricerAddress } = await deployCustomFeeToken(
-		feeTokenDecimals,
-		!isV21,
-	);
+	// If custom fee token is requested, deploy an ERC20 and pricer on L2.
+	const { feeTokenAddress, feeTokenPricerAddress } = await deployCustomFeeToken(feeTokenDecimals);
 
 	const rollupCreatorDeployment = await deployRollupCreatorViaDocker(runtime, {
 		hostParentRpc: L2_RPC,
 		dockerParentRpc: L2_RPC_DOCKER,
 		deployerKey: accounts.l3owner.privateKey,
 		maxDataSize: "104857",
-		...(isV21
-			? {
-					image: "nitro-testnode-contract-deployer-v2.1:latest",
-					dockerfile: "docker/contract-deployer-v2.1.Dockerfile",
-				}
-			: {}),
+		nitroContractsSource,
 	});
 	await deployRollupViaSdk({
 		chainConfigPath: resolve(runtime.configDir, "l3_chain_config.json"),
@@ -633,7 +643,7 @@ async function deployL3Rollup(
 		rawNodeConfigOutputPath: resolve(runtime.configDir, "l3-nodeConfig.raw.json"),
 		rollupCreatorAddress: rollupCreatorDeployment.rollupCreator,
 		stakeToken: rollupCreatorDeployment.stakeToken,
-		nitroContractsVersion: isV21 ? "v2.1" : "v3.2",
+		nitroContractsVersion: nitroContractsSource.family,
 		...(feeTokenAddress ? { nativeToken: feeTokenAddress as `0x${string}` } : {}),
 		...(feeTokenPricerAddress ? { feeTokenPricer: feeTokenPricerAddress as `0x${string}` } : {}),
 	});
@@ -655,12 +665,12 @@ async function deployL3Rollup(
 
 function createL3Steps(
 	runtime: InitRuntime,
-	feeTokenDecimals?: number,
-	nitroContractsVersion?: string,
+	feeTokenDecimals: number | undefined,
+	nitroContractsSource: NitroContractsSource,
 ): Record<string, StepRunner> {
-	const isV21 = nitroContractsVersion === "v2.1";
 	return {
-		"deploy-l3-rollup": (state) => deployL3Rollup(state, runtime, feeTokenDecimals, isV21),
+		"deploy-l3-rollup": (state) =>
+			deployL3Rollup(state, runtime, feeTokenDecimals, nitroContractsSource),
 		"generate-l3-config": async (state) => {
 			const rollupData = state.steps["deploy-l3-rollup"]?.data;
 			if (!rollupData) {
@@ -819,13 +829,15 @@ function createL3Steps(
 
 export function makeStepRunners(
 	runtime: InitRuntime,
-	feeTokenDecimals?: number,
-	nitroContractsVersion?: string,
+	options: {
+		feeTokenDecimals?: number | undefined;
+		nitroContractsSource: NitroContractsSource;
+	},
 ): Record<string, StepRunner> {
 	return {
 		...createL1Steps(runtime),
-		...createL2DeploySteps(runtime),
-		...createL2RuntimeSteps(runtime),
-		...createL3Steps(runtime, feeTokenDecimals, nitroContractsVersion),
+		...createL2DeploySteps(runtime, options.nitroContractsSource),
+		...createL2RuntimeSteps(runtime, options.nitroContractsSource),
+		...createL3Steps(runtime, options.feeTokenDecimals, options.nitroContractsSource),
 	};
 }

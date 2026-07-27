@@ -257,6 +257,21 @@ pnpm dev bake \
   --push            # optional; docker login is your responsibility
 ```
 
+New builds use the stable Nitro contracts v3.2.0 release by default. For local
+development, point `NITRO_CONTRACTS_LOCAL_DIR` at a Nitro 3.x checkout; a sibling
+`../nitro-contracts` checkout is detected automatically:
+
+```bash
+NITRO_CONTRACTS_LOCAL_DIR=../nitro-contracts pnpm dev init --rebuild
+NITRO_CONTRACTS_LOCAL_DIR=../nitro-contracts pnpm dev bake --rebuild \
+  --setup-command "./scripts/deploy-and-seed.sh" \
+  --image-ref ghcr.io/acme/arbitrum-testnode:governance
+```
+
+The checkout determines the contracts family; `init` and `bake` no longer expose
+separate Nitro version or branch selectors. New builds require Nitro 3.x. Existing
+published v2.1 images remain available through `start` and the run action.
+
 To bake straight from an existing snapshot (no setup step), use the à-la-carte
 subcommand:
 
@@ -285,7 +300,8 @@ job — log in before invoking it:
 ```
 
 By default the action installs a base snapshot release (via `github-token`) and
-restores it; set `rebuild: true` to run a full init instead.
+restores it; set `rebuild: true` to run a full init instead. Rebuilds also accept
+`nitro-contracts-ref` (default `v3.2.0`) and `fee-token-decimals`.
 
 ### Booting a custom image
 
@@ -386,11 +402,11 @@ Publish one variant image from GitHub Actions:
 workflow: Publish Testnode
 version: v0.2.3
 variant: l3-eth
-nitro-contracts-version: v3.2
 snapshot-version: v0.1.6
 ```
 
-Publish every catalog entry by setting `variant` to `all`. Publish every supported Nitro contracts tag by setting `nitro-contracts-version` to `all`.
+Publish every current catalog entry by setting `variant` to `all`. Existing v2.1
+images remain resolvable but are not rebuilt by new releases.
 
 The default Timeboost publish target is `l2-timeboost`, which expects the `l2-timeboost` snapshot ID in the selected snapshot release. It can be published directly with `variant: l2-timeboost` or through the `name: timeboost` entry in `config/testnodes.json`.
 
