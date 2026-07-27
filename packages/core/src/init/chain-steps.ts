@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Address } from "viem";
 import { parseEther } from "viem";
@@ -43,7 +44,7 @@ const L3_DEPOSIT_TARGET_WEI = 50n * 10n ** 18n;
 const L3_DEPOSIT_RESERVE_WEI = 1n * 10n ** 18n;
 const L3_DEPOSIT_READY_THRESHOLD_WEI = 10n * 10n ** 18n;
 const L2_OWNER_DEPLOYER_FUNDING_WEI = 100n * 10n ** 18n;
-const CONTRACT_DEPLOYER_IMAGE = "nitro-testnode-contract-deployer:latest";
+const CONTRACT_DEPLOYER_IMAGE_BASE = "nitro-testnode-contract-deployer";
 const CONTRACT_DEPLOYER_POLLING_INTERVAL_MS = 100;
 const CONTRACT_DEPLOYER_CREATE2_CONFIRMATIONS = 1;
 const WASM_MODULE_ROOT = "0xdb698a2576298f25448bc092e52cf13b1e24141c997135d70f217d674bbeb69a";
@@ -78,17 +79,114 @@ import {
 
 const builtContractDeployerImages = new Set<string>();
 
+export interface DeployerImageSpec {
+	image: string;
+	dockerfile: string;
+	buildArgs: string[];
+	buildContexts: string[];
+	// Skip the cross-run `docker image inspect` reuse (an override's source may
+	// have changed since a prior run) while still honoring the in-run build cache.
+	skipInspectCache: boolean;
+}
+
+function sanitizeImageTagComponent(value: string): string {
+	const slug = value
+		.toLowerCase()
+		.replace(/[^a-z0-9._-]+/g, "-")
+		.replace(/^[-.]+|[-.]+$/g, "")
+		.slice(0, 28);
+	return slug === "" ? "custom" : slug;
+}
+
+function sourceTag(prefix: string, identity: string): string {
+	const slug = sanitizeImageTagComponent(identity);
+	const digest = createHash("sha256").update(identity).digest("hex").slice(0, 12);
+	return `${prefix}-${slug}-${digest}`;
+}
+
+/**
+ * Verify NITRO_CONTRACTS_LOCAL_DIR points at a nitro-contracts checkout before
+ * we hand it to `docker build --build-context`, so a wrong path surfaces as an
+ * actionable error instead of a cryptic build failure. Mirrors
+ * assertTokenBridgeDepsPresent.
+ */
+export function assertNitroContractsLocalDir(dir: string): void {
+	const packageJson = resolve(dir, "package.json");
+	if (!existsSync(packageJson)) {
+		throw new Error(
+			`NITRO_CONTRACTS_LOCAL_DIR is set to ${dir} but no package.json was found there ` +
+				`(expected ${packageJson}). Point NITRO_CONTRACTS_LOCAL_DIR at a nitro-contracts checkout.`,
+		);
+	}
+}
+
+/**
+ * Resolve which contract-deployer image to build/run. By default this is the
+ * version-pinned `:latest` image built from the commit baked into the
+ * Dockerfile. Setting NITRO_CONTRACTS_LOCAL_DIR (a local checkout) or
+ * NITRO_CONTRACTS_BRANCH (a branch/commit) overrides ONLY the nitro-contracts
+ * source the image is built from — mirroring TOKEN_BRIDGE_LOCAL_DIR. The
+ * `--nitro-contracts-version` enum still selects the Dockerfile/build recipe.
+ * Local dir wins over branch when both are set.
+ */
+export function resolveDeployerImageSpec(
+	opts: { isV21?: boolean; nitroContractsBranch?: string | undefined } = {},
+): DeployerImageSpec {
+	const isV21 = opts.isV21 ?? false;
+	const baseImage = isV21 ? `${CONTRACT_DEPLOYER_IMAGE_BASE}-v2.1` : CONTRACT_DEPLOYER_IMAGE_BASE;
+	const dockerfile = isV21
+		? "docker/contract-deployer-v2.1.Dockerfile"
+		: "docker/contract-deployer.Dockerfile";
+
+	const localDir = process.env["NITRO_CONTRACTS_LOCAL_DIR"];
+	if (localDir && localDir.trim() !== "") {
+		const absDir = resolve(localDir.trim());
+		assertNitroContractsLocalDir(absDir);
+		return {
+			image: `${baseImage}:${sourceTag("local", absDir)}`,
+			dockerfile,
+			buildArgs: ["--build-arg", "NITRO_CONTRACTS_SOURCE=local"],
+			buildContexts: ["--build-context", `nitrocontracts=${absDir}`],
+			skipInspectCache: true,
+		};
+	}
+
+	const branch = opts.nitroContractsBranch ?? process.env["NITRO_CONTRACTS_BRANCH"];
+	if (branch && branch.trim() !== "") {
+		const ref = branch.trim();
+		return {
+			image: `${baseImage}:${sourceTag("nc", ref)}`,
+			dockerfile,
+			buildArgs: ["--build-arg", `NITRO_CONTRACTS_BRANCH=${ref}`],
+			buildContexts: [],
+			skipInspectCache: true,
+		};
+	}
+
+	return {
+		image: `${baseImage}:latest`,
+		dockerfile,
+		buildArgs: [],
+		buildContexts: [],
+		skipInspectCache: false,
+	};
+}
+
 async function ensureContractDeployerImage(
 	runtime: InitRuntime,
-	image: string = CONTRACT_DEPLOYER_IMAGE,
-	dockerfile = "docker/contract-deployer.Dockerfile",
+	spec: DeployerImageSpec,
 	forceRebuild = false,
 ): Promise<void> {
-	if (builtContractDeployerImages.has(image) && !forceRebuild) {
-		console.log(`[init] Contract deployer image already checked: ${image}`);
+	const { image, dockerfile, buildArgs, buildContexts, skipInspectCache } = spec;
+	// forceRebuild (stale-image recovery) must rebuild even if we already built
+	// this tag this run; drop the in-run marker so the build below actually runs.
+	if (forceRebuild) {
+		builtContractDeployerImages.delete(image);
+	} else if (builtContractDeployerImages.has(image)) {
+		console.log(`[init] Contract deployer image already built this run: ${image}`);
 		return;
 	}
-	if (!forceRebuild) {
+	if (!forceRebuild && !skipInspectCache) {
 		console.log(`[init] Checking contract deployer image: ${image}`);
 		const inspect = exec("docker", ["image", "inspect", image], {
 			timeout: 30_000,
@@ -99,12 +197,20 @@ async function ensureContractDeployerImage(
 			return;
 		}
 	}
+	if (buildContexts.length > 0) {
+		// `--build-context` needs BuildKit; Docker 23+ enables it by default, but
+		// set it explicitly so an older daemon doesn't fall back to the classic
+		// builder (which can't resolve named build contexts).
+		process.env["DOCKER_BUILDKIT"] ??= "1";
+	}
 	console.log(`[init] Building contract deployer image: ${image}`);
 	execOrThrow(
 		"docker",
 		[
 			"build",
 			"--progress=plain",
+			...buildArgs,
+			...buildContexts,
 			"-t",
 			image,
 			"-f",
@@ -124,15 +230,18 @@ async function deployRollupCreatorViaDocker(
 		dockerParentRpc: string;
 		deployerKey: string;
 		maxDataSize: string;
-		image?: string;
-		dockerfile?: string;
+		isV21?: boolean;
+		nitroContractsBranch?: string | undefined;
 		retryAfterImageRebuild?: boolean;
 	},
 ): Promise<RollupCreatorDeployment> {
 	const retryAfterImageRebuild = params.retryAfterImageRebuild ?? true;
-	const image = params.image ?? CONTRACT_DEPLOYER_IMAGE;
-	const dockerfile = params.dockerfile ?? "docker/contract-deployer.Dockerfile";
-	await ensureContractDeployerImage(runtime, image, dockerfile);
+	const spec = resolveDeployerImageSpec({
+		isV21: params.isV21 ?? false,
+		nitroContractsBranch: params.nitroContractsBranch,
+	});
+	const image = spec.image;
+	await ensureContractDeployerImage(runtime, spec);
 	await waitForRpc(params.hostParentRpc);
 	console.log(`[init] Deploying RollupCreator on ${params.dockerParentRpc}`);
 	const args = [
@@ -173,7 +282,7 @@ async function deployRollupCreatorViaDocker(
 	if (!output.stakeToken) {
 		if (retryAfterImageRebuild) {
 			console.warn("[init] Contract deployer image is stale; rebuilding and retrying once");
-			await ensureContractDeployerImage(runtime, image, dockerfile, true);
+			await ensureContractDeployerImage(runtime, spec, true);
 			return deployRollupCreatorViaDocker(runtime, {
 				...params,
 				retryAfterImageRebuild: false,
@@ -195,9 +304,16 @@ async function deployTimeboostAuctionViaDocker(
 		hostRpc: string;
 		dockerRpc: string;
 		deployerKey: string;
+		nitroContractsBranch?: string | undefined;
 	},
 ): Promise<TimeboostAuctionDeployment> {
-	await ensureContractDeployerImage(runtime);
+	// Timeboost is L2-only (v3.2); resolve the same deployer spec so a
+	// nitro-contracts source override applies here too.
+	const spec = resolveDeployerImageSpec({
+		isV21: false,
+		nitroContractsBranch: params.nitroContractsBranch,
+	});
+	await ensureContractDeployerImage(runtime, spec);
 	await waitForRpc(params.hostRpc);
 	console.log(`[init] Deploying Timeboost auction contract on ${params.dockerRpc}`);
 	const args = [
@@ -227,7 +343,7 @@ async function deployTimeboostAuctionViaDocker(
 		`TIMEBOOST_BENEFICIARY_ADDRESS=${accounts.l2owner.address}`,
 		"-e",
 		"TIMEBOOST_AUCTION_OUTPUT=/config/timeboost-auction.json",
-		CONTRACT_DEPLOYER_IMAGE,
+		spec.image,
 		"hardhat",
 		"run",
 		"--no-compile",
@@ -286,7 +402,10 @@ function createL1Steps(runtime: InitRuntime): Record<string, StepRunner> {
 	};
 }
 
-function createL2DeploySteps(runtime: InitRuntime): Record<string, StepRunner> {
+function createL2DeploySteps(
+	runtime: InitRuntime,
+	nitroContractsBranch?: string,
+): Record<string, StepRunner> {
 	return {
 		"deploy-l2-rollup": async (state) => {
 			writeChainConfig(runtime.configDir, "l2_chain_config.json", {
@@ -298,6 +417,7 @@ function createL2DeploySteps(runtime: InitRuntime): Record<string, StepRunner> {
 				dockerParentRpc: L1_RPC_DOCKER,
 				deployerKey: accounts.l2owner.privateKey,
 				maxDataSize: "117964",
+				nitroContractsBranch,
 			});
 			await deployRollupViaSdk({
 				chainConfigPath: resolve(runtime.configDir, "l2_chain_config.json"),
@@ -382,7 +502,10 @@ function createL2DeploySteps(runtime: InitRuntime): Record<string, StepRunner> {
 	};
 }
 
-function createL2RuntimeSteps(runtime: InitRuntime): Record<string, StepRunner> {
+function createL2RuntimeSteps(
+	runtime: InitRuntime,
+	nitroContractsBranch?: string,
+): Record<string, StepRunner> {
 	return {
 		"start-l2": async (state) => {
 			composeUp(["sequencer", "validator"], runtime.dockerOpts);
@@ -397,6 +520,7 @@ function createL2RuntimeSteps(runtime: InitRuntime): Record<string, StepRunner> 
 				hostRpc: L2_RPC,
 				dockerRpc: L2_RPC_DOCKER,
 				deployerKey: accounts.l2owner.privateKey,
+				nitroContractsBranch,
 			});
 			return markStepDone(state, "deploy-timeboost-auction", { ...deployment });
 		},
@@ -586,6 +710,7 @@ async function deployL3Rollup(
 	runtime: InitRuntime,
 	feeTokenDecimals: number | undefined,
 	isV21: boolean,
+	nitroContractsBranch?: string,
 ): Promise<InitState> {
 	await fundL3DeployerAccounts();
 	writeChainConfig(runtime.configDir, "l3_chain_config.json", {
@@ -606,12 +731,8 @@ async function deployL3Rollup(
 		dockerParentRpc: L2_RPC_DOCKER,
 		deployerKey: accounts.l3owner.privateKey,
 		maxDataSize: "104857",
-		...(isV21
-			? {
-					image: "nitro-testnode-contract-deployer-v2.1:latest",
-					dockerfile: "docker/contract-deployer-v2.1.Dockerfile",
-				}
-			: {}),
+		isV21,
+		nitroContractsBranch,
 	});
 	await deployRollupViaSdk({
 		chainConfigPath: resolve(runtime.configDir, "l3_chain_config.json"),
@@ -657,10 +778,12 @@ function createL3Steps(
 	runtime: InitRuntime,
 	feeTokenDecimals?: number,
 	nitroContractsVersion?: string,
+	nitroContractsBranch?: string,
 ): Record<string, StepRunner> {
 	const isV21 = nitroContractsVersion === "v2.1";
 	return {
-		"deploy-l3-rollup": (state) => deployL3Rollup(state, runtime, feeTokenDecimals, isV21),
+		"deploy-l3-rollup": (state) =>
+			deployL3Rollup(state, runtime, feeTokenDecimals, isV21, nitroContractsBranch),
 		"generate-l3-config": async (state) => {
 			const rollupData = state.steps["deploy-l3-rollup"]?.data;
 			if (!rollupData) {
@@ -821,11 +944,12 @@ export function makeStepRunners(
 	runtime: InitRuntime,
 	feeTokenDecimals?: number,
 	nitroContractsVersion?: string,
+	nitroContractsBranch?: string,
 ): Record<string, StepRunner> {
 	return {
 		...createL1Steps(runtime),
-		...createL2DeploySteps(runtime),
-		...createL2RuntimeSteps(runtime),
-		...createL3Steps(runtime, feeTokenDecimals, nitroContractsVersion),
+		...createL2DeploySteps(runtime, nitroContractsBranch),
+		...createL2RuntimeSteps(runtime, nitroContractsBranch),
+		...createL3Steps(runtime, feeTokenDecimals, nitroContractsVersion, nitroContractsBranch),
 	};
 }

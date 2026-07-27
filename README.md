@@ -180,6 +180,22 @@ pnpm dev bake \
   --push            # optional; docker login is your responsibility
 ```
 
+When rebuilding, `init` and `bake` can build the contract-deployer image from a
+nitro-contracts branch, tag, or commit instead of the Dockerfile's pinned commit:
+
+```bash
+pnpm dev init --rebuild --nitro-contracts-branch feature/my-change
+pnpm dev bake --rebuild \
+  --nitro-contracts-branch feature/my-change \
+  --setup-command "./scripts/deploy-and-seed.sh" \
+  --image-ref ghcr.io/acme/arbitrum-testnode:governance
+```
+
+For local development, set `NITRO_CONTRACTS_LOCAL_DIR` to a nitro-contracts checkout.
+The local checkout takes precedence over `--nitro-contracts-branch`. The
+`--nitro-contracts-version` option still selects the v2.1 or v3.2 deployer recipe;
+the source override only replaces the checkout used by that recipe.
+
 To bake straight from an existing snapshot (no setup step), use the à-la-carte
 subcommand:
 
@@ -208,7 +224,8 @@ job — log in before invoking it:
 ```
 
 By default the action installs a base snapshot release (via `github-token`) and
-restores it; set `rebuild: true` to run a full init instead.
+restores it; set `rebuild: true` to run a full init instead. Rebuilds also accept
+`nitro-contracts-branch`, `nitro-contracts-version`, and `fee-token-decimals`.
 
 ### Booting a custom image
 

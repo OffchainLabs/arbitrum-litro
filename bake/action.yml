@@ -41,6 +41,18 @@ inputs:
     required: false
     default: "v3.2"
     description: "Nitro contracts version passed through to a rebuild init"
+  nitro-contracts-branch:
+    required: false
+    default: ""
+    description: >-
+      Build the core rollup contracts from this nitro-contracts branch/commit
+      (instead of the pinned default) during a rebuild init. Empty = pinned default.
+  fee-token-decimals:
+    required: false
+    default: ""
+    description: >-
+      Custom L3 fee-token decimals (6, 16, 18, or 20) for a rebuild init.
+      Empty = ETH-fee (no custom fee token).
   github-token:
     required: false
     default: ""
@@ -92,6 +104,10 @@ runs:
       shell: bash
       working-directory: ${{ github.action_path }}/..
       env:
+        BASE_SNAPSHOT_ID_INPUT: ${{ inputs.base-snapshot-id }}
+        FEE_TOKEN_DECIMALS_INPUT: ${{ inputs.fee-token-decimals }}
+        NITRO_CONTRACTS_BRANCH_INPUT: ${{ inputs.nitro-contracts-branch }}
+        NITRO_CONTRACTS_VERSION_INPUT: ${{ inputs.nitro-contracts-version }}
         TOKEN_BRIDGE_COMMIT: 5975d8f7360816341be7f94fd333ef240f4aec23
         TOKEN_BRIDGE_LOCAL_DIR: ${{ runner.temp }}/token-bridge-contracts
       run: |
@@ -109,10 +125,17 @@ runs:
             yarn build
           )
         fi
-        base="${{ inputs.base-snapshot-id }}"
+        base="$BASE_SNAPSHOT_ID_INPUT"
+        init_args=(--rebuild --capture-id "$base" --skip-post-capture-verify)
+        init_args+=(--nitro-contracts-version "$NITRO_CONTRACTS_VERSION_INPUT")
+        if [ -n "$NITRO_CONTRACTS_BRANCH_INPUT" ]; then
+          init_args+=(--nitro-contracts-branch "$NITRO_CONTRACTS_BRANCH_INPUT")
+        fi
+        if [ -n "$FEE_TOKEN_DECIMALS_INPUT" ]; then
+          init_args+=(--fee-token-decimals "$FEE_TOKEN_DECIMALS_INPUT")
+        fi
         for attempt in 1 2 3; do
-          if node apps/cli/dist/index.js init --rebuild --capture-id "$base" \
-               --skip-post-capture-verify \
+          if node apps/cli/dist/index.js init "${init_args[@]}" \
              && test -f "config/snapshots/$base/manifest.json"; then
             echo "base snapshot '$base' captured"
             exit 0

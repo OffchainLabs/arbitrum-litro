@@ -61,6 +61,7 @@ async function runInitLoop(
 	rebuild?: boolean,
 	timeboostEnabled?: boolean,
 	nitroContractsVersion?: string,
+	nitroContractsBranch?: string,
 ): Promise<{
 	success: boolean;
 	failedStep?: string;
@@ -69,7 +70,12 @@ async function runInitLoop(
 	steps: string[];
 }> {
 	let state = rebuild ? createState() : (loadState(runtime.configDir) ?? createState());
-	const runners = makeStepRunners(runtime, feeTokenDecimals, nitroContractsVersion);
+	const runners = makeStepRunners(
+		runtime,
+		feeTokenDecimals,
+		nitroContractsVersion,
+		nitroContractsBranch,
+	);
 	const steps = getInitSteps({ timeboostEnabled });
 	const timings: Record<string, number> = {};
 
@@ -117,6 +123,7 @@ export interface InitCommandOptions {
 	captureId?: string | undefined;
 	feeTokenDecimals?: number | undefined;
 	foreground?: boolean | undefined;
+	nitroContractsBranch?: string | undefined;
 	nitroContractsVersion?: string | undefined;
 	rebuild?: boolean | undefined;
 	skipPostCaptureVerify?: boolean | undefined;
@@ -152,6 +159,7 @@ export async function runInitCommand(options: InitCommandOptions, context: InitC
 			snapshotVersion: options.snapshotVersion,
 			feeTokenDecimals,
 			timeboostEnabled: options.timeboostEnabled,
+			nitroContractsBranch: options.nitroContractsBranch,
 			nitroContractsVersion: options.nitroContractsVersion,
 		});
 	}
@@ -177,6 +185,7 @@ async function runInitForeground(
 	runtime: InitRuntime,
 	options: {
 		foreground?: boolean | undefined;
+		nitroContractsBranch?: string | undefined;
 		nitroContractsVersion?: string | undefined;
 		rebuild?: boolean | undefined;
 		skipPostCaptureVerify?: boolean | undefined;
@@ -218,6 +227,7 @@ async function runInitForeground(
 		options.rebuild,
 		options.timeboostEnabled,
 		options.nitroContractsVersion,
+		options.nitroContractsBranch,
 	);
 	const totalElapsed = Date.now() - totalStart;
 	logInitTimeline(result.timings, totalElapsed);
@@ -274,6 +284,7 @@ function startBackgroundInit(
 		snapshotVersion: string | undefined;
 		feeTokenDecimals: number | undefined;
 		timeboostEnabled: boolean | undefined;
+		nitroContractsBranch: string | undefined;
 		nitroContractsVersion: string | undefined;
 	},
 ) {
@@ -283,6 +294,9 @@ function startBackgroundInit(
 			? ["--fee-token-decimals", String(params.feeTokenDecimals)]
 			: []),
 		...(params.timeboostEnabled ? ["--timeboost-enabled"] : []),
+		...(params.nitroContractsBranch
+			? ["--nitro-contracts-branch", params.nitroContractsBranch]
+			: []),
 		...(params.nitroContractsVersion
 			? ["--nitro-contracts-version", params.nitroContractsVersion]
 			: []),

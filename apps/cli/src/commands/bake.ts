@@ -56,12 +56,34 @@ const bakeOptions = z.object({
 		.string()
 		.optional()
 		.describe("Nitro contracts version for a rebuild init (e.g. v2.1, v3.2)"),
+	nitroContractsBranch: z
+		.string()
+		.optional()
+		.describe(
+			"Build the core rollup contracts from this nitro-contracts branch, tag, or commit for a rebuild init",
+		),
 	feeTokenDecimals: z
 		.number()
 		.optional()
 		.describe("Custom fee token decimals (6, 16, 18, or 20) for a rebuild init"),
 	timeboostEnabled: z.boolean().optional().describe("Enable Timeboost for a rebuild init"),
 });
+
+function rebuildInitOptions(options: z.infer<typeof bakeOptions>) {
+	return {
+		rebuild: true,
+		...(options.nitroContractsBranch ? { nitroContractsBranch: options.nitroContractsBranch } : {}),
+		...(options.nitroContractsVersion
+			? { nitroContractsVersion: options.nitroContractsVersion }
+			: {}),
+		...(options.feeTokenDecimals !== undefined
+			? { feeTokenDecimals: options.feeTokenDecimals }
+			: {}),
+		...(options.timeboostEnabled !== undefined
+			? { timeboostEnabled: options.timeboostEnabled }
+			: {}),
+	};
+}
 
 /**
  * Boot the base stack the customization runs against. `--rebuild` runs a full
@@ -75,21 +97,7 @@ async function ensureBaseStack(
 	options: z.infer<typeof bakeOptions>,
 ): Promise<void> {
 	if (options.rebuild) {
-		await runInitCommand(
-			{
-				rebuild: true,
-				...(options.nitroContractsVersion
-					? { nitroContractsVersion: options.nitroContractsVersion }
-					: {}),
-				...(options.feeTokenDecimals !== undefined
-					? { feeTokenDecimals: options.feeTokenDecimals }
-					: {}),
-				...(options.timeboostEnabled !== undefined
-					? { timeboostEnabled: options.timeboostEnabled }
-					: {}),
-			},
-			createInitContext(root),
-		);
+		await runInitCommand(rebuildInitOptions(options), createInitContext(root));
 		return;
 	}
 
