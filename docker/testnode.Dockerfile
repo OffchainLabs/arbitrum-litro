@@ -28,6 +28,7 @@ COPY --from=token-bridge-contracts /usr/local/bin/node /usr/local/bin/node
 COPY --from=token-bridge-contracts /opt/yarn-v1.22.22 /opt/yarn-v1.22.22
 COPY --from=token-bridge-contracts --chown=user:user /workspace /workspace
 COPY --chmod=755 docker/testnode-entrypoint.sh /usr/local/bin/arbitrum-testnode
+COPY docker/configure-parent-chain-poll-interval.mjs /usr/local/bin/configure-parent-chain-poll-interval.mjs
 COPY --chmod=755 docker/testnode-healthcheck.sh /usr/local/bin/healthcheck.sh
 COPY docker/testnode-server.py /usr/local/bin/config-server.py
 COPY .testnode-context/export-config /opt/arbitrum-testnode/export-config
