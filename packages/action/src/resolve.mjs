@@ -18,7 +18,6 @@ const state = buildActionTestnodeState({
 	l3Enabled: process.env["INPUT_L3_ENABLED"],
 	outputDir: process.env["INPUT_OUTPUT_DIR"],
 	runnerTemp: process.env["RUNNER_TEMP"],
-	variant: process.env["INPUT_VARIANT"],
 	version: process.env["INPUT_VERSION"],
 	workspace: process.env["GITHUB_WORKSPACE"],
 });

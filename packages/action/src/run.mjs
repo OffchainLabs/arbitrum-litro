@@ -29,7 +29,6 @@ const state = buildActionTestnodeState({
 	outputDir: process.env["INPUT_OUTPUT_DIR"],
 	runnerTemp: process.env["RUNNER_TEMP"],
 	timeboostEnabled: process.env["INPUT_TIMEBOOST_ENABLED"],
-	variant: process.env["INPUT_VARIANT"],
 	version: process.env["INPUT_VERSION"],
 	workspace: process.env["GITHUB_WORKSPACE"],
 });

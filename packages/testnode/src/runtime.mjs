@@ -354,6 +354,18 @@ function sanitizeContainerName(value) {
 }
 
 /**
+ * @param {string | undefined} version
+ * @param {string | undefined} imageRef
+ */
+function resolveRuntimeVersion(version, imageRef) {
+	const resolvedVersion = version || (imageRef ? "custom" : undefined);
+	if (!resolvedVersion) {
+		throw new Error("version is required when image-ref is not provided");
+	}
+	return resolvedVersion;
+}
+
+/**
  * @param {BaseStateOptions & { defaultOutputDir: (options: { variant: string; version: string }) => string }} options
  * @returns {TestnodeState}
  */
@@ -366,16 +378,11 @@ function buildTestnodeState({
 	l3Enabled,
 	outputDir,
 	timeboostEnabled,
-	variant: variantOverride,
 	version,
 	defaultOutputDir,
 }) {
-	// A full image ref bypasses variant/version image resolution; the variant then
-	// only governs host ports and the TESTNODE_VARIANT env, defaulting to l2.
-	const useImageRef = Boolean(imageRef);
-	const variant = useImageRef
-		? variantOverride || "l2"
-		: resolveVariant({ feeTokenDecimals, l3Enabled, timeboostEnabled });
+	const resolvedImageRef = imageRef?.trim() || undefined;
+	const variant = resolveVariant({ feeTokenDecimals, l3Enabled, timeboostEnabled });
 	const definition = VARIANTS[variant];
 	if (!definition) {
 		throw new Error(`Unknown variant ${variant}`);
@@ -383,8 +390,8 @@ function buildTestnodeState({
 	const resolvedTimeboostEnabled =
 		toBoolean(timeboostEnabled) || definition.timeboostEnabled === true;
 	const resolvedContractsVersion = normalizeNitroContractsVersion(contractsVersion);
-	const resolvedVersion = version;
-	const resolvedOutputDir = outputDir ?? defaultOutputDir({ variant, version });
+	const resolvedVersion = resolveRuntimeVersion(version, resolvedImageRef);
+	const resolvedOutputDir = outputDir ?? defaultOutputDir({ variant, version: resolvedVersion });
 	const resolvedContainerName = sanitizeContainerName(
 		containerName || `arbitrum-testnode-${variant}`,
 	);
@@ -398,8 +405,8 @@ function buildTestnodeState({
 		configDir,
 		containerName: resolvedContainerName,
 		contractsVersion: resolvedContractsVersion,
-		imageRef: imageRef
-			? imageRef
+		imageRef: resolvedImageRef
+			? resolvedImageRef
 			: buildTestnodeImageRef({
 					contractsVersion: resolvedContractsVersion,
 					imageRepository,
@@ -435,7 +442,6 @@ export function buildActionTestnodeState({
 	outputDir,
 	runnerTemp,
 	timeboostEnabled,
-	variant,
 	version,
 	workspace,
 }) {
@@ -452,7 +458,6 @@ export function buildActionTestnodeState({
 				: resolve(workspace || process.cwd(), outputDir)
 			: undefined,
 		timeboostEnabled,
-		variant,
 		version,
 		defaultOutputDir: ({ variant, version: nextVersion }) =>
 			defaultActionOutputDir({ runnerTemp, variant, version: nextVersion }),
@@ -470,7 +475,6 @@ export function buildStartTestnodeState({
 	l3Enabled,
 	outputDir,
 	timeboostEnabled,
-	variant,
 	version,
 }) {
 	return buildTestnodeState({
@@ -486,7 +490,6 @@ export function buildStartTestnodeState({
 				: resolve(cwd, outputDir)
 			: undefined,
 		timeboostEnabled,
-		variant,
 		version,
 		defaultOutputDir: ({ variant, version: nextVersion }) =>
 			defaultStartOutputDir({ cwd, variant, version: nextVersion }),

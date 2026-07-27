@@ -24,7 +24,6 @@ const startFileSchema = z.object({
 	outputDir: z.string().optional(),
 	startupTimeoutSeconds: z.number().optional(),
 	timeboostEnabled: z.boolean().optional(),
-	variant: z.string().optional(),
 	version: z.string().optional(),
 });
 
@@ -43,7 +42,6 @@ interface StartResolvedInput {
 	outputDir: string | undefined;
 	startupTimeoutSeconds: number;
 	timeboostEnabled: boolean;
-	variant: string | undefined;
 	version: string;
 }
 
@@ -159,7 +157,6 @@ export function resolveStartInput(
 		outputDir?: string | undefined;
 		startupTimeoutSeconds?: number | undefined;
 		timeboostEnabled?: boolean | undefined;
-		variant?: string | undefined;
 		imageVersion?: string | undefined;
 	},
 	cwd = process.cwd(),
@@ -190,7 +187,6 @@ export function resolveStartInput(
 		}),
 		startupTimeoutSeconds: options.startupTimeoutSeconds ?? fileConfig.startupTimeoutSeconds ?? 120,
 		timeboostEnabled: options.timeboostEnabled ?? fileConfig.timeboostEnabled ?? false,
-		variant: options.variant ?? fileConfig.variant,
 		version: resolveStartVersion(options.imageVersion, fileConfig.version),
 	};
 }
@@ -217,7 +213,6 @@ export function runStart(
 		l3Enabled: input.l3Enabled,
 		outputDir: input.outputDir,
 		timeboostEnabled: input.timeboostEnabled,
-		variant: input.variant,
 		version: input.version,
 	});
 
@@ -290,10 +285,6 @@ export const startCli = Cli.create("start", {
 			.boolean()
 			.optional()
 			.describe("Enable Timeboost sequencer args and auctioneer/timeboost HTTP APIs"),
-		variant: z
-			.string()
-			.optional()
-			.describe("Variant governing host ports/env when --image-ref is set (default l2)"),
 		imageVersion: z
 			.string()
 			.optional()

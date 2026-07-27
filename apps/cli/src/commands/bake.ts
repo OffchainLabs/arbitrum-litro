@@ -12,10 +12,10 @@ import { bakeSnapshotImage } from "@arbitrum/testnode-core/snapshot-image.js";
 import {
 	DEFAULT_SNAPSHOT_ID,
 	captureSnapshot,
-	getSnapshotDir,
 	hasSnapshot,
 	restoreSnapshot,
 	verifySnapshotSemanticState,
+	withSnapshotReplacementRollback,
 } from "@arbitrum/testnode-core/snapshot.js";
 import { Cli, z } from "incur";
 import { projectRoot } from "../project-root.js";
@@ -151,7 +151,6 @@ export const bakeCli = Cli.create("bake", {
 		const snapshotId = c.options.snapshotId ?? "custom";
 
 		const contextDir = resolve(root, ".testnode-context");
-		let captureStarted = false;
 
 		try {
 			await ensureBaseStack(root, configDir, composeFile, c.options);
@@ -161,15 +160,15 @@ export const bakeCli = Cli.create("bake", {
 			// exporting volumes so the snapshot is internally consistent.
 			await verifySnapshotSemanticState(configDir, RPCS);
 			stopRuntime({ composeFile, projectName: PROJECT_NAME, configDir });
-			captureStarted = true;
-			captureSnapshot(configDir, composeFile, snapshotId);
-
-			const result = bakeSnapshotImage({
-				configDir,
-				snapshotId,
-				imageRef: c.options.imageRef,
-				projectRoot: root,
-				...(c.options.push !== undefined ? { push: c.options.push } : {}),
+			const result = await withSnapshotReplacementRollback(configDir, snapshotId, () => {
+				captureSnapshot(configDir, composeFile, snapshotId);
+				return bakeSnapshotImage({
+					configDir,
+					snapshotId,
+					imageRef: c.options.imageRef,
+					projectRoot: root,
+					...(c.options.push !== undefined ? { push: c.options.push } : {}),
+				});
 			});
 
 			return {
@@ -181,11 +180,6 @@ export const bakeCli = Cli.create("bake", {
 				contextDir: result.contextDir,
 			};
 		} catch (error) {
-			// A failed capture/build must not leave an apparently usable custom
-			// snapshot or docker context for the next attempt.
-			if (captureStarted) {
-				rmSync(getSnapshotDir(configDir, snapshotId), { recursive: true, force: true });
-			}
 			rmSync(contextDir, { recursive: true, force: true });
 			throw error;
 		} finally {

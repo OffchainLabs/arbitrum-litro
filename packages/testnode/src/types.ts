@@ -45,19 +45,14 @@ export interface BaseStateOptions {
 	feeTokenDecimals?: number | string | undefined;
 	/**
 	 * Full image reference (incl. tag) that bypasses variant/version-based image
-	 * resolution. When set, ports/env come from `variant` (default `l2`).
+	 * resolution without changing runtime variant selection.
 	 */
 	imageRef?: string | undefined;
 	imageRepository?: string | undefined;
 	l3Enabled?: boolean | string | undefined;
 	outputDir?: string | undefined;
 	timeboostEnabled?: boolean | string | undefined;
-	/**
-	 * Explicit variant name. Only consulted alongside `imageRef`; otherwise the
-	 * variant is derived from `l3Enabled`/`feeTokenDecimals`/`timeboostEnabled`.
-	 */
-	variant?: string | undefined;
-	version: string;
+	version?: string | undefined;
 }
 
 export type ActionStateOptions = BaseStateOptions & {

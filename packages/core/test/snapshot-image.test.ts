@@ -30,6 +30,10 @@ function writeFixtureSnapshot(configDir: string, snapshotId: string, withL3: boo
 		}),
 	);
 	fs.writeFileSync(path.join(snapshotDir, "anvil-state", "state.json"), "{}");
+	fs.writeFileSync(
+		path.join(snapshotConfigDir, "custom-artifact.bin"),
+		Buffer.from([0, 255, 1, 254]),
+	);
 
 	const makeArchive = (name: string) => {
 		const stageDir = fs.mkdtempSync(path.join(os.tmpdir(), "vol-"));
@@ -41,6 +45,24 @@ function writeFixtureSnapshot(configDir: string, snapshotId: string, withL3: boo
 	if (withL3) {
 		makeArchive("l3node-data.tar");
 	}
+	fs.writeFileSync(
+		path.join(snapshotDir, "manifest.json"),
+		`${JSON.stringify({
+			version: 1,
+			snapshotId,
+			createdAt: "2026-01-01T00:00:00.000Z",
+			nitroNodeImage: "offchainlabs/nitro-node:test",
+			chainIds: { l1: 1337, l2: 412346, l3: 333333 },
+			rollups: { l2: "0x0", l3: "0x0" },
+			requiredFiles: [],
+			configChecksums: {},
+			volumeArchives: [
+				"volumes/sequencer-data.tar",
+				"volumes/validator-data.tar",
+				...(withL3 ? ["volumes/l3node-data.tar"] : []),
+			],
+		})}\n`,
+	);
 }
 
 describe("prepareTestnodeContext", () => {
@@ -95,6 +117,9 @@ describe("prepareTestnodeContext", () => {
 			true,
 		);
 		expect(fs.existsSync(path.join(outputDir, "runtime", "anvil-state", "state.json"))).toBe(true);
+		expect(fs.readFileSync(path.join(outputDir, "runtime-config", "custom-artifact.bin"))).toEqual(
+			Buffer.from([0, 255, 1, 254]),
+		);
 
 		const metadata = JSON.parse(
 			fs.readFileSync(path.join(outputDir, "metadata.json"), "utf-8"),
@@ -132,9 +157,9 @@ describe("prepareTestnodeContext", () => {
 		expect(fs.existsSync(path.join(outputDir, "runtime", "l3node"))).toBe(false);
 	});
 
-	it("throws when the snapshot directory is missing", () => {
+	it("throws when the snapshot manifest is missing", () => {
 		expect(() => prepareTestnodeContext({ configDir, snapshotId: "nope", outputDir })).toThrow(
-			/Snapshot directory not found/,
+			/Snapshot manifest not found/,
 		);
 	});
 });

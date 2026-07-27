@@ -90,10 +90,11 @@ describe("buildStartTestnodeState", () => {
 		expect(state.paths.l2l3Network).toBe("");
 	});
 
-	it("boots a full image-ref, defaulting the variant to l2", () => {
+	it("boots a full image-ref without changing variant resolution", () => {
 		const state = buildStartTestnodeState({
 			cwd: "/workspace/project",
 			imageRef: "ghcr.io/acme/testnode:custom",
+			l3Enabled: false,
 			version: "v1.2.3",
 		});
 
@@ -107,11 +108,11 @@ describe("buildStartTestnodeState", () => {
 		expect(args).toContain("ghcr.io/acme/testnode:custom");
 	});
 
-	it("honors an explicit variant alongside an image-ref for L3 ports", () => {
+	it("uses the existing l3-enabled option with an image-ref", () => {
 		const state = buildStartTestnodeState({
 			cwd: "/workspace/project",
 			imageRef: "ghcr.io/acme/testnode:custom-l3",
-			variant: "l3-eth",
+			l3Enabled: true,
 			version: "v1.2.3",
 		});
 

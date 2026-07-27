@@ -14,7 +14,7 @@ export interface RuntimeRpcs {
 // runners; TESTNODE_RPC_TIMEOUT_MS lets a caller extend the readiness budget.
 function rpcTimeoutMs(): number {
 	const raw = process.env["TESTNODE_RPC_TIMEOUT_MS"];
-	const parsed = raw ? Number(raw) : NaN;
+	const parsed = raw ? Number(raw) : Number.NaN;
 	return Number.isFinite(parsed) && parsed > 0 ? parsed : 120_000;
 }
 

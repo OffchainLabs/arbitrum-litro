@@ -13,21 +13,12 @@ import { execOrThrow } from "./exec.js";
 import {
 	getSnapshotAnvilStateDir,
 	getSnapshotConfigDir,
-	getSnapshotDir,
 	getSnapshotVolumesDir,
-	loadSnapshotManifest,
+	verifySnapshotManifest,
 } from "./snapshot.js";
 
 /**
  * Turn a captured snapshot into a runnable testnode docker image.
- *
- * This promotes the layout + docker-URL rewriting that the release workflow's
- * `scripts/ci/prepare-testnode-context.mjs` performs, but keeps it independent
- * of the closed variant catalog so downstream repos can bake images from their
- * own custom snapshots (deploy contracts / seed activity → `snapshot build` →
- * `bake`). The CI script stays a standalone re-implementation because it runs
- * on the un-built `.mjs` sources (no compiled core available); keep the two in
- * sync when the runtime layout changes.
  */
 
 const SEQUENCER_ARCHIVE = "sequencer-data.tar";
@@ -52,15 +43,17 @@ const EXPORT_CONFIG_REPLACEMENTS: ReadonlyArray<readonly [string, string]> = [
 	["http://127.0.0.1:8549", "http://127.0.0.1:3347"],
 ];
 
-function walkFiles(path: string): string[] {
+function walkJsonFiles(path: string): string[] {
 	const files: string[] = [];
 	for (const entry of readdirSync(path)) {
 		const fullPath = join(path, entry);
 		if (statSync(fullPath).isDirectory()) {
-			files.push(...walkFiles(fullPath));
+			files.push(...walkJsonFiles(fullPath));
 			continue;
 		}
-		files.push(fullPath);
+		if (entry.endsWith(".json")) {
+			files.push(fullPath);
+		}
 	}
 	return files;
 }
@@ -69,7 +62,7 @@ function rewriteTree(
 	rootDir: string,
 	replacements: ReadonlyArray<readonly [string, string]>,
 ): void {
-	for (const filePath of walkFiles(rootDir)) {
+	for (const filePath of walkJsonFiles(rootDir)) {
 		const next = replacements.reduce(
 			(content, [pattern, value]) => content.replaceAll(pattern, value),
 			readFileSync(filePath, "utf-8"),
@@ -114,7 +107,8 @@ export interface PrepareContextResult {
  * variant catalog.
  */
 export function snapshotHasL3(configDir: string, snapshotId: string): boolean {
-	return existsSync(join(getSnapshotVolumesDir(configDir, snapshotId), L3NODE_ARCHIVE));
+	const manifest = verifySnapshotManifest(configDir, snapshotId);
+	return manifest.volumeArchives.includes(join("volumes", L3NODE_ARCHIVE));
 }
 
 /**
@@ -123,12 +117,9 @@ export function snapshotHasL3(configDir: string, snapshotId: string): boolean {
  * runnable image, rewriting docker-internal URLs to host URLs.
  */
 export function prepareTestnodeContext(options: PrepareContextOptions): PrepareContextResult {
-	const snapshotDir = getSnapshotDir(options.configDir, options.snapshotId);
-	if (!existsSync(snapshotDir)) {
-		throw new Error(`Snapshot directory not found: ${snapshotDir}`);
-	}
-
-	const l3Enabled = options.l3Enabled ?? snapshotHasL3(options.configDir, options.snapshotId);
+	const manifest = verifySnapshotManifest(options.configDir, options.snapshotId);
+	const l3Enabled =
+		options.l3Enabled ?? manifest.volumeArchives.includes(join("volumes", L3NODE_ARCHIVE));
 	const outputDir = resolve(options.outputDir);
 	const runtimeConfigDir = join(outputDir, "runtime-config");
 	const exportConfigDir = join(outputDir, "export-config");
@@ -152,14 +143,13 @@ export function prepareTestnodeContext(options: PrepareContextOptions): PrepareC
 	rewriteTree(runtimeConfigDir, RUNTIME_CONFIG_REPLACEMENTS);
 	rewriteTree(exportConfigDir, EXPORT_CONFIG_REPLACEMENTS);
 
-	const manifest = loadSnapshotManifest(options.configDir, options.snapshotId);
 	writeFileSync(
 		join(outputDir, "metadata.json"),
 		`${JSON.stringify(
 			{
 				l3Enabled,
 				nitroContractsVersion:
-					options.nitroContractsVersion ?? manifest?.nitroContractsVersion ?? "",
+					options.nitroContractsVersion ?? manifest.nitroContractsVersion ?? "",
 				snapshotId: options.snapshotId,
 				testnodeName: options.testnodeName ?? "",
 				variant: options.variant ?? "",

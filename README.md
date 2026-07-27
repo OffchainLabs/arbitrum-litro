@@ -213,8 +213,9 @@ restores it; set `rebuild: true` to run a full init instead.
 ### Booting a custom image
 
 Both the CLI and the action accept a full `image-ref` that bypasses variant/version
-tag resolution. The `variant` governs host ports and the `TESTNODE_VARIANT` env, and
-defaults to `l2` (pass `l3-eth` for an L3-enabled image).
+tag resolution. Existing runtime options still govern ports and services, so set
+L3, fee-token, and Timeboost options to match the contents of the custom image.
+The CLI retains its L3-enabled default; the action retains its L2-only default.
 
 Locally:
 
@@ -228,6 +229,7 @@ In CI:
 - uses: OffchainLabs/arbitrum-testnode@v0.2.6
   with:
     image-ref: ghcr.io/acme/arbitrum-testnode:governance
+    l3-enabled: false
     github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
@@ -343,7 +345,8 @@ Derived from the official nitro-testnode mnemonic. All accounts are pre-funded o
 
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `version` | Yes | — | Release version for the testnode image tag |
+| `version` | Conditional | — | Release version for catalog images; omit when `image-ref` is set |
+| `image-ref` | No | — | Full image reference that bypasses catalog tag resolution |
 | `l3-enabled` | No | `false` | Boot the L3-enabled testnode |
 | `github-token` | No | — | Token for GHCR authentication |
 | `image-repository` | No | `ghcr.io/offchainlabs/arbitrum-testnode-ci` | Container image repository |
