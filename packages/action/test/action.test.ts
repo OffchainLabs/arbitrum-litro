@@ -28,6 +28,21 @@ describe("action metadata", () => {
 	});
 });
 
+describe("bake action metadata", () => {
+	const action = readFileSync("bake/action.yml", "utf-8");
+
+	it("passes the selected Nitro contracts version to every rebuild init attempt", () => {
+		expect(action).toContain('default: "v3.2"');
+		expect(action).toContain(
+			"NITRO_CONTRACTS_VERSION_INPUT: ${{ inputs.nitro-contracts-version }}",
+		);
+		expect(action).toContain(
+			'init_args+=(--nitro-contracts-version "$NITRO_CONTRACTS_VERSION_INPUT")',
+		);
+		expect(action).toContain('node apps/cli/dist/index.js init "${init_args[@]}"');
+	});
+});
+
 describe("resolveVariant", () => {
 	it("uses l2 when l3 is disabled", () => {
 		expect(resolveVariant({ l3Enabled: "false" })).toBe("l2");
