@@ -1,0 +1,147 @@
+name: Bake Custom Arbitrum Testnode Image
+description: >-
+  Boot a base Arbitrum testnode, run a downstream setup command against it,
+  snapshot the result, and build (optionally push) a runnable custom image.
+inputs:
+  setup-command:
+    required: true
+    description: >-
+      Shell command run against the booted base stack. Receives
+      ARBITRUM_TESTNODE_L1_RPC_URL, ARBITRUM_TESTNODE_L2_RPC_URL,
+      ARBITRUM_TESTNODE_L3_RPC_URL, ARBITRUM_TESTNODE_CONFIG_DIR and
+      ARBITRUM_TESTNODE_DEPLOYMENT_JSON in its environment.
+  image-ref:
+    required: true
+    description: "Full image reference incl. tag to build (e.g. ghcr.io/acme/testnode:custom)"
+  push:
+    required: false
+    default: "true"
+    description: "docker push the baked image (registry login is the caller's responsibility)"
+  snapshot-id:
+    required: false
+    default: "custom"
+    description: "Snapshot id the customized stack is captured under"
+  rebuild:
+    required: false
+    default: "false"
+    description: "Run a full init for the base stack instead of installing/restoring a base snapshot"
+  base-snapshot-id:
+    required: false
+    default: "default"
+    description: "Base snapshot id to install and restore when not rebuilding"
+  snapshot-repo:
+    required: false
+    default: "OffchainLabs/arbitrum-testnode"
+    description: "owner/repo hosting base snapshot releases (used when not rebuilding)"
+  version:
+    required: false
+    default: ""
+    description: "Base snapshot release tag to install (defaults to latest) when not rebuilding"
+  nitro-contracts-version:
+    required: false
+    default: "v3.2"
+    description: "Nitro contracts version passed through to a rebuild init"
+  github-token:
+    required: false
+    default: ""
+    description: "Token used to download base snapshot releases (the snapshot-install path)"
+runs:
+  using: composite
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        # Node 20 abandons an unsettled promise as a silent exit-13 (losing all
+        # output) in the bake's async restore path; 22 propagates errors
+        # normally. Node 20 is also deprecated on GitHub runners.
+        node-version: 22
+
+    - name: Setup pnpm
+      uses: pnpm/action-setup@v4
+
+    - name: Build the testnode CLI
+      shell: bash
+      working-directory: ${{ github.action_path }}/..
+      run: |
+        pnpm install --frozen-lockfile
+        pnpm build
+
+    - name: Install base snapshot
+      if: ${{ inputs.rebuild != 'true' }}
+      shell: bash
+      working-directory: ${{ github.action_path }}/..
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        TESTNODE_SNAPSHOT_GH_REPO: ${{ inputs.snapshot-repo }}
+      run: |
+        set -euo pipefail
+        node apps/cli/dist/index.js snapshot install \
+          --id "${{ inputs.base-snapshot-id }}" \
+          --force \
+          ${{ inputs.version != '' && format('--release-tag {0}', inputs.version) || '' }}
+
+    # No base-snapshot release exists for the default variant, so rebuild the
+    # base stack from scratch and capture it locally. init needs a
+    # token-bridge-contracts checkout with installed deps (it deploys the bridge
+    # via ts-node) and is intermittently flaky on cold runners, so provision the
+    # pinned checkout and retry until the snapshot manifest lands. The
+    # subsequent bake then restores this local snapshot — isolating the flaky
+    # init from the expensive setup-command.
+    - name: Rebuild and capture base snapshot
+      if: ${{ inputs.rebuild == 'true' }}
+      shell: bash
+      working-directory: ${{ github.action_path }}/..
+      env:
+        BASE_SNAPSHOT_ID_INPUT: ${{ inputs.base-snapshot-id }}
+        NITRO_CONTRACTS_VERSION_INPUT: ${{ inputs.nitro-contracts-version }}
+        TOKEN_BRIDGE_COMMIT: 5975d8f7360816341be7f94fd333ef240f4aec23
+        TOKEN_BRIDGE_LOCAL_DIR: ${{ runner.temp }}/token-bridge-contracts
+      run: |
+        set -euxo pipefail
+        npm install -g yarn@1.22.22
+        if [ ! -f "$TOKEN_BRIDGE_LOCAL_DIR/node_modules/ts-node/dist/bin.js" ]; then
+          mkdir -p "$TOKEN_BRIDGE_LOCAL_DIR"
+          (
+            cd "$TOKEN_BRIDGE_LOCAL_DIR"
+            git init .
+            git remote add origin https://github.com/OffchainLabs/token-bridge-contracts.git
+            git fetch --depth 1 origin "$TOKEN_BRIDGE_COMMIT"
+            git checkout --detach FETCH_HEAD
+            yarn install --frozen-lockfile
+            yarn build
+          )
+        fi
+        base="$BASE_SNAPSHOT_ID_INPUT"
+        init_args=(--rebuild --capture-id "$base" --skip-post-capture-verify)
+        init_args+=(--nitro-contracts-version "$NITRO_CONTRACTS_VERSION_INPUT")
+        for attempt in 1 2 3; do
+          if node apps/cli/dist/index.js init "${init_args[@]}" \
+             && test -f "config/snapshots/$base/manifest.json"; then
+            echo "base snapshot '$base' captured"
+            exit 0
+          fi
+          echo "init attempt $attempt did not capture; cleaning and retrying"
+          node apps/cli/dist/index.js clean || true
+        done
+        echo "base init failed to capture after 3 attempts" >&2
+        exit 1
+
+    - name: Bake custom testnode image
+      shell: bash
+      working-directory: ${{ github.action_path }}/..
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        TESTNODE_SNAPSHOT_GH_REPO: ${{ inputs.snapshot-repo }}
+        # Booting nitro from the restored snapshot is slower on cold CI runners
+        # than the default 120s budget.
+        TESTNODE_RPC_TIMEOUT_MS: "300000"
+      run: |
+        set -euo pipefail
+        node apps/cli/dist/index.js bake \
+          --setup-command "${{ inputs.setup-command }}" \
+          --setup-working-directory "${{ github.workspace }}" \
+          --image-ref "${{ inputs.image-ref }}" \
+          --snapshot-id "${{ inputs.snapshot-id }}" \
+          --base-snapshot-id "${{ inputs.base-snapshot-id }}" \
+          --nitro-contracts-version "${{ inputs.nitro-contracts-version }}" \
+          ${{ inputs.push == 'true' && '--push' || '' }}

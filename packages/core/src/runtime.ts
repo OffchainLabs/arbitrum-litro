@@ -10,6 +10,14 @@ export interface RuntimeRpcs {
 	l3: string;
 }
 
+// Booting nitro from a snapshot can exceed the default 120s on cold/loaded CI
+// runners; TESTNODE_RPC_TIMEOUT_MS lets a caller extend the readiness budget.
+function rpcTimeoutMs(): number {
+	const raw = process.env["TESTNODE_RPC_TIMEOUT_MS"];
+	const parsed = raw ? Number(raw) : Number.NaN;
+	return Number.isFinite(parsed) && parsed > 0 ? parsed : 120_000;
+}
+
 export interface RuntimeOptions {
 	composeFile: string;
 	projectName: string;
@@ -64,7 +72,7 @@ export async function startNitroFromSnapshot(
 	if (l2Result.exitCode !== 0) {
 		throw new Error(l2Result.stderr.trim() || "failed to start L2 services");
 	}
-	await waitForRpc(rpcs.l2, 120_000);
+	await waitForRpc(rpcs.l2, rpcTimeoutMs());
 
 	const l3Result = composeUp(["l3node"], {
 		composeFile: options.composeFile,
@@ -73,5 +81,5 @@ export async function startNitroFromSnapshot(
 	if (l3Result.exitCode !== 0) {
 		throw new Error(l3Result.stderr.trim() || "failed to start l3node");
 	}
-	await waitForRpc(rpcs.l3, 120_000);
+	await waitForRpc(rpcs.l3, rpcTimeoutMs());
 }

@@ -4,8 +4,10 @@ import {
 	cpSync,
 	existsSync,
 	mkdirSync,
+	mkdtempSync,
 	readFileSync,
 	readdirSync,
+	renameSync,
 	rmSync,
 	statSync,
 	writeFileSync,
@@ -365,6 +367,41 @@ export function invalidateSnapshot(configDir: string, snapshotId = DEFAULT_SNAPS
 	}
 	rmSync(snapshotDir, { recursive: true, force: true });
 	return true;
+}
+
+/**
+ * Replace a snapshot without losing the previous valid copy when a later step
+ * fails. The backup lives beside the snapshot so restoration is a same-filesystem
+ * rename.
+ */
+export async function withSnapshotReplacementRollback<T>(
+	configDir: string,
+	snapshotId: string,
+	operation: () => Promise<T> | T,
+): Promise<T> {
+	const snapshotsDir = getSnapshotsDir(configDir);
+	ensureDirectory(snapshotsDir);
+	const snapshotDir = getSnapshotDir(configDir, snapshotId);
+	const backupRoot = mkdtempSync(join(snapshotsDir, ".bake-backup-"));
+	const backupSnapshotDir = join(backupRoot, "snapshot");
+	const hadPreviousSnapshot = existsSync(snapshotDir);
+
+	if (hadPreviousSnapshot) {
+		renameSync(snapshotDir, backupSnapshotDir);
+	}
+
+	try {
+		const result = await operation();
+		rmSync(backupRoot, { recursive: true, force: true });
+		return result;
+	} catch (error) {
+		rmSync(snapshotDir, { recursive: true, force: true });
+		if (hadPreviousSnapshot) {
+			renameSync(backupSnapshotDir, snapshotDir);
+		}
+		rmSync(backupRoot, { recursive: true, force: true });
+		throw error;
+	}
 }
 
 export function publishSnapshotArtifacts(

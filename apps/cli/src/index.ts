@@ -2,6 +2,7 @@
 
 import { readFileSync } from "node:fs";
 import { Cli } from "incur";
+import { bakeCli } from "./commands/bake.js";
 import { cleanCli } from "./commands/clean.js";
 import { initCli } from "./commands/init.js";
 import { logsCli } from "./commands/logs.js";
@@ -22,6 +23,7 @@ export function createCli() {
 		mcp: { agents: ["claude-code"] },
 	})
 		.command(startCli)
+		.command(bakeCli)
 		.command(initCli)
 		.command(logsCli)
 		.command(snapshotCli)

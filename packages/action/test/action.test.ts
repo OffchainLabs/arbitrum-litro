@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
 	DEFAULT_NITRO_CONTRACTS_VERSION,
@@ -8,6 +9,39 @@ import {
 	resolveVariant,
 	testnodeDockerRunArgs,
 } from "../src/lib.mjs";
+
+describe("action metadata", () => {
+	const action = readFileSync("action.yml", "utf-8");
+	const inputs = action.slice(action.indexOf("inputs:"), action.indexOf("outputs:"));
+
+	it("makes version optional and resolves registry behavior from the effective image ref", () => {
+		expect(action).toContain(
+			'description: "Pinned release version; required unless image-ref is set"',
+		);
+		expect(action).toContain("startsWith(steps.resolve.outputs.image-ref, 'ghcr.io/')");
+		expect(action).toContain("!startsWith(steps.resolve.outputs.image-ref, 'local/')");
+	});
+
+	it("does not expose a second variant-selection input", () => {
+		expect(inputs).not.toMatch(/^ {2}variant:\s*$/m);
+		expect(action).not.toContain("INPUT_VARIANT");
+	});
+});
+
+describe("bake action metadata", () => {
+	const action = readFileSync("bake/action.yml", "utf-8");
+
+	it("passes the selected Nitro contracts version to every rebuild init attempt", () => {
+		expect(action).toContain('default: "v3.2"');
+		expect(action).toContain(
+			"NITRO_CONTRACTS_VERSION_INPUT: ${{ inputs.nitro-contracts-version }}",
+		);
+		expect(action).toContain(
+			'init_args+=(--nitro-contracts-version "$NITRO_CONTRACTS_VERSION_INPUT")',
+		);
+		expect(action).toContain('node apps/cli/dist/index.js init "${init_args[@]}"');
+	});
+});
 
 describe("resolveVariant", () => {
 	it("uses l2 when l3 is disabled", () => {
@@ -123,6 +157,60 @@ describe("buildActionTestnodeState", () => {
 		);
 		expect(args).not.toContain("redis://timeboost-redis:6379");
 		expect(args).not.toContain("redis:7-alpine");
+	});
+
+	it("bypasses variant/version image resolution when an image-ref is given", () => {
+		const state = buildActionTestnodeState({
+			imageRef: "ghcr.io/acme/testnode:custom",
+			l3Enabled: "false",
+			runnerTemp: "/tmp/runner",
+		});
+
+		expect(state.imageRef).toBe("ghcr.io/acme/testnode:custom");
+		expect(state.variant).toBe("l2");
+		expect(state.rpcUrls.l3).toBe("");
+		expect(state.outputDir).toBe("/tmp/runner/arbitrum-testnode/custom/l2");
+	});
+
+	it("uses the existing l3-enabled option with an image-ref for L3 ports", () => {
+		const state = buildActionTestnodeState({
+			imageRef: "ghcr.io/acme/testnode:custom-l3",
+			l3Enabled: "true",
+			runnerTemp: "/tmp/runner",
+		});
+
+		expect(state.imageRef).toBe("ghcr.io/acme/testnode:custom-l3");
+		expect(state.variant).toBe("l3-eth");
+		expect(state.rpcUrls.l3).toBe("http://127.0.0.1:3347");
+	});
+
+	it("keeps fee-token and Timeboost variant resolution with an image-ref", () => {
+		const customFee = buildActionTestnodeState({
+			feeTokenDecimals: "18",
+			imageRef: "ghcr.io/acme/testnode:custom-fee",
+			l3Enabled: "true",
+			runnerTemp: "/tmp/runner",
+		});
+		const timeboost = buildActionTestnodeState({
+			imageRef: "ghcr.io/acme/testnode:timeboost",
+			l3Enabled: "false",
+			runnerTemp: "/tmp/runner",
+			timeboostEnabled: "true",
+		});
+
+		expect(customFee.variant).toBe("l3-custom-18");
+		expect(customFee.imageRef).toBe("ghcr.io/acme/testnode:custom-fee");
+		expect(timeboost.variant).toBe("l2-timeboost");
+		expect(timeboost.imageRef).toBe("ghcr.io/acme/testnode:timeboost");
+	});
+
+	it("requires version when image-ref is omitted", () => {
+		expect(() =>
+			buildActionTestnodeState({
+				l3Enabled: "false",
+				runnerTemp: "/tmp/runner",
+			}),
+		).toThrow("version is required when image-ref is not provided");
 	});
 
 	it("defaults to v3.2 when contractsVersion is not provided", () => {

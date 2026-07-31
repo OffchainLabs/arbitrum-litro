@@ -354,6 +354,18 @@ function sanitizeContainerName(value) {
 }
 
 /**
+ * @param {string | undefined} version
+ * @param {string | undefined} imageRef
+ */
+function resolveRuntimeVersion(version, imageRef) {
+	const resolvedVersion = version || (imageRef ? "custom" : undefined);
+	if (!resolvedVersion) {
+		throw new Error("version is required when image-ref is not provided");
+	}
+	return resolvedVersion;
+}
+
+/**
  * @param {BaseStateOptions & { defaultOutputDir: (options: { variant: string; version: string }) => string }} options
  * @returns {TestnodeState}
  */
@@ -361,6 +373,7 @@ function buildTestnodeState({
 	containerName,
 	contractsVersion,
 	feeTokenDecimals,
+	imageRef,
 	imageRepository,
 	l3Enabled,
 	outputDir,
@@ -368,6 +381,7 @@ function buildTestnodeState({
 	version,
 	defaultOutputDir,
 }) {
+	const resolvedImageRef = imageRef?.trim() || undefined;
 	const variant = resolveVariant({ feeTokenDecimals, l3Enabled, timeboostEnabled });
 	const definition = VARIANTS[variant];
 	if (!definition) {
@@ -376,8 +390,8 @@ function buildTestnodeState({
 	const resolvedTimeboostEnabled =
 		toBoolean(timeboostEnabled) || definition.timeboostEnabled === true;
 	const resolvedContractsVersion = normalizeNitroContractsVersion(contractsVersion);
-	const resolvedVersion = version;
-	const resolvedOutputDir = outputDir ?? defaultOutputDir({ variant, version });
+	const resolvedVersion = resolveRuntimeVersion(version, resolvedImageRef);
+	const resolvedOutputDir = outputDir ?? defaultOutputDir({ variant, version: resolvedVersion });
 	const resolvedContainerName = sanitizeContainerName(
 		containerName || `arbitrum-testnode-${variant}`,
 	);
@@ -391,12 +405,14 @@ function buildTestnodeState({
 		configDir,
 		containerName: resolvedContainerName,
 		contractsVersion: resolvedContractsVersion,
-		imageRef: buildTestnodeImageRef({
-			contractsVersion: resolvedContractsVersion,
-			imageRepository,
-			variant,
-			version: resolvedVersion,
-		}),
+		imageRef: resolvedImageRef
+			? resolvedImageRef
+			: buildTestnodeImageRef({
+					contractsVersion: resolvedContractsVersion,
+					imageRepository,
+					variant,
+					version: resolvedVersion,
+				}),
 		outputDir: resolvedOutputDir,
 		paths: {
 			l1BridgeUiConfig: join(configDir, "l1-l2-admin", "bridgeUiConfig.json"),
@@ -420,6 +436,7 @@ export function buildActionTestnodeState({
 	containerName,
 	contractsVersion,
 	feeTokenDecimals,
+	imageRef,
 	imageRepository,
 	l3Enabled,
 	outputDir,
@@ -432,6 +449,7 @@ export function buildActionTestnodeState({
 		containerName,
 		contractsVersion,
 		feeTokenDecimals,
+		imageRef,
 		imageRepository,
 		l3Enabled,
 		outputDir: outputDir
@@ -452,6 +470,7 @@ export function buildStartTestnodeState({
 	contractsVersion,
 	cwd,
 	feeTokenDecimals,
+	imageRef,
 	imageRepository,
 	l3Enabled,
 	outputDir,
@@ -462,6 +481,7 @@ export function buildStartTestnodeState({
 		containerName,
 		contractsVersion,
 		feeTokenDecimals,
+		imageRef,
 		imageRepository,
 		l3Enabled,
 		outputDir: outputDir

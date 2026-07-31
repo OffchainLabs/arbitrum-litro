@@ -43,11 +43,16 @@ export interface BaseStateOptions {
 	containerName?: string | undefined;
 	contractsVersion?: string | undefined;
 	feeTokenDecimals?: number | string | undefined;
+	/**
+	 * Full image reference (incl. tag) that bypasses variant/version-based image
+	 * resolution without changing runtime variant selection.
+	 */
+	imageRef?: string | undefined;
 	imageRepository?: string | undefined;
 	l3Enabled?: boolean | string | undefined;
 	outputDir?: string | undefined;
 	timeboostEnabled?: boolean | string | undefined;
-	version: string;
+	version?: string | undefined;
 }
 
 export type ActionStateOptions = BaseStateOptions & {
