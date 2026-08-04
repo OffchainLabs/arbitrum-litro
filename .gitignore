@@ -7,6 +7,7 @@ config/anvil-state
 config/runs/
 config/snapshots/
 .testnode-context/
+.cache/
 scratch/
 .tmp/
 config/l1-l2-admin/

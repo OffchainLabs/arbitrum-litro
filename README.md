@@ -272,6 +272,12 @@ The checkout determines the contracts family; `init` and `bake` no longer expose
 separate Nitro version or branch selectors. New builds require Nitro 3.x. Existing
 published v2.1 images remain available through `start` and the run action.
 
+Token Bridge contracts use the same source model: set `TOKEN_BRIDGE_LOCAL_DIR` to
+a prepared checkout, or use a prepared sibling `../token-bridge-contracts` checkout.
+When neither exists, the CLI materializes the compatible default commit in its
+ignored `.cache/contract-sources` directory. Host deployment, Compose builds,
+and baked images all use the same selected source identity.
+
 To bake straight from an existing snapshot (no setup step), use the à-la-carte
 subcommand:
 
@@ -300,8 +306,9 @@ job — log in before invoking it:
 ```
 
 By default the action installs a base snapshot release (via `github-token`) and
-restores it; set `rebuild: true` to run a full init instead. Rebuilds also accept
-`nitro-contracts-ref` (default `v3.2.0`) and `fee-token-decimals`.
+restores it; set `rebuild: true` to run a full init instead. The action accepts
+`nitro-contracts-ref` (default `v3.2.0`), `token-bridge-ref`, and
+`fee-token-decimals`.
 
 ### Booting a custom image
 
