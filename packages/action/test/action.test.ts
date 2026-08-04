@@ -115,6 +115,12 @@ describe("bake action metadata", () => {
 		expect(action).not.toContain("--nitro-contracts-branch");
 		expect(action).toContain('node apps/cli/dist/index.js init "${init_args[@]}"');
 	});
+
+	it("uses one selected Token Bridge checkout for init and image baking", () => {
+		expect(action).toContain("TOKEN_BRIDGE_REF_INPUT: ${{ inputs.token-bridge-ref }}");
+		expect(action).toContain("TOKEN_BRIDGE_LOCAL_DIR: ${{ runner.temp }}/token-bridge-contracts");
+		expect(action).toContain('git fetch --depth 1 origin "$TOKEN_BRIDGE_REF_INPUT"');
+	});
 });
 
 describe("resolveVariant", () => {

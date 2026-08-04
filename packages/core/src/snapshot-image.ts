@@ -16,6 +16,7 @@ import {
 	getSnapshotVolumesDir,
 	verifySnapshotManifest,
 } from "./snapshot.js";
+import { prepareTokenBridgeSource, resolveTokenBridgeSource } from "./token-bridge-source.js";
 
 /**
  * Turn a captured snapshot into a runnable testnode docker image.
@@ -224,10 +225,24 @@ export function bakeSnapshotImage(options: BakeSnapshotImageOptions): BakeSnapsh
 			: {}),
 		...(options.variant !== undefined ? { variant: options.variant } : {}),
 	});
+	const tokenBridgeSource = prepareTokenBridgeSource(resolveTokenBridgeSource(projectRoot));
 
-	execOrThrow("docker", ["build", "-f", dockerfile, "-t", options.imageRef, projectRoot], {
-		timeout: 900_000,
-	});
+	execOrThrow(
+		"docker",
+		[
+			"build",
+			"--build-context",
+			`tokenbridge=${tokenBridgeSource.dockerContext}`,
+			"-f",
+			dockerfile,
+			"-t",
+			options.imageRef,
+			projectRoot,
+		],
+		{
+			timeout: 900_000,
+		},
+	);
 
 	let pushed = false;
 	if (options.push) {

@@ -105,10 +105,11 @@ jobs:
       contents: read
       packages: write
     env:
-      # init resolves token-bridge-contracts to <repo-parent>/token-bridge-contracts;
-      # pin the location and the commit the contract-deployer Dockerfiles use.
+      # Prepare the same pinned Token Bridge checkout for host deployment and
+      # the baked image's named build context.
       TOKEN_BRIDGE_LOCAL_DIR: ${{ github.workspace }}/../token-bridge-contracts
       TOKEN_BRIDGE_COMMIT: 5975d8f7360816341be7f94fd333ef240f4aec23
+      TOKEN_BRIDGE_DOCKER_CONTEXT: https://github.com/OffchainLabs/token-bridge-contracts.git#5975d8f7360816341be7f94fd333ef240f4aec23
       NITRO_CONTRACTS_LOCAL_DIR: ${{ github.workspace }}/../nitro-contracts
       NITRO_CONTRACTS_COMMIT: 2695e7b3e3f460531e2b77fed48a60561c54d90e
     steps:
@@ -141,6 +142,7 @@ jobs:
           git remote add origin https://github.com/OffchainLabs/token-bridge-contracts.git
           git fetch --depth 1 origin "$TOKEN_BRIDGE_COMMIT"
           git checkout --detach FETCH_HEAD
+          git submodule update --init --recursive --depth 1
           yarn install --frozen-lockfile
           yarn build
           test -f node_modules/ts-node/dist/bin.js
@@ -352,6 +354,8 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          build-contexts: |
+            tokenbridge=${{ env.TOKEN_BRIDGE_DOCKER_CONTEXT }}
           file: docker/testnode.Dockerfile
           push: true
           # One build, two pushes -- a second build could diverge from the first.

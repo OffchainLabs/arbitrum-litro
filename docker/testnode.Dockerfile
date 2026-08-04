@@ -2,6 +2,8 @@ ARG NODE_IMAGE=node:20-bullseye-slim
 ARG FOUNDRY_IMAGE=ghcr.io/foundry-rs/foundry:v1.3.5
 ARG NITRO_IMAGE=offchainlabs/nitro-node:v3.9.5-66e42c4
 
+FROM scratch AS tokenbridge
+
 FROM ${NODE_IMAGE} AS token-bridge-contracts
 
 RUN apt-get update \
@@ -10,14 +12,16 @@ RUN apt-get update \
 
 WORKDIR /workspace
 
-RUN git init . \
-	&& git remote add origin https://github.com/OffchainLabs/token-bridge-contracts.git \
-	&& git fetch --depth 1 origin feat/polling-interval-conditional-verification \
-	&& git checkout --detach FETCH_HEAD
+COPY --from=tokenbridge . /workspace
+
+RUN rm -rf .git && \
+	git init && \
+	git add . && \
+	git -c user.name="user" -c user.email="user@example.com" commit -m "Initial commit"
 
 RUN yarn install --frozen-lockfile \
 	&& yarn build \
-	&& rm -rf .git
+	&& rm -rf .git node_modules/.cache
 
 FROM ${FOUNDRY_IMAGE} AS foundry
 

@@ -42,6 +42,11 @@ inputs:
     default: "v3.2.0"
     description: >-
       Nitro contracts release, branch, or commit used during a rebuild init.
+  token-bridge-ref:
+    required: false
+    default: "5975d8f7360816341be7f94fd333ef240f4aec23"
+    description: >-
+      Token Bridge contracts release, branch, or commit used by init and the baked image.
   fee-token-decimals:
     required: false
     default: ""
@@ -72,6 +77,29 @@ runs:
       run: |
         pnpm install --frozen-lockfile
         pnpm build
+
+    - name: Prepare Token Bridge contracts checkout
+      shell: bash
+      env:
+        TOKEN_BRIDGE_REF_INPUT: ${{ inputs.token-bridge-ref }}
+        TOKEN_BRIDGE_LOCAL_DIR: ${{ runner.temp }}/token-bridge-contracts
+      run: |
+        set -euxo pipefail
+        npm install -g yarn@1.22.22
+        mkdir -p "$TOKEN_BRIDGE_LOCAL_DIR"
+        cd "$TOKEN_BRIDGE_LOCAL_DIR"
+        git init .
+        git remote add origin https://github.com/OffchainLabs/token-bridge-contracts.git
+        git fetch --depth 1 origin "$TOKEN_BRIDGE_REF_INPUT"
+        git checkout --detach FETCH_HEAD
+        git submodule update --init --recursive --depth 1
+        TOKEN_BRIDGE_RESOLVED_COMMIT="$(git rev-parse HEAD)"
+        yarn install --frozen-lockfile
+        yarn build
+        test -f node_modules/ts-node/dist/bin.js
+        test -f scripts/deployment/deployTokenBridgeCreator.ts
+        echo "TOKEN_BRIDGE_LOCAL_DIR=$TOKEN_BRIDGE_LOCAL_DIR" >> "$GITHUB_ENV"
+        echo "TOKEN_BRIDGE_DOCKER_CONTEXT=https://github.com/OffchainLabs/token-bridge-contracts.git#$TOKEN_BRIDGE_RESOLVED_COMMIT" >> "$GITHUB_ENV"
 
     - name: Install base snapshot
       if: ${{ inputs.rebuild != 'true' }}
@@ -104,11 +132,9 @@ runs:
         NITRO_CONTRACTS_REF_INPUT: ${{ inputs.nitro-contracts-ref }}
         NITRO_CONTRACTS_DEFAULT_COMMIT: 2695e7b3e3f460531e2b77fed48a60561c54d90e
         NITRO_CONTRACTS_LOCAL_DIR: ${{ runner.temp }}/nitro-contracts
-        TOKEN_BRIDGE_COMMIT: 5975d8f7360816341be7f94fd333ef240f4aec23
         TOKEN_BRIDGE_LOCAL_DIR: ${{ runner.temp }}/token-bridge-contracts
       run: |
         set -euxo pipefail
-        npm install -g yarn@1.22.22
         if [ ! -f "$NITRO_CONTRACTS_LOCAL_DIR/package.json" ]; then
           mkdir -p "$NITRO_CONTRACTS_LOCAL_DIR"
           (
@@ -121,18 +147,6 @@ runs:
             if [ "$NITRO_CONTRACTS_REF_INPUT" = "v3.2.0" ]; then
               test "$(git rev-parse HEAD)" = "$NITRO_CONTRACTS_DEFAULT_COMMIT"
             fi
-          )
-        fi
-        if [ ! -f "$TOKEN_BRIDGE_LOCAL_DIR/node_modules/ts-node/dist/bin.js" ]; then
-          mkdir -p "$TOKEN_BRIDGE_LOCAL_DIR"
-          (
-            cd "$TOKEN_BRIDGE_LOCAL_DIR"
-            git init .
-            git remote add origin https://github.com/OffchainLabs/token-bridge-contracts.git
-            git fetch --depth 1 origin "$TOKEN_BRIDGE_COMMIT"
-            git checkout --detach FETCH_HEAD
-            yarn install --frozen-lockfile
-            yarn build
           )
         fi
         base="$BASE_SNAPSHOT_ID_INPUT"
@@ -161,6 +175,7 @@ runs:
         # Booting nitro from the restored snapshot is slower on cold CI runners
         # than the default 120s budget.
         TESTNODE_RPC_TIMEOUT_MS: "300000"
+        TOKEN_BRIDGE_LOCAL_DIR: ${{ runner.temp }}/token-bridge-contracts
       run: |
         set -euo pipefail
         node apps/cli/dist/index.js bake \

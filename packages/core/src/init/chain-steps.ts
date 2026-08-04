@@ -17,6 +17,7 @@ import { startL1Container } from "../runtime.js";
 import { deployRollupViaSdk, prepareNodeConfigFromDeployment } from "../sdk-chain.js";
 import type { InitState } from "../state.js";
 import { markStepDone } from "../state.js";
+import type { TokenBridgeSource } from "../token-bridge-source.js";
 import {
 	deployL1L2TokenBridge,
 	deployL2L3TokenBridge,
@@ -404,6 +405,7 @@ function createL2DeploySteps(
 function createL2RuntimeSteps(
 	runtime: InitRuntime,
 	nitroContractsSource: NitroContractsSource,
+	tokenBridgeSource: TokenBridgeSource,
 ): Record<string, StepRunner> {
 	return {
 		"start-l2": async (state) => {
@@ -484,6 +486,7 @@ function createL2RuntimeSteps(
 				childRpc: L2_RPC_INTERNAL,
 				parentKey: accounts.l2owner.privateKey,
 				childKey: accounts.l2owner.privateKey,
+				tokenBridgeDir: tokenBridgeSource.path,
 			});
 			return markStepDone(state, "deploy-l2-token-bridge");
 		},
@@ -666,6 +669,7 @@ function createL3Steps(
 	runtime: InitRuntime,
 	feeTokenDecimals: number | undefined,
 	nitroContractsSource: NitroContractsSource,
+	tokenBridgeSource: TokenBridgeSource,
 ): Record<string, StepRunner> {
 	return {
 		"deploy-l3-rollup": (state) =>
@@ -807,6 +811,7 @@ function createL3Steps(
 				parentKey: accounts.l3owner.privateKey,
 				childKey: accounts.l3owner.privateKey,
 				parentWethOverride: getL2ChildWeth(runtime.configDir),
+				tokenBridgeDir: tokenBridgeSource.path,
 			});
 
 			setL3StakerEnabled(runtime, false);
@@ -831,12 +836,18 @@ export function makeStepRunners(
 	options: {
 		feeTokenDecimals?: number | undefined;
 		nitroContractsSource: NitroContractsSource;
+		tokenBridgeSource: TokenBridgeSource;
 	},
 ): Record<string, StepRunner> {
 	return {
 		...createL1Steps(runtime),
 		...createL2DeploySteps(runtime, options.nitroContractsSource),
-		...createL2RuntimeSteps(runtime, options.nitroContractsSource),
-		...createL3Steps(runtime, options.feeTokenDecimals, options.nitroContractsSource),
+		...createL2RuntimeSteps(runtime, options.nitroContractsSource, options.tokenBridgeSource),
+		...createL3Steps(
+			runtime,
+			options.feeTokenDecimals,
+			options.nitroContractsSource,
+			options.tokenBridgeSource,
+		),
 	};
 }
