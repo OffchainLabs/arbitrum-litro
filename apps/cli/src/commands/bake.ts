@@ -1,113 +1,54 @@
 import { spawnSync } from "node:child_process";
-import { rmSync } from "node:fs";
 import { resolve } from "node:path";
-import { waitForRpc } from "@arbitrum/testnode-core/docker.js";
-import { createInitContext, runInitCommand } from "@arbitrum/testnode-core/init-runner.js";
 import {
-	startL1Container,
-	startNitroFromSnapshot,
-	stopRuntime,
-} from "@arbitrum/testnode-core/runtime.js";
-import { bakeSnapshotImage } from "@arbitrum/testnode-core/snapshot-image.js";
-import {
-	DEFAULT_SNAPSHOT_ID,
-	captureSnapshot,
-	hasSnapshot,
-	restoreSnapshot,
-	verifySnapshotSemanticState,
-	withSnapshotReplacementRollback,
-} from "@arbitrum/testnode-core/snapshot.js";
+	bootTestnode,
+	buildStartTestnodeState,
+	collectContainerDiagnostics,
+	removeContainer,
+	runDocker,
+} from "@arbitrum/testnode";
+import { verifySnapshotSemanticState } from "@arbitrum/testnode-core/snapshot.js";
 import { Cli, z } from "incur";
-import { projectRoot } from "../project-root.js";
 
-const PROJECT_NAME = "arbitrum-testnode";
-
-const RPCS = {
-	l1: "http://127.0.0.1:8545",
-	l2: "http://127.0.0.1:8547",
-	l3: "http://127.0.0.1:8549",
-} as const;
-
-const bakeOptions = z.object({
-	setupCommand: z
-		.string()
-		.describe("Shell command run against the booted base stack to customize it"),
-	setupWorkingDirectory: z
-		.string()
-		.optional()
-		.describe("Working directory for the setup command (default: current directory)"),
-	imageRef: z
-		.string()
-		.describe("Full image reference including tag (e.g. ghcr.io/acme/testnode:custom)"),
-	snapshotId: z
-		.string()
-		.optional()
-		.describe("Snapshot id the customized stack is captured under (default: custom)"),
-	push: z.boolean().optional().describe("docker push the baked image"),
-	rebuild: z
-		.boolean()
-		.optional()
-		.describe("Run a full init instead of restoring the installed default snapshot"),
-	baseSnapshotId: z
-		.string()
-		.optional()
-		.describe("Base snapshot to restore when not rebuilding (default: default)"),
-	feeTokenDecimals: z
-		.number()
-		.optional()
-		.describe("Custom fee token decimals (6, 16, 18, or 20) for a rebuild init"),
-	timeboostEnabled: z.boolean().optional().describe("Enable Timeboost for a rebuild init"),
-});
-
-function rebuildInitOptions(options: z.infer<typeof bakeOptions>) {
-	return {
-		rebuild: true,
-		...(options.feeTokenDecimals !== undefined
-			? { feeTokenDecimals: options.feeTokenDecimals }
-			: {}),
-		...(options.timeboostEnabled !== undefined
-			? { timeboostEnabled: options.timeboostEnabled }
-			: {}),
-	};
+interface RpcUrls {
+	l1: string;
+	l2: string;
+	l3: string;
 }
 
-/**
- * Boot the base stack the customization runs against. `--rebuild` runs a full
- * init; otherwise the installed base snapshot is restored and started, mirroring
- * `snapshot restore`.
- */
-async function ensureBaseStack(
-	root: string,
-	configDir: string,
-	composeFile: string,
-	options: z.infer<typeof bakeOptions>,
-): Promise<void> {
-	if (options.rebuild) {
-		await runInitCommand(rebuildInitOptions(options), createInitContext(root));
-		return;
-	}
-
-	const baseSnapshotId = options.baseSnapshotId ?? DEFAULT_SNAPSHOT_ID;
-	if (!hasSnapshot(configDir, baseSnapshotId)) {
-		throw new Error(
-			`No base snapshot '${baseSnapshotId}' installed; install one first or pass --rebuild`,
-		);
-	}
-	stopRuntime({ composeFile, projectName: PROJECT_NAME, configDir });
-	restoreSnapshot(configDir, baseSnapshotId);
-	startL1Container({ composeFile, projectName: PROJECT_NAME, configDir });
-	await waitForRpc(RPCS.l1);
-	await startNitroFromSnapshot({ composeFile, projectName: PROJECT_NAME, configDir }, RPCS);
+interface BundleBakeOptions {
+	baseImageRef?: string | undefined;
+	feeTokenDecimals?: number | undefined;
+	imageRef: string;
+	imageRepository?: string | undefined;
+	imageVersion?: string | undefined;
+	l3Enabled?: boolean | undefined;
+	outputDir?: string | undefined;
+	push?: boolean | undefined;
+	setupCommand: string;
+	setupWorkingDirectory?: string | undefined;
+	startupTimeoutSeconds?: number | undefined;
+	timeboostEnabled?: boolean | undefined;
 }
 
-/**
- * Run the downstream customization on the host. The stack is already booted, so
- * the command sees live L1/L2 RPCs and can write extra files into the config dir
- * (they ride along into the snapshot + config export).
- */
+interface BundleBakeDependencies {
+	boot: typeof bootTestnode;
+	remove: typeof removeContainer;
+	runDocker: typeof runDocker;
+	verify: typeof verifySnapshotSemanticState;
+}
+
+const defaultDependencies: BundleBakeDependencies = {
+	boot: bootTestnode,
+	remove: removeContainer,
+	runDocker,
+	verify: verifySnapshotSemanticState,
+};
+
 function runSetupCommand(
 	setupCommand: string,
 	configDir: string,
+	rpcUrls: RpcUrls,
 	setupWorkingDirectory?: string,
 ): void {
 	const result = spawnSync(setupCommand, {
@@ -116,9 +57,9 @@ function runSetupCommand(
 		...(setupWorkingDirectory ? { cwd: resolve(setupWorkingDirectory) } : {}),
 		env: {
 			...process.env,
-			ARBITRUM_TESTNODE_L1_RPC_URL: RPCS.l1,
-			ARBITRUM_TESTNODE_L2_RPC_URL: RPCS.l2,
-			ARBITRUM_TESTNODE_L3_RPC_URL: RPCS.l3,
+			ARBITRUM_TESTNODE_L1_RPC_URL: rpcUrls.l1,
+			ARBITRUM_TESTNODE_L2_RPC_URL: rpcUrls.l2,
+			ARBITRUM_TESTNODE_L3_RPC_URL: rpcUrls.l3,
 			ARBITRUM_TESTNODE_CONFIG_DIR: configDir,
 			ARBITRUM_TESTNODE_DEPLOYMENT_JSON: resolve(configDir, "deployment.json"),
 		},
@@ -134,52 +75,127 @@ function runSetupCommand(
 	}
 }
 
-export const bakeCli = Cli.create("bake", {
-	description:
-		"Boot the base stack, run a setup command against it, snapshot the result, and build an image",
-	options: bakeOptions,
-	async run(c) {
-		const root = projectRoot();
-		const configDir = resolve(root, "config");
-		const composeFile = resolve(root, "docker/docker-compose.yaml");
-		const snapshotId = c.options.snapshotId ?? "custom";
+function resolveBundleState(options: BundleBakeOptions) {
+	return buildStartTestnodeState({
+		cwd: process.cwd(),
+		feeTokenDecimals: options.feeTokenDecimals,
+		imageRef: options.baseImageRef,
+		imageRepository: options.imageRepository,
+		l3Enabled: options.l3Enabled ?? true,
+		outputDir: options.outputDir,
+		timeboostEnabled: options.timeboostEnabled,
+		version: options.imageVersion?.trim() || "latest",
+	});
+}
 
-		const contextDir = resolve(root, ".testnode-context");
+function pullBundle(imageRef: string, deps: BundleBakeDependencies): void {
+	if (!imageRef.startsWith("local/")) {
+		deps.runDocker(["pull", imageRef], { stdio: "inherit" });
+	}
+}
 
-		try {
-			await ensureBaseStack(root, configDir, composeFile, c.options);
-			runSetupCommand(c.options.setupCommand, configDir, c.options.setupWorkingDirectory);
+function commitBundle(
+	containerName: string,
+	baseImageRef: string,
+	imageRef: string,
+	deps: BundleBakeDependencies,
+): void {
+	deps.runDocker(["stop", "--timeout", "30", containerName], { stdio: "inherit" });
+	deps.runDocker(
+		[
+			"commit",
+			"--change",
+			`LABEL io.arbitrum.testnode.bundle.parent=${baseImageRef}`,
+			containerName,
+			imageRef,
+		],
+		{ stdio: "inherit" },
+	);
+}
 
-			// Verify while the customized stack is live, then stop it before
-			// exporting volumes so the snapshot is internally consistent.
-			await verifySnapshotSemanticState(configDir, RPCS);
-			stopRuntime({ composeFile, projectName: PROJECT_NAME, configDir });
-			const result = await withSnapshotReplacementRollback(configDir, snapshotId, () => {
-				captureSnapshot(configDir, composeFile, snapshotId);
-				return bakeSnapshotImage({
-					configDir,
-					snapshotId,
-					imageRef: c.options.imageRef,
-					projectRoot: root,
-					...(c.options.push !== undefined ? { push: c.options.push } : {}),
-				});
-			});
+function logBakeDiagnostics(containerName: string): void {
+	const diagnostics = collectContainerDiagnostics(containerName);
+	if (diagnostics.inspect) {
+		console.error(`[bake] container: ${diagnostics.inspect}`);
+	}
+	if (diagnostics.logs) {
+		console.error(`[bake] logs:\n${diagnostics.logs}`);
+	}
+}
 
-			return {
-				success: true,
-				snapshotId,
-				imageRef: result.imageRef,
-				l3Enabled: result.l3Enabled,
-				pushed: result.pushed,
-				contextDir: result.contextDir,
-			};
-		} catch (error) {
-			rmSync(contextDir, { recursive: true, force: true });
-			throw error;
-		} finally {
-			// Setup commands are arbitrary trusted build code. Always tear down the
-			// shared runtime, including when setup or semantic verification fails.
-			stopRuntime({ composeFile, projectName: PROJECT_NAME, configDir });
+/**
+ * Customize an already-baked testnode bundle. The container's writable layer
+ * is the bundle: Anvil persists its state file and Nitro persists its databases
+ * under /opt/arbitrum-testnode/runtime. A clean stop followed by docker commit
+ * produces a derived image without rebuilding any contract source.
+ */
+export async function runBundleBake(
+	options: BundleBakeOptions,
+	deps: BundleBakeDependencies = defaultDependencies,
+) {
+	const state = resolveBundleState(options);
+	const timeoutMs = (options.startupTimeoutSeconds ?? 300) * 1000;
+
+	try {
+		pullBundle(state.imageRef, deps);
+		deps.boot(state, timeoutMs);
+		runSetupCommand(
+			options.setupCommand,
+			state.configDir,
+			state.rpcUrls,
+			options.setupWorkingDirectory,
+		);
+		if (state.variantDefinition.l3Enabled) {
+			await deps.verify(state.configDir, state.rpcUrls);
 		}
+
+		// Files written by setup-command are part of the bundle's exported config.
+		deps.runDocker([
+			"cp",
+			`${state.configDir}/.`,
+			`${state.containerName}:/opt/arbitrum-testnode/export-config`,
+		]);
+		// A graceful stop flushes Anvil's --state file and Nitro's databases before
+		// docker commit captures the container layer.
+		commitBundle(state.containerName, state.imageRef, options.imageRef, deps);
+		if (options.push) {
+			deps.runDocker(["push", options.imageRef], { stdio: "inherit" });
+		}
+		return {
+			success: true,
+			baseImageRef: state.imageRef,
+			imageRef: options.imageRef,
+			pushed: options.push ?? false,
+			variant: state.variant,
+		};
+	} catch (error) {
+		logBakeDiagnostics(state.containerName);
+		throw error;
+	} finally {
+		deps.remove(state.containerName);
+	}
+}
+
+export const bakeCli = Cli.create("bake", {
+	description: "Customize a published testnode bundle and commit it as a new image",
+	options: z.object({
+		baseImageRef: z.string().optional().describe("Published bundle image override"),
+		feeTokenDecimals: z
+			.number()
+			.optional()
+			.describe("Custom fee token decimals (6, 16, 18, or 20)"),
+		imageRef: z.string().describe("Full output image reference including tag"),
+		imageRepository: z.string().optional().describe("Published bundle image repository"),
+		imageVersion: z.string().optional().describe("Published bundle version (default: latest)"),
+		l3Enabled: z.boolean().optional().describe("Use an L3-enabled bundle (default: true)"),
+		outputDir: z.string().optional().describe("Temporary exported-config directory"),
+		push: z.boolean().optional().describe("Push the customized image"),
+		setupCommand: z.string().describe("Shell command run against the booted bundle"),
+		setupWorkingDirectory: z.string().optional().describe("Setup command working directory"),
+		startupTimeoutSeconds: z.number().optional().describe("Bundle startup timeout (default: 300)"),
+		timeboostEnabled: z.boolean().optional().describe("Use the L2 Timeboost bundle"),
+	}),
+	async run(c) {
+		return runBundleBake(c.options);
 	},
 });

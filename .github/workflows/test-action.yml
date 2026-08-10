@@ -38,7 +38,14 @@ jobs:
         run: node scripts/ci/prepare-testnode-context.mjs --variant l3-eth --snapshot-id default
 
       - name: Build local testnode image
-        run: docker build -f docker/testnode.Dockerfile -t local/arbitrum-testnode:${{ github.sha }}-nc3.2-l3-eth .
+        run: >-
+          docker build
+          --build-context tokenbridge=https://github.com/OffchainLabs/token-bridge-contracts.git#5975d8f7360816341be7f94fd333ef240f4aec23
+          --build-arg BUNDLE_VERSION=${{ github.sha }}
+          --build-arg BUNDLE_VARIANT=l3-eth
+          -f docker/testnode.Dockerfile
+          -t local/arbitrum-testnode:${{ github.sha }}-nc3.2-l3-eth
+          .
 
       - name: Run action
         id: action

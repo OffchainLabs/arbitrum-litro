@@ -18,10 +18,11 @@ describe("action metadata", () => {
 	const action = readFileSync("action.yml", "utf-8");
 	const inputs = action.slice(action.indexOf("inputs:"), action.indexOf("outputs:"));
 
-	it("makes version optional and resolves registry behavior from the base image ref", () => {
-		expect(action).toContain(
-			'description: "Pinned release version; required unless image-ref is set"',
-		);
+	it("defaults to the latest bundle and resolves registry behavior from the base image ref", () => {
+		expect(action).toContain('description: "Published bundle version; defaults to latest"');
+		expect(action).toContain('default: "latest"');
+		// Gating reads baseImageRef, not the booted ref: with nitro-image set the
+		// booted ref is local, and the pull still has to act on the remote source.
 		expect(action).toContain("startsWith(steps.resolve.outputs.base-image-ref, 'ghcr.io/')");
 		expect(action).toContain("!startsWith(steps.resolve.outputs.base-image-ref, 'local/')");
 	});
@@ -100,26 +101,50 @@ describe("action metadata", () => {
 describe("bake action metadata", () => {
 	const action = readFileSync("bake/action.yml", "utf-8");
 
-	it("defaults the snapshot repo to the canonical (post-rename) name", () => {
-		// The old name only works via GitHub's rename redirect, which dies the
-		// moment any repo reclaims it.
-		expect(action).toContain('default: "OffchainLabs/arbitrum-litro"');
-		expect(action).not.toContain("OffchainLabs/arbitrum-testnode");
+	it("defaults to the latest published bundle", () => {
+		expect(action).toContain("bundle-version:");
+		expect(action).toContain('default: "latest"');
+		expect(action).toContain("BASE_IMAGE_VERSION: ${{ inputs.bundle-version }}");
+		expect(action).toContain('node apps/cli/dist/index.js bake "${args[@]}"');
 	});
 
-	it("prepares the selected Nitro source without passing a version selector to init", () => {
-		expect(action).toContain('default: "v3.2.0"');
-		expect(action).toContain("NITRO_CONTRACTS_REF_INPUT: ${{ inputs.nitro-contracts-ref }}");
-		expect(action).toContain("NITRO_CONTRACTS_LOCAL_DIR: ${{ runner.temp }}/nitro-contracts");
-		expect(action).not.toContain("--nitro-contracts-version");
-		expect(action).not.toContain("--nitro-contracts-branch");
-		expect(action).toContain('node apps/cli/dist/index.js init "${init_args[@]}"');
+	it("defaults the bundle repository to the public one, so no token is needed", () => {
+		expect(action).toContain(`default: "${DEFAULT_TESTNODE_IMAGE_REPOSITORY}"`);
 	});
 
-	it("uses one selected Token Bridge checkout for init and image baking", () => {
-		expect(action).toContain("TOKEN_BRIDGE_REF_INPUT: ${{ inputs.token-bridge-ref }}");
-		expect(action).toContain("TOKEN_BRIDGE_LOCAL_DIR: ${{ runner.temp }}/token-bridge-contracts");
-		expect(action).toContain('git fetch --depth 1 origin "$TOKEN_BRIDGE_REF_INPUT"');
+	it("never rebuilds contract sources in the consumer bake", () => {
+		expect(action).not.toContain("node apps/cli/dist/index.js init");
+		expect(action).not.toContain("git fetch");
+		expect(action).not.toContain("yarn build");
+		expect(action).not.toContain("token-bridge-ref");
+		expect(action).not.toContain("nitro-contracts-ref");
+	});
+
+	it("only authenticates GHCR pulls when a token is supplied", () => {
+		expect(action).toContain("inputs.github-token != ''");
+	});
+});
+
+describe("published bundle metadata", () => {
+	const dockerfile = readFileSync("docker/testnode.Dockerfile", "utf-8");
+	const entrypoint = readFileSync("docker/testnode-entrypoint.sh", "utf-8");
+	const workflow = readFileSync(".github/workflows/release-testnode-image.yml", "utf-8");
+
+	it("records exact contract provenance and bundle identity", () => {
+		expect(dockerfile).toContain("io.arbitrum.testnode.bundle.version");
+		expect(dockerfile).toContain("io.arbitrum.testnode.nitro-contracts.commit");
+		expect(dockerfile).toContain("io.arbitrum.testnode.token-bridge.commit");
+	});
+
+	it("persists Anvil state for derived bundle commits", () => {
+		expect(entrypoint).toContain('--state "$DATA_ROOT/anvil-state/state.json"');
+		expect(entrypoint).toContain("--state-interval 1");
+	});
+
+	it("publishes latest aliases only after every release image succeeds", () => {
+		expect(workflow).toContain("publish-latest-bundle:");
+		expect(workflow).toContain("needs: [resolve-publish-matrix, publish-testnode-image]");
+		expect(workflow).toContain("docker buildx imagetools create --tag");
 	});
 });
 
@@ -160,6 +185,12 @@ describe("buildTestnodeImageRef", () => {
 		expect(
 			buildTestnodeImageRef({ contractsVersion: "v3.2", variant: "l3-eth", version: "v1.2.3" }),
 		).toBe(`${DEFAULT_TESTNODE_IMAGE_REPOSITORY}:v1.2.3-nc3.2-l3-eth`);
+	});
+
+	it("resolves latest without coupling the consumer to a contracts family", () => {
+		expect(
+			buildTestnodeImageRef({ contractsVersion: "v3.2", variant: "l3-eth", version: "latest" }),
+		).toBe(`${DEFAULT_TESTNODE_IMAGE_REPOSITORY}:latest-l3-eth`);
 	});
 });
 
@@ -331,13 +362,12 @@ describe("buildActionTestnodeState", () => {
 		expect(state.imageRef).toBe(state.baseImageRef);
 	});
 
-	it("requires version when image-ref is omitted", () => {
-		expect(() =>
-			buildActionTestnodeState({
-				l3Enabled: "false",
-				runnerTemp: "/tmp/runner",
-			}),
-		).toThrow("version is required when image-ref is not provided");
+	it("uses the latest bundle when version and image-ref are omitted", () => {
+		const state = buildActionTestnodeState({
+			l3Enabled: "false",
+			runnerTemp: "/tmp/runner",
+		});
+		expect(state.imageRef).toBe(`${DEFAULT_TESTNODE_IMAGE_REPOSITORY}:latest-l2`);
 	});
 
 	it("defaults to v3.2 when contractsVersion is not provided", () => {

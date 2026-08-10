@@ -15,4 +15,4 @@ function readPackageMetadata(): PackageMetadata {
 }
 
 export const PACKAGE_METADATA = readPackageMetadata();
-export const DEFAULT_START_IMAGE_VERSION = `v${PACKAGE_METADATA.version}`;
+export const DEFAULT_START_IMAGE_VERSION = "latest";
