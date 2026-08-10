@@ -19,15 +19,12 @@ describe("resolveStartInput", () => {
 		expect(resolved.version).toBe(DEFAULT_START_IMAGE_VERSION);
 	});
 
-	it("derives the built-in default image version from the CLI package version", () => {
-		const cliPackage = JSON.parse(fs.readFileSync("apps/cli/package.json", "utf-8")) as {
-			version?: string;
-		};
+	it("uses the latest published bundle by default", () => {
 		const catalog = JSON.parse(fs.readFileSync("config/testnodes.json", "utf-8")) as {
 			testnodes?: { default?: { version?: string } };
 		};
 
-		expect(DEFAULT_START_IMAGE_VERSION).toBe(`v${cliPackage.version}`);
+		expect(DEFAULT_START_IMAGE_VERSION).toBe("latest");
 		expect(catalog.testnodes?.default?.version).toBeUndefined();
 	});
 

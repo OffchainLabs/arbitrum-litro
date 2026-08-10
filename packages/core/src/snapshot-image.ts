@@ -16,7 +16,6 @@ import {
 	getSnapshotVolumesDir,
 	verifySnapshotManifest,
 } from "./snapshot.js";
-import { prepareTokenBridgeSource, resolveTokenBridgeSource } from "./token-bridge-source.js";
 
 /**
  * Turn a captured snapshot into a runnable testnode docker image.
@@ -172,9 +171,11 @@ export interface BakeSnapshotImageOptions {
 	imageRef: string;
 	/** Docker build context / repo root containing `docker/testnode.Dockerfile`. */
 	projectRoot: string;
+	/** Published testnode bundle to layer the snapshot onto. */
+	baseImageRef?: string;
 	/** `docker push` the image after building. */
 	push?: boolean;
-	/** Override the Dockerfile (default `docker/testnode.Dockerfile` under root). */
+	/** Override the Dockerfile (default `docker/custom-testnode.Dockerfile` under root). */
 	dockerfile?: string;
 	/** Override the `.testnode-context` output dir (default under the build context). */
 	contextDir?: string;
@@ -193,6 +194,11 @@ export interface BakeSnapshotImageResult {
 	contextDir: string;
 }
 
+function defaultBaseImageRef(l3Enabled: boolean): string {
+	const variant = l3Enabled ? "l3-eth" : "l2";
+	return `ghcr.io/offchainlabs/arbitrum-testnode-ci:latest-${variant}`;
+}
+
 /**
  * Prepare a snapshot's docker context and build (optionally push) a runnable
  * testnode image from it. Registry auth is the caller's responsibility.
@@ -204,7 +210,7 @@ export function bakeSnapshotImage(options: BakeSnapshotImageOptions): BakeSnapsh
 	const projectRoot = resolve(options.projectRoot);
 	const dockerfile = options.dockerfile
 		? resolve(options.dockerfile)
-		: join(projectRoot, "docker", "testnode.Dockerfile");
+		: join(projectRoot, "docker", "custom-testnode.Dockerfile");
 	if (!existsSync(dockerfile)) {
 		throw new Error(`Dockerfile not found: ${dockerfile}`);
 	}
@@ -225,14 +231,14 @@ export function bakeSnapshotImage(options: BakeSnapshotImageOptions): BakeSnapsh
 			: {}),
 		...(options.variant !== undefined ? { variant: options.variant } : {}),
 	});
-	const tokenBridgeSource = prepareTokenBridgeSource(resolveTokenBridgeSource(projectRoot));
+	const baseImageRef = options.baseImageRef ?? defaultBaseImageRef(prepared.l3Enabled);
 
 	execOrThrow(
 		"docker",
 		[
 			"build",
-			"--build-context",
-			`tokenbridge=${tokenBridgeSource.dockerContext}`,
+			"--build-arg",
+			`BASE_IMAGE=${baseImageRef}`,
 			"-f",
 			dockerfile,
 			"-t",

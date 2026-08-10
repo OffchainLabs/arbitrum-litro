@@ -1,10 +1,10 @@
 name: Run Arbitrum Testnode
-description: "Boot a snapshot-backed Arbitrum testnode in GitHub CI and export its config files"
+description: "Boot a published Arbitrum testnode bundle in GitHub CI and export its config files"
 inputs:
   version:
     required: false
-    default: ""
-    description: "Pinned release version; required unless image-ref is set"
+    default: "latest"
+    description: "Published bundle version; defaults to latest"
   github-token:
     required: false
     description: "Token for private GHCR images; not needed for the public Docker Hub default"
@@ -95,6 +95,15 @@ outputs:
   nitro-contracts-version:
     description: "Resolved nitro contracts version"
     value: ${{ steps.resolve.outputs.nitro-contracts-version }}
+  bundle-version:
+    description: "Published bundle version recorded in the image"
+    value: ${{ steps.bundle.outputs.bundle-version }}
+  nitro-contracts-commit:
+    description: "Nitro contracts commit composed into the bundle"
+    value: ${{ steps.bundle.outputs.nitro-contracts-commit }}
+  token-bridge-commit:
+    description: "Token Bridge contracts commit composed into the bundle"
+    value: ${{ steps.bundle.outputs.token-bridge-commit }}
 runs:
   using: composite
   steps:
@@ -117,13 +126,11 @@ runs:
     # Registry behavior follows the base ref -- the image actually fetched. With
     # nitro-image set, the booted ref is a locally built rebase of that base.
     - name: Log in to GHCR
-      if: ${{ startsWith(steps.resolve.outputs.base-image-ref, 'ghcr.io/') }}
+      if: >-
+        ${{ inputs.github-token != '' &&
+            startsWith(steps.resolve.outputs.base-image-ref, 'ghcr.io/') }}
       shell: bash
       run: |
-        if [ -z "${{ inputs.github-token }}" ]; then
-          echo "github-token is required for ghcr.io images" >&2
-          exit 1
-        fi
         echo "${{ inputs.github-token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
     - name: Pull testnode image
@@ -141,6 +148,21 @@ runs:
         IMAGE_REF: ${{ steps.resolve.outputs.image-ref }}
         NITRO_IMAGE: ${{ steps.resolve.outputs.nitro-image }}
       run: node "${{ github.action_path }}/packages/action/src/rebase.mjs"
+
+    - name: Read bundle provenance
+      id: bundle
+      shell: bash
+      env:
+        IMAGE_REF: ${{ steps.resolve.outputs.image-ref }}
+      run: |
+        set -euo pipefail
+        label() {
+          docker inspect --format '{{json .Config.Labels}}' "$IMAGE_REF" | \
+            jq -r --arg key "$1" '.[$key] // ""'
+        }
+        echo "bundle-version=$(label io.arbitrum.testnode.bundle.version)" >> "$GITHUB_OUTPUT"
+        echo "nitro-contracts-commit=$(label io.arbitrum.testnode.nitro-contracts.commit)" >> "$GITHUB_OUTPUT"
+        echo "token-bridge-commit=$(label io.arbitrum.testnode.token-bridge.commit)" >> "$GITHUB_OUTPUT"
 
     - name: Boot testnode image
       shell: bash

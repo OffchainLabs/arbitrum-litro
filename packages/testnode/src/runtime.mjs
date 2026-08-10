@@ -255,6 +255,9 @@ export function buildTestnodeImageRef({ contractsVersion, imageRepository, varia
 	if (!definition) {
 		throw new Error(`Unknown variant ${variant}`);
 	}
+	if (version === "latest") {
+		return `${repository}:latest-${definition.name}`;
+	}
 	const cv = normalizeNitroContractsVersion(contractsVersion);
 	const contractsDefinition =
 		NITRO_CONTRACTS_VERSIONS[/** @type {keyof typeof NITRO_CONTRACTS_VERSIONS} */ (cv)];
@@ -531,11 +534,7 @@ function sanitizeContainerName(value) {
  * @param {string | undefined} imageRef
  */
 function resolveRuntimeVersion(version, imageRef) {
-	const resolvedVersion = version || (imageRef ? "custom" : undefined);
-	if (!resolvedVersion) {
-		throw new Error("version is required when image-ref is not provided");
-	}
-	return resolvedVersion;
+	return version || (imageRef ? "custom" : "latest");
 }
 
 /**
