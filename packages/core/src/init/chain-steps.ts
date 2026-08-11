@@ -82,23 +82,24 @@ import {
 
 const builtContractDeployerImages = new Set<string>();
 
-async function ensureContractDeployerImage(
+export async function ensureContractDeployerImage(
 	runtime: InitRuntime,
 	spec: DeployerImageSpec,
 	forceRebuild = false,
+	commands: { exec: typeof exec; execOrThrow: typeof execOrThrow } = { exec, execOrThrow },
 ): Promise<void> {
 	const { image, dockerfile, buildContext, reuseImage } = spec;
 	// forceRebuild (stale-image recovery) must rebuild even if we already built
 	// this tag this run; drop the in-run marker so the build below actually runs.
 	if (forceRebuild) {
 		builtContractDeployerImages.delete(image);
-	} else if (reuseImage && builtContractDeployerImages.has(image)) {
+	} else if (builtContractDeployerImages.has(image)) {
 		console.log(`[init] Contract deployer image already built this run: ${image}`);
 		return;
 	}
 	if (!forceRebuild && reuseImage) {
 		console.log(`[init] Checking contract deployer image: ${image}`);
-		const inspect = exec("docker", ["image", "inspect", image], {
+		const inspect = commands.exec("docker", ["image", "inspect", image], {
 			timeout: 30_000,
 		});
 		if (inspect.exitCode === 0) {
@@ -111,7 +112,7 @@ async function ensureContractDeployerImage(
 	// not fall back to the classic builder.
 	process.env["DOCKER_BUILDKIT"] ??= "1";
 	console.log(`[init] Building contract deployer image: ${image}`);
-	execOrThrow(
+	commands.execOrThrow(
 		"docker",
 		[
 			"build",
@@ -127,9 +128,7 @@ async function ensureContractDeployerImage(
 		{ timeout: 1_800_000 },
 	);
 	console.log(`[init] Contract deployer image built: ${image}`);
-	if (reuseImage) {
-		builtContractDeployerImages.add(image);
-	}
+	builtContractDeployerImages.add(image);
 }
 
 async function deployRollupCreatorViaDocker(

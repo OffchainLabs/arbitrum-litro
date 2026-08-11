@@ -1,7 +1,8 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { ensureContractDeployerImage } from "../src/init/chain-steps.js";
 import {
 	DEFAULT_NITRO_CONTRACTS_COMMIT,
 	DEFAULT_NITRO_CONTRACTS_RELEASE,
@@ -133,6 +134,23 @@ describe("resolveDeployerImageSpec", () => {
 		const spec = resolveDeployerImageSpec(source);
 		expect(spec.buildContext).toBe(workspace);
 		expect(spec.reuseImage).toBe(false);
+	});
+
+	it("builds a workspace image only once per init run", async () => {
+		const { root, parent } = makeProject();
+		const workspace = makeWorkspace(path.join(parent, "workspace"));
+		const source = resolveNitroContractsSource(root, { NITRO_CONTRACTS_LOCAL_DIR: workspace });
+		const spec = resolveDeployerImageSpec(source);
+		const exec = vi.fn();
+		const execOrThrow = vi.fn();
+		const runtime = { projectRoot: root } as never;
+		const commands = { exec: exec as never, execOrThrow: execOrThrow as never };
+
+		await ensureContractDeployerImage(runtime, spec, false, commands);
+		await ensureContractDeployerImage(runtime, spec, false, commands);
+
+		expect(exec).not.toHaveBeenCalled();
+		expect(execOrThrow).toHaveBeenCalledTimes(1);
 	});
 });
 
