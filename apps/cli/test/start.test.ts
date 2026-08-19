@@ -134,6 +134,21 @@ describe("resolveStartInput", () => {
 		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "start-version-"));
 		expect(resolveStartInput({}, cwd).version).toBe(DEFAULT_START_IMAGE_VERSION);
 	});
+
+	it("reads nitroImage from CLI options and from the config file", () => {
+		const cliCwd = fs.mkdtempSync(path.join(os.tmpdir(), "start-nitro-image-"));
+		const fileCwd = fs.mkdtempSync(path.join(os.tmpdir(), "start-nitro-image-file-"));
+		fs.writeFileSync(
+			path.join(fileCwd, "testnode.start.json"),
+			JSON.stringify({ nitroImage: "nitro-node-dev:from-file" }),
+		);
+
+		expect(resolveStartInput({ nitroImage: "nitro-node-dev:latest" }, cliCwd).nitroImage).toBe(
+			"nitro-node-dev:latest",
+		);
+		expect(resolveStartInput({}, fileCwd).nitroImage).toBe("nitro-node-dev:from-file");
+		expect(resolveStartInput({}, cliCwd).nitroImage).toBeUndefined();
+	});
 });
 
 describe("runStart", () => {
@@ -157,6 +172,7 @@ describe("runStart", () => {
 				l3Enabled: true,
 				networkConfigPaths: [path.join(cwd, "sdk/localNetwork.json")],
 				nitroContractsVersion: undefined,
+				nitroImage: undefined,
 				outputDir: undefined,
 				startupTimeoutSeconds: 120,
 				timeboostEnabled: true,
@@ -166,6 +182,7 @@ describe("runStart", () => {
 				bootTestnode,
 				collectContainerDiagnostics,
 				copyNetworkConfigPaths,
+				rebaseTestnodeImage: vi.fn(),
 			},
 		);
 
@@ -186,6 +203,141 @@ describe("runStart", () => {
 		expect(result.localNetworkPath).toBe(
 			path.join(cwd, ".arbitrum-testnode/v1.2.3/l2-timeboost/config/localNetwork.json"),
 		);
+	});
+
+	it("rebases before booting when a nitro image is requested", () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "start-run-rebase-"));
+		const calls: string[] = [];
+		const bootTestnode = vi.fn(() => {
+			calls.push("boot");
+			return ["localNetwork.json"];
+		});
+		const rebaseTestnodeImage = vi.fn((state: { imageRef: string }) => {
+			calls.push("rebase");
+			return state.imageRef;
+		});
+		const pruneStaleRebasedImages = vi.fn(() => {
+			calls.push("prune");
+		});
+
+		const result = runStart(
+			{
+				configPath: undefined,
+				containerName: undefined,
+				cwd,
+				feeTokenDecimals: undefined,
+				imageRepository: undefined,
+				l3Enabled: false,
+				networkConfigPaths: [],
+				nitroContractsVersion: undefined,
+				nitroImage: "nitro-node-dev:latest",
+				outputDir: undefined,
+				startupTimeoutSeconds: 120,
+				timeboostEnabled: false,
+				version: "v1.2.3",
+			},
+			{
+				bootTestnode,
+				collectContainerDiagnostics: vi.fn(() => ({ errors: [] })),
+				copyNetworkConfigPaths: vi.fn(),
+				pruneStaleRebasedImages,
+				rebaseTestnodeImage,
+			},
+		);
+
+		expect(calls).toEqual(["prune", "rebase", "boot"]);
+		expect(rebaseTestnodeImage).toHaveBeenCalledWith(
+			expect.objectContaining({
+				baseImageRef: "ghcr.io/offchainlabs/arbitrum-testnode-ci:v1.2.3-nc3.2-l2",
+				imageRef: expect.stringMatching(/^local\/arbitrum-testnode-rebase:l2-[0-9a-f]{12}$/),
+				nitroImage: "nitro-node-dev:latest",
+			}),
+		);
+		const rebasedRef = rebaseTestnodeImage.mock.calls[0]?.[0]?.imageRef;
+		expect(bootTestnode).toHaveBeenCalledWith(
+			expect.objectContaining({ imageRef: rebasedRef }),
+			120_000,
+		);
+		expect(result.success).toBe(true);
+	});
+
+	it("reports a failed rebase without booting or collecting container diagnostics", () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "start-run-rebase-fail-"));
+		const bootTestnode = vi.fn();
+		const collectContainerDiagnostics = vi.fn(() => ({ errors: [] }));
+		const rebaseTestnodeImage = vi.fn(() => {
+			throw new Error("docker build exited with code 1");
+		});
+
+		const result = runStart(
+			{
+				configPath: undefined,
+				containerName: undefined,
+				cwd,
+				feeTokenDecimals: undefined,
+				imageRepository: undefined,
+				l3Enabled: false,
+				networkConfigPaths: [],
+				nitroContractsVersion: undefined,
+				nitroImage: "nitro-node-dev:latest",
+				outputDir: undefined,
+				startupTimeoutSeconds: 120,
+				timeboostEnabled: false,
+				version: "v1.2.3",
+			},
+			{
+				bootTestnode,
+				collectContainerDiagnostics,
+				copyNetworkConfigPaths: vi.fn(),
+				rebaseTestnodeImage,
+			},
+		);
+
+		expect(bootTestnode).not.toHaveBeenCalled();
+		expect(collectContainerDiagnostics).not.toHaveBeenCalled();
+		expect(result).toEqual({
+			success: false,
+			error: "rebase onto nitro-node-dev:latest failed: docker build exited with code 1",
+		});
+	});
+
+	it("does not rebase when no nitro image is requested", () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "start-run-no-rebase-"));
+		const rebaseTestnodeImage = vi.fn();
+		const pruneStaleRebasedImages = vi.fn();
+
+		const result = runStart(
+			{
+				configPath: undefined,
+				containerName: undefined,
+				cwd,
+				feeTokenDecimals: undefined,
+				imageRepository: undefined,
+				l3Enabled: false,
+				networkConfigPaths: [],
+				nitroContractsVersion: undefined,
+				nitroImage: undefined,
+				outputDir: undefined,
+				startupTimeoutSeconds: 120,
+				timeboostEnabled: false,
+				version: "v1.2.3",
+			},
+			{
+				bootTestnode: vi.fn(() => ["localNetwork.json"]),
+				collectContainerDiagnostics: vi.fn(() => ({ errors: [] })),
+				copyNetworkConfigPaths: vi.fn(),
+				pruneStaleRebasedImages,
+				rebaseTestnodeImage,
+			},
+		);
+
+		expect(rebaseTestnodeImage).not.toHaveBeenCalled();
+		expect(pruneStaleRebasedImages).not.toHaveBeenCalled();
+		expect(result.success).toBe(true);
+		expect(result).toMatchObject({
+			imageRef: "ghcr.io/offchainlabs/arbitrum-testnode-ci:v1.2.3-nc3.2-l2",
+			nitroImage: "",
+		});
 	});
 
 	it("rejects non-positive startup timeouts", () => {

@@ -4,7 +4,7 @@
 	"private": true,
 	"type": "module",
 	"scripts": {
-		"build": "node --check src/lib.mjs && node --check src/resolve.mjs && node --check src/run.mjs && node --check ../testnode/src/runtime.mjs",
+		"build": "node --check src/lib.mjs && node --check src/rebase.mjs && node --check src/resolve.mjs && node --check src/run.mjs && node --check ../testnode/src/runtime.mjs",
 		"typecheck": "pnpm build"
 	}
 }

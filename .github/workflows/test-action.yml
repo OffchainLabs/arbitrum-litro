@@ -72,6 +72,85 @@ jobs:
       - name: Validate config server index
         run: curl -sf http://127.0.0.1:8080/
 
+  # Covers the nitro-image path: graft the testnode artifacts onto a separately
+  # supplied Nitro image and boot the result. This is how a Nitro PR boots the
+  # snapshot against the nitro-node-dev image it just built — here the pinned
+  # nitro-node image stands in for the PR-built one to keep the job hermetic,
+  # so the graft mechanics are exercised but not a genuinely different base.
+  test-nitro-image-rebase-action:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install snapshot
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TESTNODE_SNAPSHOT_GH_REPO: ${{ github.repository }}
+        run: pnpm dev snapshot install --force --release-tag "${{ inputs.snapshot-version || 'v0.1.6' }}"
+
+      - name: Prepare testnode context
+        run: node scripts/ci/prepare-testnode-context.mjs --variant l3-eth --snapshot-id default
+
+      - name: Build local testnode image
+        run: docker build -f docker/testnode.Dockerfile -t local/arbitrum-testnode:${{ github.sha }}-nc3.2-l3-eth .
+
+      # Read the pin from the Dockerfile the image above was built with (its ARG
+      # default, since the build passes no --build-arg) so this job cannot drift
+      # from it.
+      - name: Resolve the pinned Nitro image
+        id: nitro
+        run: |
+          image="$(grep -m1 -oE 'offchainlabs/nitro-node:[^[:space:]]+' docker/testnode.Dockerfile)"
+          test -n "$image"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+
+      - name: Run action with a rebased Nitro image
+        id: action
+        uses: ./
+        with:
+          image-repository: local/arbitrum-testnode
+          l3-enabled: true
+          nitro-contracts-version: v3.2
+          nitro-image: ${{ steps.nitro.outputs.image }}
+          version: ${{ github.sha }}
+
+      - name: Validate the rebased image was built and booted
+        run: |
+          case "${{ steps.action.outputs.image-ref }}" in
+            local/arbitrum-testnode-rebase:l3-eth-*) ;;
+            *) echo "unexpected image-ref: ${{ steps.action.outputs.image-ref }}" >&2; exit 1 ;;
+          esac
+          test "${{ steps.action.outputs.base-image-ref }}" = "local/arbitrum-testnode:${{ github.sha }}-nc3.2-l3-eth"
+          docker image inspect "${{ steps.action.outputs.image-ref }}" > /dev/null
+          booted="$(docker inspect --format '{{.Config.Image}}' "${{ steps.action.outputs.container-name }}")"
+          test "$booted" = "${{ steps.action.outputs.image-ref }}"
+
+      - name: Validate outputs
+        run: |
+          test -f "${{ steps.action.outputs.local-network-path }}"
+          test -f "${{ steps.action.outputs.l2l3-network-path }}"
+          for url in "${{ steps.action.outputs.l1-rpc-url }}" \
+            "${{ steps.action.outputs.l2-rpc-url }}" \
+            "${{ steps.action.outputs.l3-rpc-url }}"; do
+            echo "checking $url"
+            curl -sfS -X POST -H 'Content-Type: application/json' \
+              -d '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' "$url"
+          done
+          echo "checking health endpoint"
+          curl -sfS http://127.0.0.1:8080/health
+
   test-published-image-action:
     runs-on: ubuntu-latest
     permissions:

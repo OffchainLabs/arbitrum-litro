@@ -31,7 +31,7 @@ inputs:
     description: "Base snapshot id to install and restore when not rebuilding"
   snapshot-repo:
     required: false
-    default: "OffchainLabs/arbitrum-testnode"
+    default: "OffchainLabs/arbitrum-litro"
     description: "owner/repo hosting base snapshot releases (used when not rebuilding)"
   version:
     required: false
