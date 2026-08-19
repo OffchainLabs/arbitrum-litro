@@ -328,6 +328,17 @@ Each entry defines a named variant:
 - `l3Enabled`: whether the image includes an L3 node
 - `timeboostEnabled`: whether the variant automatically starts the L2 sequencer with Timeboost enabled
 
+Cut a release with `pnpm release <version>`, which bumps every `package.json` and
+tags in one step, then push. The tag and `apps/cli/package.json` must agree — the
+tag names the published images while that file feeds `DEFAULT_START_IMAGE_VERSION`,
+so a tag that runs ahead publishes images `start` will not default to. The publish
+workflow fails fast if they disagree.
+
+```bash
+pnpm release 0.2.11          # bump + commit + tag
+pnpm release 0.2.11 --push   # ...and push, starting the publish
+```
+
 The `Publish Testnode` workflow publishes automatically when a `v*` tag is pushed.
 Tag-triggered publishes use the `default` entry in `config/testnodes.json`, with the
 Git tag as the image version. The workflow can also be run manually to publish one

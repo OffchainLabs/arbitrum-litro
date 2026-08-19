@@ -63,6 +63,17 @@ jobs:
           fi
           echo "version=$V" >> "$GITHUB_OUTPUT"
           echo "resolved image version: $V"
+          # A tag that outruns apps/cli/package.json publishes images this
+          # version of the CLI will never resolve: DEFAULT_START_IMAGE_VERSION
+          # comes from that file, so `start` would keep defaulting to the older
+          # tag. Use `pnpm release <version>` to move both together.
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            PKG="v$(node -p "require('./apps/cli/package.json').version")"
+            if [ "$PKG" != "$V" ]; then
+              echo "tag $V does not match apps/cli/package.json ($PKG)" >&2
+              exit 1
+            fi
+          fi
 
       - name: Build publish matrix
         id: matrix
