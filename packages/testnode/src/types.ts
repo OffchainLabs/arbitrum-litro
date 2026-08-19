@@ -21,8 +21,7 @@ export interface VariantDefinition {
 
 export interface TestnodeState {
 	/**
-	 * The image the variant/version (or an explicit `imageRef`) resolves to. This
-	 * is the image to pull and authenticate against. Equal to `imageRef` unless
+	 * The image to pull and authenticate against. Equals `imageRef` unless
 	 * `nitroImage` requested a rebase, in which case it is the rebase source.
 	 */
 	baseImageRef: string;
@@ -60,9 +59,8 @@ export interface BaseStateOptions {
 	imageRepository?: string | undefined;
 	l3Enabled?: boolean | string | undefined;
 	/**
-	 * Nitro image to boot the resolved testnode image's snapshot against. When
-	 * set, the resolved image is rebased onto this Nitro image and the rebased
-	 * image is booted, so callers can exercise a Nitro build of their own.
+	 * When set, the resolved testnode image is rebased onto this Nitro image and
+	 * the rebase is booted — letting callers exercise a Nitro build of their own.
 	 */
 	nitroImage?: string | undefined;
 	outputDir?: string | undefined;

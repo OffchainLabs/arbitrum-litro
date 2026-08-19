@@ -53,7 +53,7 @@ interface StartExecutionDeps {
 	bootTestnode: typeof bootTestnode;
 	collectContainerDiagnostics: typeof collectContainerDiagnostics;
 	copyNetworkConfigPaths: typeof copyNetworkConfigPaths;
-	pruneStaleRebasedImages?: typeof pruneStaleRebasedImages;
+	pruneStaleRebasedImages: typeof pruneStaleRebasedImages;
 	rebaseTestnodeImage: typeof rebaseTestnodeImage;
 }
 
@@ -201,8 +201,7 @@ export function resolveStartInput(
 	};
 }
 
-// A rebase failure gets no container diagnostics: no container was started, and
-// any container from a previous run would be unrelated to the build error.
+// A rebase failure carries no container diagnostics: no container was started.
 function runRebase(
 	state: ReturnType<typeof buildStartTestnodeState>,
 	deps: StartExecutionDeps,
@@ -210,9 +209,8 @@ function runRebase(
 	if (!state.nitroImage) {
 		return undefined;
 	}
-	// GC before — not after — the build: a cache-hit rebuild can resurrect an
-	// image already older than the prune window.
-	deps.pruneStaleRebasedImages?.();
+	// Before the build, not after — see pruneStaleRebasedImages.
+	deps.pruneStaleRebasedImages();
 	try {
 		deps.rebaseTestnodeImage(state);
 		return undefined;

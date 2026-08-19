@@ -289,6 +289,7 @@ describe("runStart", () => {
 				bootTestnode,
 				collectContainerDiagnostics,
 				copyNetworkConfigPaths: vi.fn(),
+				pruneStaleRebasedImages: vi.fn(),
 				rebaseTestnodeImage,
 			},
 		);

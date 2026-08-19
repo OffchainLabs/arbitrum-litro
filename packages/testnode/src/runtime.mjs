@@ -32,15 +32,39 @@ const REBASE_DOCKERFILE = join("docker", "testnode-rebase.Dockerfile");
 /** Repository every rebased image is tagged under. */
 const REBASED_IMAGE_REPOSITORY = "local/arbitrum-testnode-rebase";
 
-/**
- * Label stamped on every rebased image (declared in
- * docker/testnode-rebase.Dockerfile) so stale rebases can be
- * garbage-collected by filter.
- */
+/** Declared in docker/testnode-rebase.Dockerfile; GC filters on it. */
 const REBASED_IMAGE_GC_LABEL = "org.offchainlabs.testnode-rebase=true";
 
 /** How old an unused rebased image must be before GC removes it. */
 const REBASED_IMAGE_GC_MAX_AGE = "168h";
+
+/** Bounds on the two docker calls a rebase makes, so a wedged daemon cannot hang CI. */
+const REBASE_BUILD_TIMEOUT_MS = 900_000;
+const REBASED_IMAGE_GC_TIMEOUT_MS = 120_000;
+
+/** Paths that together identify the repo root. Both are committed. */
+const REPO_ROOT_MARKERS = [join("docker", "docker-compose.yaml"), "config"];
+
+/**
+ * Walk up from `startDir` to the repo root. Discovered rather than hard-coded
+ * because callers load from source (the composite action) and from `dist`.
+ *
+ * @param {string} [startDir]
+ * @returns {string}
+ */
+export function findRepoRoot(startDir = import.meta.dirname) {
+	let current = resolve(startDir);
+	for (;;) {
+		if (REPO_ROOT_MARKERS.every((marker) => existsSync(resolve(current, marker)))) {
+			return current;
+		}
+		const parent = dirname(current);
+		if (parent === current) {
+			throw new Error(`Unable to locate arbitrum-testnode project root from ${startDir}`);
+		}
+		current = parent;
+	}
+}
 
 /** @type {Record<string, VariantDefinition>} */
 export const VARIANTS = {
@@ -237,12 +261,8 @@ export function buildTestnodeImageRef({ contractsVersion, imageRepository, varia
 }
 
 /**
- * The local tag a rebased image is built as. The tag embeds a digest of the
- * (base image, nitro image) pair so two rebases with different inputs will not
- * collide on — or silently reuse — the same tag (12 hex chars of sha256, so
- * "not in practice" rather than "never"). The `local/` prefix means any
- * consumer that later feeds this ref back in as an image-ref input skips
- * registry login/pull for it.
+ * The local tag a rebased image is built as. The digest of the (base, nitro)
+ * pair keeps rebases with different inputs from reusing each other's tag.
  *
  * @param {string} variant
  * @param {string} baseImageRef
@@ -257,33 +277,21 @@ export function rebasedTestnodeImageRef(variant, baseImageRef, nitroImage) {
 }
 
 /**
- * Locate `docker/testnode-rebase.Dockerfile` by walking up from `startDir`.
- * Where this module sits relative to the repo root is an implementation detail
- * of two separate load paths — source (the composite action) and `dist` (the
- * built CLI) — so the path is discovered rather than hard-coded.
- *
  * @param {string} [startDir]
  * @returns {string}
  */
 export function findRebaseDockerfile(startDir = import.meta.dirname) {
-	let current = resolve(startDir);
-	for (;;) {
-		const candidate = resolve(current, REBASE_DOCKERFILE);
-		if (existsSync(candidate)) {
-			return candidate;
-		}
-		const parent = dirname(current);
-		if (parent === current) {
-			throw new Error(`Unable to locate ${REBASE_DOCKERFILE} from ${startDir}`);
-		}
-		current = parent;
+	const root = findRepoRoot(startDir);
+	const candidate = join(root, REBASE_DOCKERFILE);
+	if (!existsSync(candidate)) {
+		throw new Error(`Unable to locate ${REBASE_DOCKERFILE} in ${root}`);
 	}
+	return candidate;
 }
 
 /**
- * The `docker build` argv that grafts a testnode image's artifacts onto another
- * Nitro image. Every COPY in the Dockerfile reads from `TESTNODE_IMAGE`, so the
- * build context is unused and an empty directory is passed.
+ * The `docker build` argv grafting a testnode image's artifacts onto another
+ * Nitro image. Every COPY reads from `TESTNODE_IMAGE`, so the context is unused.
  *
  * @param {{ baseImageRef: string; contextDir: string; dockerfile: string; imageRef: string; nitroImage: string }} options
  * @returns {string[]}
@@ -310,19 +318,19 @@ export function testnodeRebaseBuildArgs({
 }
 
 /**
- * Best-effort garbage collection of stale rebased images. Docker's own prune
- * rules do the bookkeeping: only unused images (nothing a container holds)
- * older than the age window are removed, so a concurrent run's fresh build is
- * never touched. Callers run this before — not after — a rebase build, because
- * a cache-hit rebuild can resurrect an image whose creation date is already
- * past the window, and a post-build prune would collect it moments after it
- * was tagged. Failures are swallowed: GC is a bonus, never a reason to fail
- * the rebase (this module never logs; run the documented prune command from
- * the README manually to see errors).
+ * Best-effort GC of stale rebased images. Docker prunes only unused images past
+ * the age window, so a concurrent run's fresh build is never touched.
+ *
+ * Call this *before* a rebase build, not after: a cache-hit rebuild can resurrect
+ * an image already older than the window, which a post-build prune would collect
+ * moments after tagging it. Failures are swallowed — GC never fails a rebase.
  *
  * @param {(args: string[]) => string} [runner]
  */
-export function pruneStaleRebasedImages(runner = runDocker) {
+export function pruneStaleRebasedImages(
+	runner = (/** @type {string[]} */ args) =>
+		runDocker(args, { timeout: REBASED_IMAGE_GC_TIMEOUT_MS }),
+) {
 	try {
 		runner([
 			"image",
@@ -340,11 +348,10 @@ export function pruneStaleRebasedImages(runner = runDocker) {
 }
 
 /**
- * Build `state.imageRef` by rebasing `state.baseImageRef` onto `state.nitroImage`.
- * The caller is responsible for having both images available locally (or pullable
- * by the daemon) beforehand.
+ * Build `imageRef` by rebasing `baseImageRef` onto `nitroImage`. Both images must
+ * already be local or pullable by the daemon.
  *
- * @param {TestnodeState} state
+ * @param {{ baseImageRef: string; imageRef: string; nitroImage: string }} state
  * @param {{ contextDir?: string; dockerfile?: string; runner?: (args: string[]) => void }} [options]
  * @returns {string} the rebased image ref that was built
  */
@@ -358,7 +365,10 @@ export function rebaseTestnodeImage(state, options = {}) {
 	const runner =
 		options.runner ||
 		((args) => {
-			runDocker(args, { stdio: ["ignore", "inherit", "inherit"], timeout: 900_000 });
+			runDocker(args, {
+				stdio: ["ignore", "inherit", "inherit"],
+				timeout: REBASE_BUILD_TIMEOUT_MS,
+			});
 		});
 	try {
 		runner(

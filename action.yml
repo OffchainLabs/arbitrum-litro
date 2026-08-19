@@ -131,29 +131,15 @@ runs:
       shell: bash
       run: docker pull "${{ steps.resolve.outputs.base-image-ref }}"
 
-    # Best-effort GC of week-old unused rebased images before building another.
-    # Runs before the build so a cache-hit rebuild that resurrects an old image
-    # cannot be collected right after being tagged.
-    - name: Prune stale rebased images
-      if: ${{ steps.resolve.outputs.nitro-image != '' }}
-      shell: bash
-      run: docker image prune --all --force --filter "label=org.offchainlabs.testnode-rebase=true" --filter "until=168h" || true
-
+    # Prunes stale rebased images before building, then builds. Consumes the
+    # resolve step's refs so it cannot disagree with it about variant or image.
     - name: Rebase testnode image onto the supplied Nitro image
       if: ${{ steps.resolve.outputs.nitro-image != '' }}
       shell: bash
       env:
-        INPUT_CONTAINER_NAME: ${{ inputs.container-name }}
-        INPUT_FEE_TOKEN_DECIMALS: ${{ inputs.fee-token-decimals }}
-        INPUT_IMAGE_REF: ${{ inputs.image-ref }}
-        INPUT_IMAGE_REPOSITORY: ${{ inputs.image-repository }}
-        INPUT_L3_ENABLED: ${{ inputs.l3-enabled }}
-        INPUT_NITRO_CONTRACTS_VERSION: ${{ inputs.nitro-contracts-version }}
-        INPUT_NITRO_IMAGE: ${{ inputs.nitro-image }}
-        INPUT_OUTPUT_DIR: ${{ inputs.output-dir }}
-        INPUT_TIMEBOOST_ENABLED: ${{ inputs.timeboost-enabled }}
-        INPUT_VERSION: ${{ inputs.version }}
-        GITHUB_WORKSPACE: ${{ github.workspace }}
+        BASE_IMAGE_REF: ${{ steps.resolve.outputs.base-image-ref }}
+        IMAGE_REF: ${{ steps.resolve.outputs.image-ref }}
+        NITRO_IMAGE: ${{ steps.resolve.outputs.nitro-image }}
       run: node "${{ github.action_path }}/packages/action/src/rebase.mjs"
 
     - name: Boot testnode image

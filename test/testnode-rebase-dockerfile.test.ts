@@ -2,12 +2,9 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 /**
- * `docker/testnode-rebase.Dockerfile` grafts the artifacts that
- * `docker/testnode.Dockerfile` layers on top of Nitro onto a different Nitro
- * image. That only holds while the two files agree on what those artifacts are,
- * so the expectations here are derived from the source Dockerfile rather than
- * restated -- adding a COPY to the image build fails this suite until the rebase
- * copies it too.
+ * The rebase only works while it agrees with `testnode.Dockerfile` on what the
+ * testnode artifacts are, so expectations here are derived from that file rather
+ * than restated: adding a COPY there fails this suite until the rebase copies it.
  */
 
 const testnodeDockerfile = readFileSync("docker/testnode.Dockerfile", "utf-8");
@@ -57,8 +54,14 @@ describe("testnode-rebase.Dockerfile", () => {
 		const label = "org.offchainlabs.testnode-rebase=true";
 		expect(rebaseDockerfile).toContain(`LABEL ${label}`);
 		expect(readFileSync("README.md", "utf-8")).toContain(`label=${label}`);
-		expect(readFileSync("action.yml", "utf-8")).toContain(`label=${label}`);
 		expect(readFileSync("packages/testnode/src/runtime.mjs", "utf-8")).toContain(`"${label}"`);
+	});
+
+	it("documents the same GC age window the code prunes with", () => {
+		const runtime = readFileSync("packages/testnode/src/runtime.mjs", "utf-8");
+		const maxAge = runtime.match(/REBASED_IMAGE_GC_MAX_AGE = "([^"]+)"/)?.[1];
+		expect(maxAge).toBeDefined();
+		expect(readFileSync("README.md", "utf-8")).toContain(`until=${maxAge}`);
 	});
 
 	it("copies every artifact the testnode image layers onto Nitro", () => {

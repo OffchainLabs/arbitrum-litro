@@ -1,18 +1,13 @@
 # Rebase an existing testnode image onto a different Nitro image.
 #
-# `docker/testnode.Dockerfile` builds the published testnode image as
-# `FROM ${NITRO_IMAGE}` plus a fixed set of testnode artifacts (anvil, the
-# token-bridge workspace, the entrypoint scripts, and the baked snapshot under
-# /opt/arbitrum-testnode). Because Nitro is the *base* layer, those artifacts can
-# be grafted onto a different Nitro image to boot the same snapshot against a
-# Nitro build the caller supplies -- e.g. the image a Nitro PR just built.
+# `testnode.Dockerfile` builds the published image as `FROM ${NITRO_IMAGE}` plus a
+# fixed set of testnode artifacts. Because Nitro is the *base* layer, those
+# artifacts graft onto a different Nitro image -- letting the same snapshot boot
+# against a Nitro build the caller supplies. Only those paths are copied;
+# everything else comes from NITRO_IMAGE.
 #
-# Only the paths that `testnode.Dockerfile` adds are copied; everything else
-# comes from NITRO_IMAGE. The Nitro base must provide /usr/local/bin/nitro, a
-# `user` account, python3, jq, and curl -- the HEALTHCHECK below runs curl --
-# (the offchainlabs/nitro-node images provide all of these).
-#
-# The build context is unused -- every COPY reads from TESTNODE_IMAGE.
+# NITRO_IMAGE must provide /usr/local/bin/nitro, a `user` account, python3, jq,
+# and curl (the offchainlabs/nitro-node images do).
 
 ARG TESTNODE_IMAGE
 ARG NITRO_IMAGE

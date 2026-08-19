@@ -136,6 +136,11 @@ jobs:
           docker image inspect "${{ steps.action.outputs.image-ref }}" > /dev/null
           booted="$(docker inspect --format '{{.Config.Image}}' "${{ steps.action.outputs.container-name }}")"
           test "$booted" = "${{ steps.action.outputs.image-ref }}"
+          # GC runs inside rebase.mjs now, so assert it still labels and scopes
+          # its output: exactly this run's rebase carries the label.
+          labeled="$(docker image ls --format '{{.Repository}}:{{.Tag}}' \
+            --filter "label=org.offchainlabs.testnode-rebase=true")"
+          test "$labeled" = "${{ steps.action.outputs.image-ref }}"
 
       - name: Validate outputs
         run: |

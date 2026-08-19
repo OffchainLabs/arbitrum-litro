@@ -22,6 +22,7 @@ export {
 	defaultStartOutputDir,
 	filterContainerLogs,
 	findRebaseDockerfile,
+	findRepoRoot,
 	hasVariantSnapshot,
 	NITRO_CONTRACTS_VERSIONS,
 	normalizeNitroContractsVersion,

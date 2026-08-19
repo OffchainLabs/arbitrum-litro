@@ -45,24 +45,55 @@ describe("action metadata", () => {
 		}
 	});
 
-	it("gives every state-resolving step the same INPUT_* env", () => {
-		// The resolve, rebase, and run steps each rebuild testnode state from
-		// their own env block; a key present in one but not another silently
-		// resolves different state (wrong variant, wrong image) at that step.
-		const steps = action.split(/\n {4}- /);
-		const inputKeys = (script: string) => {
-			const step = steps.find((s) => s.includes(`packages/action/src/${script}`));
-			expect(step, `no step runs ${script}`).toBeDefined();
-			return [...new Set(step?.match(/INPUT_[A-Z_]+(?=:)/g) ?? [])].sort();
-		};
+	const steps = action.split(/\n {4}- /);
+	const stepFor = (script: string) => {
+		const step = steps.find((s) => s.includes(`packages/action/src/${script}`));
+		expect(step, `no step runs ${script}`).toBeDefined();
+		return step ?? "";
+	};
+	const inputKeys = (script: string) =>
+		[...new Set(stepFor(script).match(/INPUT_[A-Z_]+(?=:)/g) ?? [])].sort();
 
+	it("gives every state-resolving step the same INPUT_* env", () => {
+		// resolve and run each rebuild testnode state from their own env block; a
+		// key in one but not the other silently resolves different state (wrong
+		// variant, wrong image) at that step.
 		const resolveKeys = inputKeys("resolve.mjs");
 		expect(resolveKeys).toContain("INPUT_NITRO_IMAGE");
 		expect(resolveKeys).toContain("INPUT_TIMEBOOST_ENABLED");
-		expect(inputKeys("rebase.mjs")).toEqual(resolveKeys);
 		// The run step may carry boot-only extras on top of the shared set.
 		const bootOnly = ["INPUT_NETWORK_CONFIG_PATH", "INPUT_STARTUP_TIMEOUT_SECONDS"];
 		expect(inputKeys("run.mjs")).toEqual([...resolveKeys, ...bootOnly].sort());
+	});
+
+	it("builds the rebase from resolve's refs rather than re-deriving state", () => {
+		// Re-deriving state here is what let resolve and the boot step disagree on
+		// variant once already; consuming the resolved refs makes that impossible.
+		const step = stepFor("rebase.mjs");
+		expect(inputKeys("rebase.mjs")).toEqual([]);
+		for (const output of ["base-image-ref", "image-ref", "nitro-image"]) {
+			expect(step).toContain(`\${{ steps.resolve.outputs.${output} }}`);
+		}
+	});
+
+	it("garbage-collects rebased images in one place, not in shell", () => {
+		// GC lives in pruneStaleRebasedImages so the label and age window have a
+		// single definition; a YAML copy drifts silently.
+		expect(action).not.toContain("docker image prune");
+	});
+
+	it("only reads resolve step outputs that resolve.mjs actually writes", () => {
+		// An unwritten output expands to "" instead of failing, so a rename here
+		// is silent.
+		const resolve = readFileSync("packages/action/src/resolve.mjs", "utf-8");
+		const written = new Set(
+			[...resolve.matchAll(/writeOutput\("([^"]+)"/g)].map((match) => match[1]),
+		);
+		const referenced = new Set(
+			[...action.matchAll(/steps\.resolve\.outputs\.([a-z0-9-]+)/g)].map((match) => match[1]),
+		);
+		expect(referenced.size).toBeGreaterThan(0);
+		expect([...referenced].filter((name) => !written.has(name))).toEqual([]);
 	});
 });
 

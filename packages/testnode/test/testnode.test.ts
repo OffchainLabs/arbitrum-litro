@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { describe, expect, it, vi } from "vitest";
 import {
 	buildStartTestnodeState,
@@ -305,6 +306,12 @@ describe("nitro image rebase", () => {
 
 	it("finds the rebase Dockerfile from the built package layout", () => {
 		expect(existsSync(findRebaseDockerfile())).toBe(true);
+	});
+
+	it("fails loudly when no repo root is above the start directory", () => {
+		// The resolver used to prove the Dockerfile existed by searching for it;
+		// resolving it from the repo root instead has to keep that guarantee.
+		expect(() => findRebaseDockerfile(tmpdir())).toThrow(/project root/);
 	});
 });
 
