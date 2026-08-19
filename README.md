@@ -49,6 +49,7 @@ Optional config fields:
 | `startupTimeoutSeconds` | `120` | RPC readiness timeout |
 | `timeboostEnabled` | `false` | Use the L2 Timeboost image variant and enable Timeboost sequencer args plus the `timeboost,auctioneer` HTTP APIs |
 | `networkConfigPath` | — | One path or an array of paths to overwrite with `localNetwork.json` |
+| `nitroImage` | — | Nitro image to rebase the testnode image onto before booting (see [Booting your own Nitro build](#booting-your-own-nitro-build)) |
 
 Start exports config under `outputDir/config` and boots these host RPCs:
 
@@ -79,7 +80,7 @@ and existing polling behavior are unchanged.
 ### GitHub Action
 
 ```yaml
-- uses: OffchainLabs/arbitrum-testnode@v0.1.0
+- uses: OffchainLabs/arbitrum-litro@v0.1.0
   with:
     version: v0.1.0
     l3-enabled: true
@@ -98,13 +99,79 @@ The action starts a fully initialized testnode and exports environment variables
 | `ARBITRUM_TESTNODE_CONFIG_DIR` | Directory with all exported config files |
 | `ARBITRUM_TESTNODE_VARIANT` | Resolved variant name, such as `l3-eth` |
 
+### Booting your own Nitro build
+
+The published images bake a pinned Nitro in as their base layer, so by default a
+consumer's CI exercises *that* Nitro rather than one it built itself. `nitro-image`
+(action) / `nitroImage` (`start`) closes that gap: the resolved testnode image is
+rebased onto the Nitro image you supply, and the rebased image is what boots.
+
+This is what lets a Nitro PR check that the Nitro it just built actually starts
+under the testnode's flags and config:
+
+```yaml
+- name: Build nitro-node-dev
+  uses: docker/build-push-action@v6
+  with:
+    target: nitro-node-dev
+    load: true
+    context: .
+    tags: nitro-node-dev:latest
+
+- uses: OffchainLabs/arbitrum-litro@v0.2.10
+  id: testnode
+  with:
+    version: v0.2.10
+    nitro-image: nitro-node-dev:latest
+    github-token: ${{ secrets.GITHUB_TOKEN }}
+```
+
+Locally:
+
+```bash
+pnpm dev start --nitro-image nitro-node-dev:latest
+```
+
+How it works: `docker/testnode.Dockerfile` builds the published image as
+`FROM ${NITRO_IMAGE}` plus a fixed set of testnode artifacts (anvil, the
+token-bridge workspace, the entrypoint scripts, and the baked snapshot under
+`/opt/arbitrum-testnode`). Because Nitro is the *base* layer,
+`docker/testnode-rebase.Dockerfile` can graft exactly those artifacts onto a
+different Nitro image. Registry behavior keys off the base image — the resolved
+image is still pulled and authenticated as usual, and the rebased result is tagged
+`local/arbitrum-testnode-rebase:<variant>-<digest>` — the digest covers the base
+and Nitro refs, so different inputs get distinct tags — and is never pushed
+or pulled. Each rebased image carries the `org.offchainlabs.testnode-rebase=true`
+label, and every rebase first garbage-collects unused rebases older than a week
+(`docker image prune --all --force --filter
+"label=org.offchainlabs.testnode-rebase=true" --filter "until=168h"` — the same
+command works standalone or on a schedule for a tighter bound). Images a
+container still uses are never touched. The action exposes both refs as the
+`base-image-ref` and `image-ref` outputs.
+
+The Nitro image you supply must provide `/usr/local/bin/nitro`, a `user` account,
+`python3`, `jq`, and `curl` (the container health check depends on it). The
+`offchainlabs/nitro-node` images and Nitro's own `nitro-node-dev` target all
+satisfy this.
+
+Two caveats worth knowing:
+
+- **Rebasing adds a build step.** The rebase is a thin, cached-friendly image
+  build on top of two existing images, but it is not free the way a plain snapshot
+  restore is.
+- **It is a startup and compatibility check, not a proving check.** The snapshot's
+  chain data and the `wasmModuleRoot` recorded on-chain come from the Nitro that
+  produced the snapshot. The stack boots with the block validator disabled, so a
+  module-root mismatch against your Nitro build does not block startup — but do
+  not read a passing rebase run as validation of proving or of that module root.
+
 ### Embedded token-bridge-contracts workspace
 
 The published testnode image also contains a prebuilt `token-bridge-contracts` workspace, so
 consumers can run scripts from that workspace without another image or build step:
 
 ```yaml
-- uses: OffchainLabs/arbitrum-testnode@v0.2.10
+- uses: OffchainLabs/arbitrum-litro@v0.2.10
   id: testnode
   with:
     version: v0.2.10
@@ -199,7 +266,7 @@ job — log in before invoking it:
     username: ${{ github.actor }}
     password: ${{ secrets.GITHUB_TOKEN }}
 
-- uses: OffchainLabs/arbitrum-testnode/bake@v0.2.6
+- uses: OffchainLabs/arbitrum-litro/bake@v0.2.6
   with:
     setup-command: ./scripts/deploy-and-seed.sh
     image-ref: ghcr.io/acme/arbitrum-testnode:governance
@@ -226,7 +293,7 @@ pnpm dev start --image-ref ghcr.io/acme/arbitrum-testnode:governance
 In CI:
 
 ```yaml
-- uses: OffchainLabs/arbitrum-testnode@v0.2.6
+- uses: OffchainLabs/arbitrum-litro@v0.2.6
   with:
     image-ref: ghcr.io/acme/arbitrum-testnode:governance
     l3-enabled: false
@@ -347,6 +414,7 @@ Derived from the official nitro-testnode mnemonic. All accounts are pre-funded o
 |-------|----------|---------|-------------|
 | `version` | Conditional | — | Release version for catalog images; omit when `image-ref` is set |
 | `image-ref` | No | — | Full image reference that bypasses catalog tag resolution |
+| `nitro-image` | No | — | Nitro image to rebase the testnode image onto before booting |
 | `l3-enabled` | No | `false` | Boot the L3-enabled testnode |
 | `github-token` | No | — | Token for GHCR authentication |
 | `image-repository` | No | `ghcr.io/offchainlabs/arbitrum-testnode-ci` | Container image repository |
@@ -362,6 +430,9 @@ Derived from the official nitro-testnode mnemonic. All accounts are pre-funded o
 
 | Output | Description |
 |--------|-------------|
+| `image-ref` | Testnode image that was booted |
+| `base-image-ref` | Testnode image that was resolved (and pulled when remote); the rebase source when `nitro-image` is set |
+| `container-name` | Name of the booted testnode container |
 | `config-dir` | Directory containing exported config files |
 | `local-network-path` | Path to `localNetwork.json` |
 | `l1l2-network-path` | Path to `l1l2_network.json` |

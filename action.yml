@@ -20,6 +20,10 @@ inputs:
     required: false
     default: "false"
     description: "Whether to boot the L3-enabled testnode"
+  nitro-image:
+    required: false
+    default: ""
+    description: "Nitro image to rebase the testnode image onto before booting (e.g. a locally built nitro-node-dev:latest)"
   timeboost-enabled:
     required: false
     default: "false"
@@ -49,6 +53,15 @@ inputs:
     default: ""
     description: "Path(s) to overwrite with the exported localNetwork.json (comma-separated)"
 outputs:
+  base-image-ref:
+    description: "Testnode image that was resolved (and pulled when remote); the rebase source when nitro-image is set"
+    value: ${{ steps.resolve.outputs.base-image-ref }}
+  image-ref:
+    description: "Testnode image that was booted"
+    value: ${{ steps.resolve.outputs.image-ref }}
+  container-name:
+    description: "Name of the booted testnode container"
+    value: ${{ steps.resolve.outputs.container-name }}
   config-dir:
     description: "Directory containing the exported config files"
     value: ${{ steps.resolve.outputs.config-dir }}
@@ -94,14 +107,17 @@ runs:
         INPUT_IMAGE_REPOSITORY: ${{ inputs.image-repository }}
         INPUT_L3_ENABLED: ${{ inputs.l3-enabled }}
         INPUT_NITRO_CONTRACTS_VERSION: ${{ inputs.nitro-contracts-version }}
+        INPUT_NITRO_IMAGE: ${{ inputs.nitro-image }}
         INPUT_OUTPUT_DIR: ${{ inputs.output-dir }}
         INPUT_TIMEBOOST_ENABLED: ${{ inputs.timeboost-enabled }}
         INPUT_VERSION: ${{ inputs.version }}
         GITHUB_WORKSPACE: ${{ github.workspace }}
       run: node "${{ github.action_path }}/packages/action/src/resolve.mjs"
 
+    # Registry behavior follows the base ref -- the image actually fetched. With
+    # nitro-image set, the booted ref is a locally built rebase of that base.
     - name: Log in to GHCR
-      if: ${{ startsWith(steps.resolve.outputs.image-ref, 'ghcr.io/') }}
+      if: ${{ startsWith(steps.resolve.outputs.base-image-ref, 'ghcr.io/') }}
       shell: bash
       run: |
         if [ -z "${{ inputs.github-token }}" ]; then
@@ -111,9 +127,20 @@ runs:
         echo "${{ inputs.github-token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
     - name: Pull testnode image
-      if: ${{ !startsWith(steps.resolve.outputs.image-ref, 'local/') }}
+      if: ${{ !startsWith(steps.resolve.outputs.base-image-ref, 'local/') }}
       shell: bash
-      run: docker pull "${{ steps.resolve.outputs.image-ref }}"
+      run: docker pull "${{ steps.resolve.outputs.base-image-ref }}"
+
+    # Prunes stale rebased images before building, then builds. Consumes the
+    # resolve step's refs so it cannot disagree with it about variant or image.
+    - name: Rebase testnode image onto the supplied Nitro image
+      if: ${{ steps.resolve.outputs.nitro-image != '' }}
+      shell: bash
+      env:
+        BASE_IMAGE_REF: ${{ steps.resolve.outputs.base-image-ref }}
+        IMAGE_REF: ${{ steps.resolve.outputs.image-ref }}
+        NITRO_IMAGE: ${{ steps.resolve.outputs.nitro-image }}
+      run: node "${{ github.action_path }}/packages/action/src/rebase.mjs"
 
     - name: Boot testnode image
       shell: bash
@@ -124,6 +151,7 @@ runs:
         INPUT_IMAGE_REPOSITORY: ${{ inputs.image-repository }}
         INPUT_L3_ENABLED: ${{ inputs.l3-enabled }}
         INPUT_NITRO_CONTRACTS_VERSION: ${{ inputs.nitro-contracts-version }}
+        INPUT_NITRO_IMAGE: ${{ inputs.nitro-image }}
         INPUT_OUTPUT_DIR: ${{ inputs.output-dir }}
         INPUT_NETWORK_CONFIG_PATH: ${{ inputs.network-config-path }}
         INPUT_STARTUP_TIMEOUT_SECONDS: ${{ inputs.startup-timeout-seconds }}

@@ -1,11 +1,18 @@
-import { describe, expect, it } from "vitest";
+import { existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { describe, expect, it, vi } from "vitest";
 import {
 	buildStartTestnodeState,
+	findRebaseDockerfile,
 	hasVariantSnapshot,
+	pruneStaleRebasedImages,
+	rebaseTestnodeImage,
+	rebasedTestnodeImageRef,
 	resolvePublishMatrix,
 	resolveVariantSnapshot,
 	snapshotIdForContractsVersion,
 	testnodeDockerRunArgs,
+	testnodeRebaseBuildArgs,
 } from "../src/index.js";
 
 describe("hasVariantSnapshot", () => {
@@ -149,6 +156,162 @@ describe("buildStartTestnodeState", () => {
 		);
 		expect(args).not.toContain("redis://timeboost-redis:6379");
 		expect(args).not.toContain("redis:7-alpine");
+	});
+});
+
+describe("nitro image rebase", () => {
+	const stateFor = (nitroImage: string, l3Enabled = false) =>
+		buildStartTestnodeState({
+			cwd: "/workspace/project",
+			l3Enabled,
+			nitroImage,
+			version: "v1.2.3",
+		});
+
+	it("boots the rebased tag and keeps the resolved image as the rebase source", () => {
+		const state = stateFor("nitro-node-dev:latest");
+
+		expect(state.baseImageRef).toBe("ghcr.io/offchainlabs/arbitrum-testnode-ci:v1.2.3-nc3.2-l2");
+		expect(state.imageRef).toBe(
+			rebasedTestnodeImageRef("l2", state.baseImageRef, "nitro-node-dev:latest"),
+		);
+		expect(testnodeDockerRunArgs(state)).toContain(state.imageRef);
+	});
+
+	it("scopes the rebased tag by variant and rebase inputs so runs cannot collide", () => {
+		const base = "ghcr.io/offchainlabs/arbitrum-testnode-ci:v1.2.3-nc3.2-l2";
+		const state = stateFor("nitro-node-dev:latest", true);
+
+		expect(state.imageRef).toBe(
+			rebasedTestnodeImageRef("l3-eth", state.baseImageRef, "nitro-node-dev:latest"),
+		);
+		expect(rebasedTestnodeImageRef("l3-eth", base, "nitro:a")).not.toBe(
+			rebasedTestnodeImageRef("l2", base, "nitro:a"),
+		);
+		expect(rebasedTestnodeImageRef("l2", base, "nitro:a")).not.toBe(
+			rebasedTestnodeImageRef("l2", base, "nitro:b"),
+		);
+		expect(rebasedTestnodeImageRef("l2", "base:v1", "nitro:a")).not.toBe(
+			rebasedTestnodeImageRef("l2", "base:v2", "nitro:a"),
+		);
+	});
+
+	it("marks the rebased tag as local so it is never pulled", () => {
+		expect(rebasedTestnodeImageRef("l2", "base:v1", "nitro:a").startsWith("local/")).toBe(true);
+	});
+
+	it("builds the rebase with both images as build args and an unused context", () => {
+		expect(
+			testnodeRebaseBuildArgs({
+				baseImageRef: "ghcr.io/offchainlabs/arbitrum-testnode-ci:v1.2.3-nc3.2-l2",
+				contextDir: "/tmp/empty",
+				dockerfile: "/repo/docker/testnode-rebase.Dockerfile",
+				imageRef: "local/arbitrum-testnode-rebase:l2",
+				nitroImage: "nitro-node-dev:latest",
+			}),
+		).toEqual([
+			"build",
+			"-f",
+			"/repo/docker/testnode-rebase.Dockerfile",
+			"--build-arg",
+			"TESTNODE_IMAGE=ghcr.io/offchainlabs/arbitrum-testnode-ci:v1.2.3-nc3.2-l2",
+			"--build-arg",
+			"NITRO_IMAGE=nitro-node-dev:latest",
+			"-t",
+			"local/arbitrum-testnode-rebase:l2",
+			"/tmp/empty",
+		]);
+	});
+
+	it("passes the resolved state through to the docker build", () => {
+		const runner = vi.fn();
+		const state = stateFor("nitro-node-dev:latest");
+
+		expect(
+			rebaseTestnodeImage(state, {
+				contextDir: "/tmp/empty",
+				dockerfile: "/repo/docker/testnode-rebase.Dockerfile",
+				runner,
+			}),
+		).toBe(state.imageRef);
+		expect(runner).toHaveBeenCalledWith(
+			expect.arrayContaining([
+				`TESTNODE_IMAGE=${state.baseImageRef}`,
+				"NITRO_IMAGE=nitro-node-dev:latest",
+				state.imageRef,
+			]),
+		);
+	});
+
+	it("refuses to rebase a state that has no nitro image", () => {
+		expect(() => rebaseTestnodeImage(stateFor(""), { runner: vi.fn() })).toThrow(
+			"nitroImage is required to rebase a testnode image",
+		);
+	});
+
+	it("cleans up a context dir it created and leaves a caller's alone", () => {
+		const state = stateFor("nitro-node-dev:latest");
+		let ownedContextDir = "";
+		rebaseTestnodeImage(state, {
+			dockerfile: "/repo/docker/testnode-rebase.Dockerfile",
+			runner: (args) => {
+				ownedContextDir = args[args.length - 1] as string;
+				expect(existsSync(ownedContextDir)).toBe(true);
+			},
+		});
+
+		expect(ownedContextDir).not.toBe("");
+		expect(existsSync(ownedContextDir)).toBe(false);
+	});
+
+	it("propagates a build failure and still cleans up its context dir", () => {
+		const state = stateFor("nitro-node-dev:latest");
+		let ownedContextDir = "";
+
+		expect(() =>
+			rebaseTestnodeImage(state, {
+				dockerfile: "/repo/docker/testnode-rebase.Dockerfile",
+				runner: (args) => {
+					ownedContextDir = args[args.length - 1] as string;
+					throw new Error("docker build exited with code 1");
+				},
+			}),
+		).toThrow("docker build exited with code 1");
+		expect(ownedContextDir).not.toBe("");
+		expect(existsSync(ownedContextDir)).toBe(false);
+	});
+
+	it("prunes stale rebased images with a labeled, age-bounded, best-effort prune", () => {
+		const runner = vi.fn(() => "");
+		pruneStaleRebasedImages(runner);
+		expect(runner).toHaveBeenCalledWith([
+			"image",
+			"prune",
+			"--all",
+			"--force",
+			"--filter",
+			"label=org.offchainlabs.testnode-rebase=true",
+			"--filter",
+			"until=168h",
+		]);
+
+		expect(() =>
+			pruneStaleRebasedImages(
+				vi.fn(() => {
+					throw new Error("docker daemon unreachable");
+				}),
+			),
+		).not.toThrow();
+	});
+
+	it("finds the rebase Dockerfile from the built package layout", () => {
+		expect(existsSync(findRebaseDockerfile())).toBe(true);
+	});
+
+	it("fails loudly when no repo root is above the start directory", () => {
+		// The resolver used to prove the Dockerfile existed by searching for it;
+		// resolving it from the repo root instead has to keep that guarantee.
+		expect(() => findRebaseDockerfile(tmpdir())).toThrow(/project root/);
 	});
 });
 

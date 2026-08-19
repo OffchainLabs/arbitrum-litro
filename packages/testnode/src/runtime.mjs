@@ -1,7 +1,9 @@
 // @ts-check
 
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
 /**
@@ -23,6 +25,46 @@ export const NITRO_CONTRACTS_VERSIONS = {
 };
 
 export const DEFAULT_NITRO_CONTRACTS_VERSION = "v3.2";
+
+/** Relative path, from the project root, of the rebase Dockerfile. */
+const REBASE_DOCKERFILE = join("docker", "testnode-rebase.Dockerfile");
+
+/** Repository every rebased image is tagged under. */
+const REBASED_IMAGE_REPOSITORY = "local/arbitrum-testnode-rebase";
+
+/** Declared in docker/testnode-rebase.Dockerfile; GC filters on it. */
+const REBASED_IMAGE_GC_LABEL = "org.offchainlabs.testnode-rebase=true";
+
+/** How old an unused rebased image must be before GC removes it. */
+const REBASED_IMAGE_GC_MAX_AGE = "168h";
+
+/** Bounds on the two docker calls a rebase makes, so a wedged daemon cannot hang CI. */
+const REBASE_BUILD_TIMEOUT_MS = 900_000;
+const REBASED_IMAGE_GC_TIMEOUT_MS = 120_000;
+
+/** Paths that together identify the repo root. Both are committed. */
+const REPO_ROOT_MARKERS = [join("docker", "docker-compose.yaml"), "config"];
+
+/**
+ * Walk up from `startDir` to the repo root. Discovered rather than hard-coded
+ * because callers load from source (the composite action) and from `dist`.
+ *
+ * @param {string} [startDir]
+ * @returns {string}
+ */
+export function findRepoRoot(startDir = import.meta.dirname) {
+	let current = resolve(startDir);
+	for (;;) {
+		if (REPO_ROOT_MARKERS.every((marker) => existsSync(resolve(current, marker)))) {
+			return current;
+		}
+		const parent = dirname(current);
+		if (parent === current) {
+			throw new Error(`Unable to locate arbitrum-testnode project root from ${startDir}`);
+		}
+		current = parent;
+	}
+}
 
 /** @type {Record<string, VariantDefinition>} */
 export const VARIANTS = {
@@ -219,6 +261,134 @@ export function buildTestnodeImageRef({ contractsVersion, imageRepository, varia
 }
 
 /**
+ * The local tag a rebased image is built as. The digest of the (base, nitro)
+ * pair keeps rebases with different inputs from reusing each other's tag.
+ *
+ * @param {string} variant
+ * @param {string} baseImageRef
+ * @param {string} nitroImage
+ */
+export function rebasedTestnodeImageRef(variant, baseImageRef, nitroImage) {
+	const digest = createHash("sha256")
+		.update(`${baseImageRef}\n${nitroImage}`)
+		.digest("hex")
+		.slice(0, 12);
+	return `${REBASED_IMAGE_REPOSITORY}:${variant}-${digest}`;
+}
+
+/**
+ * @param {string} [startDir]
+ * @returns {string}
+ */
+export function findRebaseDockerfile(startDir = import.meta.dirname) {
+	const root = findRepoRoot(startDir);
+	const candidate = join(root, REBASE_DOCKERFILE);
+	if (!existsSync(candidate)) {
+		throw new Error(`Unable to locate ${REBASE_DOCKERFILE} in ${root}`);
+	}
+	return candidate;
+}
+
+/**
+ * The `docker build` argv grafting a testnode image's artifacts onto another
+ * Nitro image. Every COPY reads from `TESTNODE_IMAGE`, so the context is unused.
+ *
+ * @param {{ baseImageRef: string; contextDir: string; dockerfile: string; imageRef: string; nitroImage: string }} options
+ * @returns {string[]}
+ */
+export function testnodeRebaseBuildArgs({
+	baseImageRef,
+	contextDir,
+	dockerfile,
+	imageRef,
+	nitroImage,
+}) {
+	return [
+		"build",
+		"-f",
+		dockerfile,
+		"--build-arg",
+		`TESTNODE_IMAGE=${baseImageRef}`,
+		"--build-arg",
+		`NITRO_IMAGE=${nitroImage}`,
+		"-t",
+		imageRef,
+		contextDir,
+	];
+}
+
+/**
+ * Best-effort GC of stale rebased images. Docker prunes only unused images past
+ * the age window, so a concurrent run's fresh build is never touched.
+ *
+ * Call this *before* a rebase build, not after: a cache-hit rebuild can resurrect
+ * an image already older than the window, which a post-build prune would collect
+ * moments after tagging it. Failures are swallowed — GC never fails a rebase.
+ *
+ * @param {(args: string[]) => string} [runner]
+ */
+export function pruneStaleRebasedImages(
+	runner = (/** @type {string[]} */ args) =>
+		runDocker(args, { timeout: REBASED_IMAGE_GC_TIMEOUT_MS }),
+) {
+	try {
+		runner([
+			"image",
+			"prune",
+			"--all",
+			"--force",
+			"--filter",
+			`label=${REBASED_IMAGE_GC_LABEL}`,
+			"--filter",
+			`until=${REBASED_IMAGE_GC_MAX_AGE}`,
+		]);
+	} catch {
+		// Unreachable daemon or unsupported filter — the rebase must proceed.
+	}
+}
+
+/**
+ * Build `imageRef` by rebasing `baseImageRef` onto `nitroImage`. Both images must
+ * already be local or pullable by the daemon.
+ *
+ * @param {{ baseImageRef: string; imageRef: string; nitroImage: string }} state
+ * @param {{ contextDir?: string; dockerfile?: string; runner?: (args: string[]) => void }} [options]
+ * @returns {string} the rebased image ref that was built
+ */
+export function rebaseTestnodeImage(state, options = {}) {
+	if (!state.nitroImage) {
+		throw new Error("nitroImage is required to rebase a testnode image");
+	}
+	const dockerfile = options.dockerfile || findRebaseDockerfile();
+	const ownsContextDir = !options.contextDir;
+	const contextDir = options.contextDir || mkdtempSync(join(tmpdir(), "arbitrum-testnode-rebase-"));
+	const runner =
+		options.runner ||
+		((args) => {
+			runDocker(args, {
+				stdio: ["ignore", "inherit", "inherit"],
+				timeout: REBASE_BUILD_TIMEOUT_MS,
+			});
+		});
+	try {
+		runner(
+			testnodeRebaseBuildArgs({
+				baseImageRef: state.baseImageRef,
+				contextDir,
+				dockerfile,
+				imageRef: state.imageRef,
+				nitroImage: state.nitroImage,
+			}),
+		);
+	} finally {
+		if (ownsContextDir) {
+			rmSync(contextDir, { force: true, recursive: true });
+		}
+	}
+	return state.imageRef;
+}
+
+/**
  * Whether a variant ships a snapshot bundle for the given contracts version.
  * The default contracts version always has a bundle (the existing per-variant
  * snapshots are v3.2); non-default versions only when an explicit
@@ -366,6 +536,24 @@ function resolveRuntimeVersion(version, imageRef) {
 }
 
 /**
+ * The exported-config paths for a variant. L3-only entries are empty strings on
+ * L2-only variants, since those files are never exported.
+ *
+ * @param {string} configDir
+ * @param {boolean} l3Enabled
+ * @returns {TestnodeState["paths"]}
+ */
+function buildStatePaths(configDir, l3Enabled) {
+	return {
+		l1BridgeUiConfig: join(configDir, "l1-l2-admin", "bridgeUiConfig.json"),
+		l1l2Network: join(configDir, "l1l2_network.json"),
+		l2BridgeUiConfig: l3Enabled ? join(configDir, "l2-l3-admin", "bridgeUiConfig.json") : "",
+		l2l3Network: l3Enabled ? join(configDir, "l2l3_network.json") : "",
+		localNetwork: join(configDir, "localNetwork.json"),
+	};
+}
+
+/**
  * @param {BaseStateOptions & { defaultOutputDir: (options: { variant: string; version: string }) => string }} options
  * @returns {TestnodeState}
  */
@@ -376,12 +564,14 @@ function buildTestnodeState({
 	imageRef,
 	imageRepository,
 	l3Enabled,
+	nitroImage,
 	outputDir,
 	timeboostEnabled,
 	version,
 	defaultOutputDir,
 }) {
 	const resolvedImageRef = imageRef?.trim() || undefined;
+	const resolvedNitroImage = nitroImage?.trim() || "";
 	const variant = resolveVariant({ feeTokenDecimals, l3Enabled, timeboostEnabled });
 	const definition = VARIANTS[variant];
 	if (!definition) {
@@ -401,28 +591,25 @@ function buildTestnodeState({
 		l2: `http://127.0.0.1:${definition.hostPorts.l2}`,
 		l3: definition.l3Enabled ? `http://127.0.0.1:${definition.hostPorts.l3}` : "",
 	};
+	const baseImageRef = resolvedImageRef
+		? resolvedImageRef
+		: buildTestnodeImageRef({
+				contractsVersion: resolvedContractsVersion,
+				imageRepository,
+				variant,
+				version: resolvedVersion,
+			});
 	return {
+		baseImageRef,
 		configDir,
 		containerName: resolvedContainerName,
 		contractsVersion: resolvedContractsVersion,
-		imageRef: resolvedImageRef
-			? resolvedImageRef
-			: buildTestnodeImageRef({
-					contractsVersion: resolvedContractsVersion,
-					imageRepository,
-					variant,
-					version: resolvedVersion,
-				}),
+		imageRef: resolvedNitroImage
+			? rebasedTestnodeImageRef(variant, baseImageRef, resolvedNitroImage)
+			: baseImageRef,
+		nitroImage: resolvedNitroImage,
 		outputDir: resolvedOutputDir,
-		paths: {
-			l1BridgeUiConfig: join(configDir, "l1-l2-admin", "bridgeUiConfig.json"),
-			l1l2Network: join(configDir, "l1l2_network.json"),
-			l2BridgeUiConfig: definition.l3Enabled
-				? join(configDir, "l2-l3-admin", "bridgeUiConfig.json")
-				: "",
-			l2l3Network: definition.l3Enabled ? join(configDir, "l2l3_network.json") : "",
-			localNetwork: join(configDir, "localNetwork.json"),
-		},
+		paths: buildStatePaths(configDir, definition.l3Enabled),
 		rpcUrls,
 		snapshotId: definition.snapshotId,
 		timeboostEnabled: resolvedTimeboostEnabled,
@@ -439,6 +626,7 @@ export function buildActionTestnodeState({
 	imageRef,
 	imageRepository,
 	l3Enabled,
+	nitroImage,
 	outputDir,
 	runnerTemp,
 	timeboostEnabled,
@@ -452,6 +640,7 @@ export function buildActionTestnodeState({
 		imageRef,
 		imageRepository,
 		l3Enabled,
+		nitroImage,
 		outputDir: outputDir
 			? isAbsolute(outputDir)
 				? outputDir
@@ -473,6 +662,7 @@ export function buildStartTestnodeState({
 	imageRef,
 	imageRepository,
 	l3Enabled,
+	nitroImage,
 	outputDir,
 	timeboostEnabled,
 	version,
@@ -484,6 +674,7 @@ export function buildStartTestnodeState({
 		imageRef,
 		imageRepository,
 		l3Enabled,
+		nitroImage,
 		outputDir: outputDir
 			? isAbsolute(outputDir)
 				? outputDir

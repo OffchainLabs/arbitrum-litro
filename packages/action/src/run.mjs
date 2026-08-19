@@ -26,6 +26,7 @@ const state = buildActionTestnodeState({
 	imageRef: process.env["INPUT_IMAGE_REF"],
 	imageRepository: process.env["INPUT_IMAGE_REPOSITORY"],
 	l3Enabled: process.env["INPUT_L3_ENABLED"],
+	nitroImage: process.env["INPUT_NITRO_IMAGE"],
 	outputDir: process.env["INPUT_OUTPUT_DIR"],
 	runnerTemp: process.env["RUNNER_TEMP"],
 	timeboostEnabled: process.env["INPUT_TIMEBOOST_ENABLED"],

@@ -16,15 +16,19 @@ const state = buildActionTestnodeState({
 	imageRef: process.env["INPUT_IMAGE_REF"],
 	imageRepository: process.env["INPUT_IMAGE_REPOSITORY"],
 	l3Enabled: process.env["INPUT_L3_ENABLED"],
+	nitroImage: process.env["INPUT_NITRO_IMAGE"],
 	outputDir: process.env["INPUT_OUTPUT_DIR"],
 	runnerTemp: process.env["RUNNER_TEMP"],
+	timeboostEnabled: process.env["INPUT_TIMEBOOST_ENABLED"],
 	version: process.env["INPUT_VERSION"],
 	workspace: process.env["GITHUB_WORKSPACE"],
 });
 
+writeOutput("base-image-ref", state.baseImageRef);
 writeOutput("config-dir", state.configDir);
 writeOutput("container-name", state.containerName);
 writeOutput("image-ref", state.imageRef);
+writeOutput("nitro-image", state.nitroImage);
 writeOutput("l1-bridge-ui-config-path", state.paths.l1BridgeUiConfig);
 writeOutput("l1-rpc-url", state.rpcUrls.l1);
 writeOutput("l1l2-network-path", state.paths.l1l2Network);

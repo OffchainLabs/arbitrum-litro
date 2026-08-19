@@ -6,6 +6,8 @@ import {
 	buildStartTestnodeState,
 	collectContainerDiagnostics,
 	copyNetworkConfigPaths,
+	pruneStaleRebasedImages,
+	rebaseTestnodeImage,
 } from "@arbitrum/testnode";
 import { Cli, z } from "incur";
 import { DEFAULT_START_IMAGE_VERSION } from "../package-metadata.js";
@@ -21,6 +23,7 @@ const startFileSchema = z.object({
 	l3Enabled: z.boolean().optional(),
 	networkConfigPath: z.union([z.string(), z.array(z.string())]).optional(),
 	nitroContractsVersion: z.string().optional(),
+	nitroImage: z.string().optional(),
 	outputDir: z.string().optional(),
 	startupTimeoutSeconds: z.number().optional(),
 	timeboostEnabled: z.boolean().optional(),
@@ -39,6 +42,7 @@ interface StartResolvedInput {
 	l3Enabled: boolean;
 	networkConfigPaths: string[];
 	nitroContractsVersion: string | undefined;
+	nitroImage: string | undefined;
 	outputDir: string | undefined;
 	startupTimeoutSeconds: number;
 	timeboostEnabled: boolean;
@@ -49,21 +53,25 @@ interface StartExecutionDeps {
 	bootTestnode: typeof bootTestnode;
 	collectContainerDiagnostics: typeof collectContainerDiagnostics;
 	copyNetworkConfigPaths: typeof copyNetworkConfigPaths;
+	pruneStaleRebasedImages: typeof pruneStaleRebasedImages;
+	rebaseTestnodeImage: typeof rebaseTestnodeImage;
 }
 
 type StartResult =
 	| {
 			success: false;
 			error: string;
-			diagnostics: ContainerDiagnostics;
+			diagnostics?: ContainerDiagnostics;
 	  }
 	| {
 			success: true;
+			baseImageRef: string;
 			configDir: string;
 			configPath?: string;
 			containerName: string;
 			exportedFiles: string[];
 			imageRef: string;
+			nitroImage: string;
 			l1RpcUrl: string;
 			l2RpcUrl: string;
 			l3RpcUrl: string;
@@ -154,6 +162,7 @@ export function resolveStartInput(
 		l3Enabled?: boolean | undefined;
 		networkConfigPath?: string | undefined;
 		nitroContractsVersion?: string | undefined;
+		nitroImage?: string | undefined;
 		outputDir?: string | undefined;
 		startupTimeoutSeconds?: number | undefined;
 		timeboostEnabled?: boolean | undefined;
@@ -179,6 +188,7 @@ export function resolveStartInput(
 			optionValue: options.networkConfigPath,
 		}),
 		nitroContractsVersion: options.nitroContractsVersion ?? fileConfig.nitroContractsVersion,
+		nitroImage: options.nitroImage ?? fileConfig.nitroImage,
 		outputDir: resolveMergedOutputDir({
 			configDir,
 			cwd,
@@ -191,12 +201,35 @@ export function resolveStartInput(
 	};
 }
 
+// A rebase failure carries no container diagnostics: no container was started.
+function runRebase(
+	state: ReturnType<typeof buildStartTestnodeState>,
+	deps: StartExecutionDeps,
+): Extract<StartResult, { success: false }> | undefined {
+	if (!state.nitroImage) {
+		return undefined;
+	}
+	// Before the build, not after — see pruneStaleRebasedImages.
+	deps.pruneStaleRebasedImages();
+	try {
+		deps.rebaseTestnodeImage(state);
+		return undefined;
+	} catch (error) {
+		return {
+			success: false as const,
+			error: `rebase onto ${state.nitroImage} failed: ${error instanceof Error ? error.message : String(error)}`,
+		};
+	}
+}
+
 export function runStart(
 	input: StartResolvedInput,
 	deps: StartExecutionDeps = {
 		bootTestnode,
 		collectContainerDiagnostics,
 		copyNetworkConfigPaths,
+		pruneStaleRebasedImages,
+		rebaseTestnodeImage,
 	},
 ): StartResult {
 	if (!Number.isFinite(input.startupTimeoutSeconds) || input.startupTimeoutSeconds <= 0) {
@@ -211,10 +244,16 @@ export function runStart(
 		imageRef: input.imageRef,
 		imageRepository: input.imageRepository,
 		l3Enabled: input.l3Enabled,
+		nitroImage: input.nitroImage,
 		outputDir: input.outputDir,
 		timeboostEnabled: input.timeboostEnabled,
 		version: input.version,
 	});
+
+	const rebaseFailure = runRebase(state, deps);
+	if (rebaseFailure) {
+		return rebaseFailure;
+	}
 
 	let exported: string[];
 	try {
@@ -232,10 +271,12 @@ export function runStart(
 
 	return {
 		success: true as const,
+		baseImageRef: state.baseImageRef,
 		configDir: state.configDir,
 		containerName: state.containerName,
 		exportedFiles: exported,
 		imageRef: state.imageRef,
+		nitroImage: state.nitroImage,
 		l1RpcUrl: state.rpcUrls.l1,
 		l2RpcUrl: state.rpcUrls.l2,
 		l3RpcUrl: state.rpcUrls.l3,
@@ -273,6 +314,10 @@ export const startCli = Cli.create("start", {
 			.string()
 			.optional()
 			.describe("Nitro contracts version (e.g. v2.1, v3.2)"),
+		nitroImage: z
+			.string()
+			.optional()
+			.describe("Nitro image to rebase the testnode image onto before booting"),
 		outputDir: z
 			.string()
 			.optional()
