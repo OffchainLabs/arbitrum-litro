@@ -345,16 +345,20 @@ Git tag as the image version. The workflow can also be run manually to publish o
 variant or `all`. Each build is pushed to two registries under the same tag suffix:
 
 ```text
-ghcr.io/<owner>/arbitrum-testnode-ci:<version>-nc<contracts-version>-<variant>
+ghcr.io/<owner>/arbitrum-litro:<version>-nc<contracts-version>-<variant>
 offchainlabs/arbitrum-litro:<version>-nc<contracts-version>-<variant>
 ```
 
-The Docker Hub repository is public, so pulling it needs no credentials; the GHCR
-package is private and requires a token. Both carry identical images — the workflow
-builds once and pushes the same digest to both. Publishing requires the
+Both carry identical images: the workflow builds once and pushes the same digest to
+each. The Docker Hub repository is public, so pulling it needs no credentials; the
+GHCR package is private and requires a token. Publishing requires the
 `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` repository secrets, and refuses to
 replace a Docker Hub tag that already exists unless the manual run sets
 `overwrite`.
+
+Releases up to `v0.2.10` were published to `ghcr.io/<owner>/arbitrum-testnode-ci`.
+GHCR cannot rename a package, so that one stays as-is and keeps serving those tags;
+everything from the next release on uses `arbitrum-litro` in both registries.
 
 The `snapshot-version` workflow input provides the snapshot release tag used for every selected variant.
 For automatic tag publishes, the snapshot release tag comes from `config/testnodes.json`.

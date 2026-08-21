@@ -268,6 +268,11 @@ jobs:
       # about what a version means. The suffix shape must match
       # buildTestnodeImageRef in packages/testnode/src/runtime.mjs -- that is
       # what consumers resolve, so a drift here publishes tags nothing pulls.
+      #
+      # The GHCR image is `arbitrum-litro`, matching Docker Hub and this repo.
+      # GHCR has no rename, so this is a new package rather than a renamed one:
+      # everything up to v0.2.10 stays in `arbitrum-testnode-ci`, which keeps
+      # serving consumers pinned to a pre-rename action ref.
       - name: Resolve image refs
         id: refs
         env:
@@ -283,10 +288,10 @@ jobs:
           suffix="${VERSION}-nc${CONTRACTS_VERSION#v}-${VARIANT}"
           owner="$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')"
           {
-            echo "ghcr=ghcr.io/${owner}/arbitrum-testnode-ci:${suffix}"
+            echo "ghcr=ghcr.io/${owner}/arbitrum-litro:${suffix}"
             echo "dockerhub=${DOCKERHUB_REPOSITORY}:${suffix}"
           } >> "$GITHUB_OUTPUT"
-          echo "publishing ${suffix} to ghcr.io/${owner}/arbitrum-testnode-ci and ${DOCKERHUB_REPOSITORY}"
+          echo "publishing ${suffix} to ghcr.io/${owner}/arbitrum-litro and ${DOCKERHUB_REPOSITORY}"
 
       # Docker Hub tags are mutable and public: without this, a re-run silently
       # replaces a shipped image. Queried through the Hub API rather than the
