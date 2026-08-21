@@ -59,6 +59,18 @@ if (tags.length === 0) {
 tags.sort();
 console.error(`mirroring ${tags.length} tags: ${tags.join(" ")}`);
 
+// The `latest-<variant>` alias for every variant in the set. Whether an alias
+// actually moves is decided at copy time, from whether the source alias points
+// at one of these tags: the destination must not claim a version is latest when
+// the source does not.
+const aliases = [
+	...new Set(tags.map((tag) => `latest-${pattern.exec(tag)?.groups?.variant}`)),
+].sort();
+console.error(`candidate aliases: ${aliases.join(" ")}`);
+
 if (process.env.GITHUB_OUTPUT) {
-	appendFileSync(process.env.GITHUB_OUTPUT, `list<<TAGS\n${tags.join("\n")}\nTAGS\n`);
+	appendFileSync(
+		process.env.GITHUB_OUTPUT,
+		`list<<TAGS\n${tags.join("\n")}\nTAGS\naliases<<ALIASES\n${aliases.join("\n")}\nALIASES\n`,
+	);
 }

@@ -368,29 +368,44 @@ pnpm release 0.2.11 --push   # ...and push, starting the publish
 
 The `Publish Testnode` workflow publishes automatically when a `v*` tag is pushed.
 The Git tag becomes the image version, and every current v3.2 variant is published.
-The workflow can also be run manually to publish one variant or `all`. Each build is
-pushed to two registries under the same tag suffix:
+The workflow can also be run manually to publish one variant or `all`.
+
+Publishing goes to the private GHCR package, and reaching the public Docker Hub
+repository is a separate step. Both use the same tag suffix, so a version means the
+same thing in either:
 
 ```text
 ghcr.io/<owner>/arbitrum-litro:<version>-nc<contracts-version>-<variant>
 offchainlabs/arbitrum-litro:<version>-nc<contracts-version>-<variant>
 ```
 
-Both carry identical images: the workflow builds once and pushes the same digest to
-each. The Docker Hub repository is public, so pulling it needs no credentials; the
-GHCR package is private and requires a token. Publishing requires the
-`DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` repository secrets, and refuses to
-replace a Docker Hub tag that already exists unless the manual run sets
-`overwrite`.
+Getting from one to the other is a three-step promotion:
+
+1. **Publish.** A tag push, or a manual run with `registries: ghcr`, builds and pushes
+   to GHCR only. A manual run can select `ghcr,dockerhub` to publish to both at once,
+   which skips the gate below; that needs the `DOCKERHUB_USERNAME` and
+   `DOCKERHUB_TOKEN` repository secrets, and refuses to replace a Docker Hub tag that
+   already exists unless the run sets `overwrite`.
+2. **Verify.** `Verify Published Image` boots the published `l2` and `l3-eth` images
+   through the action, authenticating against GHCR, and checks that each image's
+   bundle labels match the tag it was pulled as.
+3. **Promote.** `Mirror Images to Docker Hub` copies the version's tags across with
+   `crane`, preserving digests rather than rebuilding, so `repo@sha256:...` stays valid
+   against either registry. It refuses to change a Docker Hub tag whose digest already
+   differs unless the run sets `overwrite`.
 
 After every variant succeeds, a tag-triggered release also updates the corresponding
-`latest-<variant>` aliases, in both registries. These canonical aliases deliberately
-omit a contracts version: consumers follow the composed bundle, while its exact Nitro
-and Token Bridge refs and commits remain recorded as OCI labels.
+`latest-<variant>` aliases in the registries it published to. Promotion carries an
+alias across only when the source alias still names a version being mirrored, so the
+public alias never points at a version Docker Hub does not have. These canonical
+aliases deliberately omit a contracts version: consumers follow the composed bundle,
+while its exact Nitro and Token Bridge refs and commits remain recorded as OCI labels.
 
 Releases up to `v0.2.10` live in a separate GHCR package,
 `ghcr.io/<owner>/arbitrum-testnode-ci`, which still serves those tags. Resolving one
-needs `image-repository` plus a token, since that package is private.
+needs `image-repository` plus a token, since that package is private. That package is
+also the last one to carry `nc2.1` tags: `nitro-contracts-version: v2.1` resolves a
+tag that exists only for versions up to `v0.2.10`.
 
 Publish the default testnode image automatically:
 

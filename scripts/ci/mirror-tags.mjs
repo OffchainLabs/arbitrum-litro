@@ -25,13 +25,17 @@ if (!source || !destination) {
 }
 const overwrite = process.argv.includes("--overwrite");
 
-const tags = (process.env.TAGS ?? "")
-	.split("\n")
-	.map((line) => line.trim())
-	.filter(Boolean);
+const readList = (name) =>
+	(process.env[name] ?? "")
+		.split("\n")
+		.map((line) => line.trim())
+		.filter(Boolean);
+
+const tags = readList("TAGS");
 if (tags.length === 0) {
 	throw new Error("TAGS is empty");
 }
+const aliases = readList("ALIASES");
 
 const digestOf = (ref) => {
 	try {
@@ -57,25 +61,37 @@ async function destinationExists(repository, tag) {
 	throw new Error(`cannot tell whether ${repository}:${tag} exists (HTTP ${response.status})`);
 }
 
+function copyTag(tag, sourceDigest) {
+	execFileSync("crane", ["copy", `${source}:${tag}`, `index.docker.io/${destination}:${tag}`], {
+		stdio: "inherit",
+	});
+	const copiedDigest = digestOf(`index.docker.io/${destination}:${tag}`);
+	if (copiedDigest !== sourceDigest) {
+		throw new Error(`digest mismatch after copy: source ${sourceDigest}, got ${copiedDigest}`);
+	}
+}
+
 const summary = [];
 const failures = [];
+const mirroredDigests = new Set();
 let copied = 0;
 let skipped = 0;
+let held = 0;
 
 for (const tag of tags) {
-	const from = `${source}:${tag}`;
 	const to = `${destination}:${tag}`;
 	console.log(`::group::${tag}`);
 	try {
-		const sourceDigest = digestOf(from);
+		const sourceDigest = digestOf(`${source}:${tag}`);
 		if (!sourceDigest) {
-			throw new Error(`source missing: ${from}`);
+			throw new Error(`source missing: ${source}:${tag}`);
 		}
 
 		if (await destinationExists(destination, tag)) {
 			const current = digestOf(`index.docker.io/${to}`);
 			if (current === sourceDigest) {
 				console.log(`already mirrored at ${sourceDigest}`);
+				mirroredDigests.add(sourceDigest);
 				skipped += 1;
 				continue;
 			}
@@ -87,13 +103,8 @@ for (const tag of tags) {
 			console.log(`replacing ${current} with ${sourceDigest}`);
 		}
 
-		execFileSync("crane", ["copy", from, `index.docker.io/${to}`], { stdio: "inherit" });
-
-		const copiedDigest = digestOf(`index.docker.io/${to}`);
-		if (copiedDigest !== sourceDigest) {
-			throw new Error(`digest mismatch after copy: source ${sourceDigest}, got ${copiedDigest}`);
-		}
-
+		copyTag(tag, sourceDigest);
+		mirroredDigests.add(sourceDigest);
 		console.log(`copied ${sourceDigest}`);
 		summary.push(`- \`${to}\` <- \`${sourceDigest}\``);
 		copied += 1;
@@ -105,7 +116,42 @@ for (const tag of tags) {
 	}
 }
 
-const outcome = `copied ${copied}, skipped ${skipped} (already current), failed ${failures.length}`;
+// Aliases move only when the source alias names a version this run mirrored.
+// Overwriting is the point of an alias, so the guard above does not apply; the
+// digest match is what keeps the destination from claiming a version is latest
+// when the source does not, or when this run mirrored an older version.
+for (const alias of aliases) {
+	console.log(`::group::${alias}`);
+	try {
+		const sourceDigest = digestOf(`${source}:${alias}`);
+		if (!sourceDigest) {
+			console.log(`source has no ${alias}`);
+			held += 1;
+			continue;
+		}
+		if (!mirroredDigests.has(sourceDigest)) {
+			console.log(`${source}:${alias} is ${sourceDigest}, which is not a version mirrored here`);
+			held += 1;
+			continue;
+		}
+		if (digestOf(`index.docker.io/${destination}:${alias}`) === sourceDigest) {
+			console.log(`already mirrored at ${sourceDigest}`);
+			skipped += 1;
+			continue;
+		}
+		copyTag(alias, sourceDigest);
+		console.log(`copied ${sourceDigest}`);
+		summary.push(`- \`${destination}:${alias}\` <- \`${sourceDigest}\``);
+		copied += 1;
+	} catch (error) {
+		console.error(error instanceof Error ? error.message : String(error));
+		failures.push(alias);
+	} finally {
+		console.log("::endgroup::");
+	}
+}
+
+const outcome = `copied ${copied}, skipped ${skipped} (already current), held ${held} (alias names another version), failed ${failures.length}`;
 console.log(outcome);
 if (process.env.GITHUB_STEP_SUMMARY) {
 	appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${[...summary, outcome].join("\n")}\n`);

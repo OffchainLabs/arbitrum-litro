@@ -1,0 +1,101 @@
+name: Verify Published Image
+
+# Boots a published image through the action, so a version can be checked in the
+# private registry before it is promoted to public Docker Hub. GHCR needs a
+# credential, which is what makes this distinct from test-action.yml's
+# credential-free check of the public default.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Published version to verify (e.g. v0.3.0)"
+        required: true
+        type: string
+      image-repository:
+        description: "Repository holding the published image"
+        required: false
+        default: "ghcr.io/offchainlabs/arbitrum-litro"
+        type: string
+      nitro-contracts-version:
+        description: "Nitro contracts version the tag was published for"
+        required: true
+        default: "v3.2"
+        type: choice
+        options:
+          - v3.2
+          - v2.1
+
+jobs:
+  # One row per shape a consumer boots: an L2-only chain and a full L1/L2/L3
+  # stack. Both resolve their tag through the action, so a tag the action cannot
+  # name fails here rather than in a consumer's repository.
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: l2
+            l3-enabled: "false"
+          - variant: l3-eth
+            l3-enabled: "true"
+    name: verify (${{ matrix.variant }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run action against the published image
+        id: action
+        uses: ./
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          image-repository: ${{ inputs.image-repository }}
+          l3-enabled: ${{ matrix.l3-enabled }}
+          nitro-contracts-version: ${{ inputs.nitro-contracts-version }}
+          version: ${{ inputs.version }}
+
+      - name: Validate chains respond
+        env:
+          L1_RPC_URL: ${{ steps.action.outputs.l1-rpc-url }}
+          L2_RPC_URL: ${{ steps.action.outputs.l2-rpc-url }}
+          L3_RPC_URL: ${{ steps.action.outputs.l3-rpc-url }}
+        run: |
+          set -euo pipefail
+          for url in "$L1_RPC_URL" "$L2_RPC_URL" "${L3_RPC_URL:-}"; do
+            if [ -z "$url" ]; then
+              continue
+            fi
+            echo "checking $url"
+            curl -sfS -X POST -H 'Content-Type: application/json' \
+              -d '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' "$url"
+          done
+
+      - name: Validate network config is served
+        env:
+          LOCAL_NETWORK_PATH: ${{ steps.action.outputs.local-network-path }}
+        run: |
+          set -euo pipefail
+          test -f "$LOCAL_NETWORK_PATH"
+          curl -sfS http://127.0.0.1:8080/health
+
+      - name: Validate bundle provenance
+        run: >-
+          node scripts/ci/assert-bundle-labels.mjs
+          --image-ref "${{ steps.action.outputs.image-ref }}"
+          --variant "${{ matrix.variant }}"
+          --version "${{ inputs.version }}"

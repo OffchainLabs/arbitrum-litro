@@ -9,6 +9,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
+import { buildTestnodeImageRef } from "@arbitrum/testnode";
 import { execOrThrow } from "./exec.js";
 import {
 	getSnapshotAnvilStateDir,
@@ -195,8 +196,7 @@ export interface BakeSnapshotImageResult {
 }
 
 function defaultBaseImageRef(l3Enabled: boolean): string {
-	const variant = l3Enabled ? "l3-eth" : "l2";
-	return `ghcr.io/offchainlabs/arbitrum-testnode-ci:latest-${variant}`;
+	return buildTestnodeImageRef({ variant: l3Enabled ? "l3-eth" : "l2", version: "latest" });
 }
 
 /**

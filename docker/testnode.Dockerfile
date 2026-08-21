@@ -39,8 +39,13 @@ ARG NITRO_CONTRACTS_REF
 ARG NITRO_CONTRACTS_COMMIT
 ARG TOKENBRIDGE_REF
 ARG TOKENBRIDGE_COMMIT
+ARG IMAGE_SOURCE="https://github.com/OffchainLabs/arbitrum-litro"
 
-LABEL io.arbitrum.testnode.bundle.version="${BUNDLE_VERSION}" \
+# GHCR links a package to a repository through image.source, which is what grants
+# the repository's own workflows access to a private package. Without it a
+# published package starts orphaned and has to be linked by hand.
+LABEL org.opencontainers.image.source="${IMAGE_SOURCE}" \
+	io.arbitrum.testnode.bundle.version="${BUNDLE_VERSION}" \
 	io.arbitrum.testnode.bundle.variant="${BUNDLE_VARIANT}" \
 	io.arbitrum.testnode.nitro-contracts.ref="${NITRO_CONTRACTS_REF}" \
 	io.arbitrum.testnode.nitro-contracts.commit="${NITRO_CONTRACTS_COMMIT}" \
