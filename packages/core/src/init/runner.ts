@@ -23,6 +23,7 @@ import {
 import { createState, getNextPendingStep, loadState, markStepFailed, saveState } from "../state.js";
 import { makeStepRunners } from "./chain-steps.js";
 import { type InitContext, type InitRuntime, createInitRuntime } from "./context.js";
+import { resolveNitroContractsSource } from "./nitro-contracts-source.js";
 import { INIT_STEP_NAMES, getInitSteps } from "./steps.js";
 
 export { createInitContext, type InitContext } from "./context.js";
@@ -57,10 +58,12 @@ async function waitForAnvilStateFile(configDir: string): Promise<void> {
 
 async function runInitLoop(
 	runtime: InitRuntime,
-	feeTokenDecimals?: number,
-	rebuild?: boolean,
-	timeboostEnabled?: boolean,
-	nitroContractsVersion?: string,
+	options: {
+		feeTokenDecimals?: number | undefined;
+		rebuild?: boolean | undefined;
+		timeboostEnabled?: boolean | undefined;
+		nitroContractsSource: ReturnType<typeof resolveNitroContractsSource>;
+	},
 ): Promise<{
 	success: boolean;
 	failedStep?: string;
@@ -68,9 +71,12 @@ async function runInitLoop(
 	timings?: Record<string, number>;
 	steps: string[];
 }> {
-	let state = rebuild ? createState() : (loadState(runtime.configDir) ?? createState());
-	const runners = makeStepRunners(runtime, feeTokenDecimals, nitroContractsVersion);
-	const steps = getInitSteps({ timeboostEnabled });
+	let state = options.rebuild ? createState() : (loadState(runtime.configDir) ?? createState());
+	const runners = makeStepRunners(runtime, {
+		feeTokenDecimals: options.feeTokenDecimals,
+		nitroContractsSource: options.nitroContractsSource,
+	});
+	const steps = getInitSteps({ timeboostEnabled: options.timeboostEnabled });
 	const timings: Record<string, number> = {};
 
 	let nextStep = getNextPendingStep(state, steps);
@@ -117,7 +123,6 @@ export interface InitCommandOptions {
 	captureId?: string | undefined;
 	feeTokenDecimals?: number | undefined;
 	foreground?: boolean | undefined;
-	nitroContractsVersion?: string | undefined;
 	rebuild?: boolean | undefined;
 	skipPostCaptureVerify?: boolean | undefined;
 	snapshotVersion?: string | undefined;
@@ -152,7 +157,6 @@ export async function runInitCommand(options: InitCommandOptions, context: InitC
 			snapshotVersion: options.snapshotVersion,
 			feeTokenDecimals,
 			timeboostEnabled: options.timeboostEnabled,
-			nitroContractsVersion: options.nitroContractsVersion,
 		});
 	}
 
@@ -177,7 +181,6 @@ async function runInitForeground(
 	runtime: InitRuntime,
 	options: {
 		foreground?: boolean | undefined;
-		nitroContractsVersion?: string | undefined;
 		rebuild?: boolean | undefined;
 		skipPostCaptureVerify?: boolean | undefined;
 		snapshotVersion?: string | undefined;
@@ -212,13 +215,14 @@ async function runInitForeground(
 	}
 
 	startRunLoggingFromEnv(runtime.configDir) ?? startInlineRunLogging(runtime.configDir, logArgs);
-	const result = await runInitLoop(
-		runtime,
+	const nitroContractsSource = resolveNitroContractsSource(runtime.projectRoot);
+	console.log(`[init] Nitro contracts source: ${nitroContractsSource.identity}`);
+	const result = await runInitLoop(runtime, {
 		feeTokenDecimals,
-		options.rebuild,
-		options.timeboostEnabled,
-		options.nitroContractsVersion,
-	);
+		rebuild: options.rebuild,
+		timeboostEnabled: options.timeboostEnabled,
+		nitroContractsSource,
+	});
 	const totalElapsed = Date.now() - totalStart;
 	logInitTimeline(result.timings, totalElapsed);
 
@@ -232,6 +236,7 @@ async function runInitForeground(
 		totalStart,
 		result.steps,
 		options.skipPostCaptureVerify,
+		nitroContractsSource.family,
 	);
 }
 
@@ -274,7 +279,6 @@ function startBackgroundInit(
 		snapshotVersion: string | undefined;
 		feeTokenDecimals: number | undefined;
 		timeboostEnabled: boolean | undefined;
-		nitroContractsVersion: string | undefined;
 	},
 ) {
 	const extraArgs = [
@@ -283,9 +287,6 @@ function startBackgroundInit(
 			? ["--fee-token-decimals", String(params.feeTokenDecimals)]
 			: []),
 		...(params.timeboostEnabled ? ["--timeboost-enabled"] : []),
-		...(params.nitroContractsVersion
-			? ["--nitro-contracts-version", params.nitroContractsVersion]
-			: []),
 	];
 	const run = startDetachedInitRun(runtime.configDir, runtime.projectRoot, extraArgs);
 	return {
@@ -370,6 +371,7 @@ async function finalizeFreshInit(
 	totalStart: number,
 	steps: string[],
 	skipPostCaptureVerify?: boolean,
+	nitroContractsVersion?: string,
 ) {
 	stopRuntime({
 		composeFile: runtime.composeFile,
@@ -377,7 +379,9 @@ async function finalizeFreshInit(
 		configDir: runtime.configDir,
 	});
 	await waitForAnvilStateFile(runtime.configDir);
-	const snapshot = captureSnapshot(runtime.configDir, runtime.composeFile, snapshotId);
+	const snapshot = captureSnapshot(runtime.configDir, runtime.composeFile, snapshotId, {
+		nitroContractsVersion,
+	});
 	if (skipPostCaptureVerify) {
 		const totalElapsed = Date.now() - totalStart;
 		finishActiveRun("completed", { exitCode: 0 });

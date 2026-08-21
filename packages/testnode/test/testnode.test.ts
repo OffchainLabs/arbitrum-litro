@@ -343,24 +343,20 @@ describe("resolvePublishMatrix", () => {
 	const key = (row: { variant: string; contractsVersion: string }) =>
 		`${row.variant}@${row.contractsVersion}`;
 
-	it("emits exactly the 11 expected (variant × version) rows for all/all", () => {
+	it("emits only current-family rows for new publishes", () => {
 		const rows = resolvePublishMatrix("all", "all");
 		expect(new Set(rows.map(key))).toEqual(
 			new Set([
 				"l2@v3.2",
 				"l2-timeboost@v3.2",
 				"l3-eth@v3.2",
-				"l3-custom-6@v2.1",
 				"l3-custom-6@v3.2",
-				"l3-custom-16@v2.1",
 				"l3-custom-16@v3.2",
-				"l3-custom-18@v2.1",
 				"l3-custom-18@v3.2",
-				"l3-custom-20@v2.1",
 				"l3-custom-20@v3.2",
 			]),
 		);
-		expect(rows).toHaveLength(11);
+		expect(rows).toHaveLength(7);
 	});
 
 	it("does not emit a v2.1 row for l2, l2-timeboost, or l3-eth", () => {
@@ -369,16 +365,6 @@ describe("resolvePublishMatrix", () => {
 		expect(v21.has("l2")).toBe(false);
 		expect(v21.has("l2-timeboost")).toBe(false);
 		expect(v21.has("l3-eth")).toBe(false);
-	});
-
-	it("carries the snapshot id and fee-token decimals for a custom v2.1 row", () => {
-		const rows = resolvePublishMatrix("all", "all");
-		const row = rows.find((r) => r.variant === "l3-custom-16" && r.contractsVersion === "v2.1");
-		expect(row).toMatchObject({
-			snapshotId: "l3-custom-16-v2.1",
-			feeTokenDecimals: 16,
-			timeboostEnabled: false,
-		});
 	});
 
 	it("marks the timeboost row and sets null fee-token decimals", () => {
@@ -391,17 +377,9 @@ describe("resolvePublishMatrix", () => {
 		});
 	});
 
-	it("returns exactly one row when filtering to a variant and version", () => {
+	it("does not produce new legacy rows", () => {
 		const rows = resolvePublishMatrix("l3-custom-20", "v2.1");
-		expect(rows).toEqual([
-			{
-				variant: "l3-custom-20",
-				contractsVersion: "v2.1",
-				snapshotId: "l3-custom-20-v2.1",
-				feeTokenDecimals: 20,
-				timeboostEnabled: false,
-			},
-		]);
+		expect(rows).toEqual([]);
 	});
 
 	it("returns no rows when the version is unsupported for the variant", () => {

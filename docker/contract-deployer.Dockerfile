@@ -1,5 +1,9 @@
 FROM ghcr.io/foundry-rs/foundry:v1.3.1 AS foundry
 
+# The caller must override this stage with
+# `--build-context nitrocontracts=<local path or pinned Git context>`.
+FROM scratch AS nitrocontracts
+
 FROM node:20-trixie-slim AS nitro-builder
 
 COPY --from=foundry /usr/local/bin/forge /usr/local/bin/forge
@@ -8,11 +12,7 @@ RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace/nitro-contracts
 
-RUN git init . \
-    && git remote add origin https://github.com/OffchainLabs/nitro-contracts.git \
-    && git fetch --depth 1 origin cd4eb69e3c4cb87161b1433ad238902ea5c32ebd \
-    && git checkout --detach FETCH_HEAD \
-    && git submodule update --init --recursive --depth 1
+COPY --from=nitrocontracts . /workspace/nitro-contracts
 
 RUN cp scripts/config.example.ts scripts/config.ts
 RUN yarn install --frozen-lockfile

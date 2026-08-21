@@ -107,14 +107,12 @@ describe("bake action metadata", () => {
 		expect(action).not.toContain("OffchainLabs/arbitrum-testnode");
 	});
 
-	it("passes the selected Nitro contracts version to every rebuild init attempt", () => {
-		expect(action).toContain('default: "v3.2"');
-		expect(action).toContain(
-			"NITRO_CONTRACTS_VERSION_INPUT: ${{ inputs.nitro-contracts-version }}",
-		);
-		expect(action).toContain(
-			'init_args+=(--nitro-contracts-version "$NITRO_CONTRACTS_VERSION_INPUT")',
-		);
+	it("prepares the selected Nitro source without passing a version selector to init", () => {
+		expect(action).toContain('default: "v3.2.0"');
+		expect(action).toContain("NITRO_CONTRACTS_REF_INPUT: ${{ inputs.nitro-contracts-ref }}");
+		expect(action).toContain("NITRO_CONTRACTS_LOCAL_DIR: ${{ runner.temp }}/nitro-contracts");
+		expect(action).not.toContain("--nitro-contracts-version");
+		expect(action).not.toContain("--nitro-contracts-branch");
 		expect(action).toContain('node apps/cli/dist/index.js init "${init_args[@]}"');
 	});
 });

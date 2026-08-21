@@ -241,6 +241,7 @@ export function buildSnapshotManifest(
 	configDir: string,
 	composeFile: string,
 	snapshotId = DEFAULT_SNAPSHOT_ID,
+	metadata: { nitroContractsVersion?: string | undefined } = {},
 ): SnapshotManifest {
 	assertRequiredConfigFiles(configDir);
 	assertNonEmptyFile(
@@ -268,6 +269,9 @@ export function buildSnapshotManifest(
 			l2: l2Deployment.rollup,
 			l3: l3Deployment.rollup,
 		},
+		...(metadata.nitroContractsVersion
+			? { nitroContractsVersion: metadata.nitroContractsVersion }
+			: {}),
 		requiredFiles: [
 			...CRITICAL_CONFIG_FILES.map((file) => join("config", file)),
 			join(ANVIL_STATE_DIRNAME, ANVIL_STATE_FILENAME),
@@ -315,6 +319,7 @@ export function captureSnapshot(
 	configDir: string,
 	composeFile: string,
 	snapshotId = DEFAULT_SNAPSHOT_ID,
+	metadata: { nitroContractsVersion?: string | undefined } = {},
 ): SnapshotManifest {
 	assertRequiredConfigFiles(configDir);
 	const snapshotDir = getSnapshotDir(configDir, snapshotId);
@@ -331,7 +336,7 @@ export function captureSnapshot(
 		exportDockerVolume(volumeName, join(snapshotVolumesDir, archiveName));
 	}
 
-	const manifest = buildSnapshotManifest(configDir, composeFile, snapshotId);
+	const manifest = buildSnapshotManifest(configDir, composeFile, snapshotId, metadata);
 	writeFileSync(
 		getSnapshotManifestPath(configDir, snapshotId),
 		`${JSON.stringify(manifest, null, 2)}\n`,

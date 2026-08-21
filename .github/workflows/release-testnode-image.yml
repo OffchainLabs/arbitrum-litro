@@ -1,7 +1,7 @@
 name: Publish Testnode
 
 # On a version tag (or manual dispatch), publish a testnode image for every
-# variant x nitro-contracts-version we support. Each image's chain state is
+# current supported variant. Each image's chain state is
 # GENERATED inline in CI by running `init` (no pre-built snapshot release
 # bundles, nothing to publish out of band). The intended (variant x version)
 # matrix and the init flags per combo come from runtime.mjs resolvePublishMatrix.
@@ -30,15 +30,6 @@ on:
           - l3-custom-16
           - l3-custom-18
           - l3-custom-20
-      nitro-contracts-version:
-        description: "Nitro contracts version (or all)"
-        required: true
-        default: "all"
-        type: choice
-        options:
-          - all
-          - v2.1
-          - v3.2
       dockerhub-repository:
         description: "Docker Hub repository to publish to (retarget for a dry run)"
         required: false
@@ -88,15 +79,12 @@ jobs:
       - name: Build publish matrix
         id: matrix
         env:
-          # On tag push: every variant x every supported version. On dispatch:
-          # the chosen filters. resolvePublishMatrix only emits supported combos
-          # (e.g. no v2.1 for L2-only variants).
+          # New releases are built from the current Nitro contracts family.
           VARIANT_FILTER: ${{ github.ref_type == 'tag' && 'all' || (github.event_name == 'workflow_dispatch' && inputs.variant || 'all') }}
-          VERSION_FILTER: ${{ github.ref_type == 'tag' && 'all' || (github.event_name == 'workflow_dispatch' && inputs.nitro-contracts-version || 'all') }}
         run: >-
           node --input-type=module -e
           "import { resolvePublishMatrix } from './packages/testnode/src/runtime.mjs';
-          const include = resolvePublishMatrix(process.env.VARIANT_FILTER, process.env.VERSION_FILTER);
+          const include = resolvePublishMatrix(process.env.VARIANT_FILTER, 'v3.2');
           if (!include.length) throw new Error('empty publish matrix');
           console.error('publish matrix:', JSON.stringify(include));
           const { appendFileSync } = await import('node:fs');
@@ -121,6 +109,8 @@ jobs:
       # pin the location and the commit the contract-deployer Dockerfiles use.
       TOKEN_BRIDGE_LOCAL_DIR: ${{ github.workspace }}/../token-bridge-contracts
       TOKEN_BRIDGE_COMMIT: 5975d8f7360816341be7f94fd333ef240f4aec23
+      NITRO_CONTRACTS_LOCAL_DIR: ${{ github.workspace }}/../nitro-contracts
+      NITRO_CONTRACTS_COMMIT: 2695e7b3e3f460531e2b77fed48a60561c54d90e
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -156,6 +146,19 @@ jobs:
           test -f node_modules/ts-node/dist/bin.js
           test -f scripts/deployment/deployTokenBridgeCreator.ts
 
+      - name: Prepare Nitro contracts checkout
+        run: |
+          set -euxo pipefail
+          mkdir -p "$NITRO_CONTRACTS_LOCAL_DIR"
+          cd "$NITRO_CONTRACTS_LOCAL_DIR"
+          git init .
+          git remote add origin https://github.com/OffchainLabs/nitro-contracts.git
+          git fetch --depth 1 origin "$NITRO_CONTRACTS_COMMIT"
+          git checkout --detach FETCH_HEAD
+          git submodule update --init --recursive --depth 1
+          test "$(node -p 'require("./package.json").name')" = "@arbitrum/nitro-contracts"
+          test "$(node -p 'require("./package.json").version')" = "3.2.0"
+
       # Generate this combo's snapshot inline via init. init is flaky in CI
       # (intermittently exits 0 at wait-l1 before capturing, ~50%), so success
       # is driven off the manifest existing, with up to 3 attempts and a reset
@@ -164,7 +167,6 @@ jobs:
       - name: Generate snapshot (init, retry until captured)
         env:
           SNAPSHOT_ID: ${{ matrix.snapshotId }}
-          NC_VERSION: ${{ matrix.contractsVersion }}
           DECIMALS: ${{ matrix.feeTokenDecimals }}
           TIMEBOOST: ${{ matrix.timeboostEnabled }}
         run: |
@@ -229,7 +231,6 @@ jobs:
             # `docker compose ... down -v` below so a timed-out attempt recovers.
             set +e
             timeout 1500 pnpm dev init \
-              --nitro-contracts-version "$NC_VERSION" \
               $EXTRA \
               --capture-id "$SNAPSHOT_ID" \
               --rebuild \
@@ -262,7 +263,6 @@ jobs:
           node scripts/ci/prepare-testnode-context.mjs
           --variant "${{ matrix.variant }}"
           --snapshot-id "${{ matrix.snapshotId }}"
-          --nitro-contracts-version "${{ matrix.contractsVersion }}"
 
       # Both refs are derived from one suffix so the registries cannot disagree
       # about what a version means. The suffix shape must match
