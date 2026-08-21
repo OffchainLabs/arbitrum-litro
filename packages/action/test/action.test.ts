@@ -144,7 +144,17 @@ describe("published bundle metadata", () => {
 	it("publishes latest aliases only after every release image succeeds", () => {
 		expect(workflow).toContain("publish-latest-bundle:");
 		expect(workflow).toContain("needs: [resolve-publish-matrix, publish-testnode-image]");
-		expect(workflow).toContain("docker buildx imagetools create --tag");
+		expect(workflow).toContain("node scripts/ci/publish-latest-aliases.mjs");
+	});
+
+	it("aliases every repository the release was pushed to", () => {
+		// An alias present in one registry but not the other means the same tag
+		// name resolves to different images depending on where it is pulled from.
+		const aliases = readFileSync("scripts/ci/publish-latest-aliases.mjs", "utf-8");
+		expect(workflow).toContain('--repository "offchainlabs/arbitrum-litro"');
+		expect(workflow).toContain('/arbitrum-litro"');
+		// crane preserves the digest, so an alias and its version tag match.
+		expect(aliases).toContain('execFileSync("crane", ["copy"');
 	});
 });
 

@@ -1,3 +1,4 @@
+import { DEFAULT_TESTNODE_IMAGE_REPOSITORY } from "@arbitrum/testnode";
 import { describe, expect, it, vi } from "vitest";
 import { runBundleBake } from "../src/commands/bake.js";
 
@@ -50,11 +51,8 @@ describe("runBundleBake", () => {
 			deps,
 		);
 
-		expect(result.baseImageRef).toBe("ghcr.io/offchainlabs/arbitrum-testnode-ci:latest-l3-eth");
-		expect(commands[0]).toEqual([
-			"pull",
-			"ghcr.io/offchainlabs/arbitrum-testnode-ci:latest-l3-eth",
-		]);
+		expect(result.baseImageRef).toBe(`${DEFAULT_TESTNODE_IMAGE_REPOSITORY}:latest-l3-eth`);
+		expect(commands[0]).toEqual(["pull", `${DEFAULT_TESTNODE_IMAGE_REPOSITORY}:latest-l3-eth`]);
 	});
 
 	it("supports an L2 bundle without running L3 semantic checks", async () => {
