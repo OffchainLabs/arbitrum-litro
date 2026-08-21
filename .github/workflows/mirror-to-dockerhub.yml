@@ -1,0 +1,204 @@
+name: Mirror Images to Docker Hub
+
+# Copies already-published GHCR tags to Docker Hub without rebuilding.
+#
+# Rebuilding a released version is not equivalent: the Dockerfile fetches
+# token-bridge-contracts and apt packages at build time, so a rebuild lands a
+# different digest, and re-running the publish workflow would overwrite the GHCR
+# tags consumers are already pinned to. `imagetools create` copies the manifest
+# as-is, so both registries end up on the identical digest, which this asserts.
+#
+# The tag set comes from resolvePublishMatrix, the same source of truth the
+# publish workflow uses, so a mirror cannot drift from what a release produces.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Released version to mirror (e.g. v0.2.10)"
+        required: true
+        type: string
+      variant:
+        description: "Variant to mirror (or all)"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all
+          - l2
+          - l2-timeboost
+          - l3-eth
+          - l3-custom-6
+          - l3-custom-16
+          - l3-custom-18
+          - l3-custom-20
+      nitro-contracts-version:
+        description: "Nitro contracts version (or all)"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all
+          - v2.1
+          - v3.2
+      dockerhub-repository:
+        description: "Docker Hub repository to mirror into"
+        required: false
+        default: "offchainlabs/arbitrum-litro"
+        type: string
+      overwrite:
+        description: "Replace destination tags whose digest differs"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: mirror-to-dockerhub-${{ inputs.dockerhub-repository }}
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Emits one tag suffix per supported (variant x contracts version) combo,
+      # matching buildTestnodeImageRef in packages/testnode/src/runtime.mjs.
+      - name: Resolve tags
+        id: tags
+        env:
+          VARIANT_FILTER: ${{ inputs.variant }}
+          VERSION: ${{ inputs.version }}
+          VERSION_FILTER: ${{ inputs.nitro-contracts-version }}
+        run: >-
+          node --input-type=module -e
+          "import { resolvePublishMatrix, NITRO_CONTRACTS_VERSIONS } from './packages/testnode/src/runtime.mjs';
+          const rows = resolvePublishMatrix(process.env.VARIANT_FILTER, process.env.VERSION_FILTER);
+          if (!rows.length) throw new Error('empty mirror matrix');
+          const tags = rows.map((r) => process.env.VERSION + '-' + NITRO_CONTRACTS_VERSIONS[r.contractsVersion].tagComponent + '-' + r.variant);
+          console.error('mirroring ' + tags.length + ' tags:', tags.join(' '));
+          const { appendFileSync } = await import('node:fs');
+          appendFileSync(process.env.GITHUB_OUTPUT, 'list<<TAGS\\n' + tags.join('\\n') + '\\nTAGS\\n');"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Fail loudly rather than mirroring nothing.
+      - name: Check Docker Hub credentials
+        env:
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DOCKERHUB_USERNAME}" ] || [ -z "${DOCKERHUB_TOKEN}" ]; then
+            echo "DOCKERHUB_USERNAME and DOCKERHUB_TOKEN are required to mirror" >&2
+            exit 1
+          fi
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # Inputs arrive as env, never interpolated into the script body.
+      - name: Mirror tags
+        env:
+          DST_REPOSITORY: ${{ inputs.dockerhub-repository }}
+          OVERWRITE: ${{ inputs.overwrite }}
+          OWNER: ${{ github.repository_owner }}
+          TAGS: ${{ steps.tags.outputs.list }}
+        run: |
+          set -uo pipefail
+          src_repo="ghcr.io/$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')/arbitrum-testnode-ci"
+          failed=0
+          copied=0
+          skipped=0
+
+          digest_of() {
+            docker buildx imagetools inspect "$1" --format '{{.Manifest.Digest}}' 2>/dev/null
+          }
+
+          while IFS= read -r tag; do
+            [ -n "$tag" ] || continue
+            echo "::group::$tag"
+
+            if ! src_digest="$(digest_of "$src_repo:$tag")" || [ -z "$src_digest" ]; then
+              echo "source missing: $src_repo:$tag" >&2
+              failed=1
+              echo "::endgroup::"
+              continue
+            fi
+
+            # Destination existence comes from the Hub API, not the registry:
+            # Docker Hub answers 401 for an unknown repository, which is
+            # indistinguishable from bad credentials.
+            status="$(curl -sS -o /dev/null -w '%{http_code}' \
+              "https://hub.docker.com/v2/repositories/${DST_REPOSITORY}/tags/${tag}")"
+
+            case "$status" in
+              404) ;;
+              200)
+                dst_digest="$(digest_of "docker.io/$DST_REPOSITORY:$tag" || true)"
+                if [ "$dst_digest" = "$src_digest" ]; then
+                  echo "already mirrored at $src_digest; skipping"
+                  skipped=$((skipped + 1))
+                  echo "::endgroup::"
+                  continue
+                fi
+                if [ "$OVERWRITE" != "true" ]; then
+                  echo "exists with a different digest (dst=$dst_digest src=$src_digest); re-run with overwrite=true" >&2
+                  failed=1
+                  echo "::endgroup::"
+                  continue
+                fi
+                echo "replacing $dst_digest with $src_digest"
+                ;;
+              *)
+                echo "could not determine whether $DST_REPOSITORY:$tag exists (HTTP $status)" >&2
+                failed=1
+                echo "::endgroup::"
+                continue
+                ;;
+            esac
+
+            if ! docker buildx imagetools create -t "docker.io/$DST_REPOSITORY:$tag" "$src_repo:$tag"; then
+              echo "copy failed" >&2
+              failed=1
+              echo "::endgroup::"
+              continue
+            fi
+
+            # A single-source copy preserves the manifest, so the digests must
+            # match. If they do not, the destination is not what was released.
+            dst_digest="$(digest_of "docker.io/$DST_REPOSITORY:$tag" || true)"
+            if [ "$dst_digest" != "$src_digest" ]; then
+              echo "digest mismatch after copy (src=$src_digest dst=$dst_digest)" >&2
+              failed=1
+              echo "::endgroup::"
+              continue
+            fi
+
+            echo "copied $src_digest"
+            copied=$((copied + 1))
+            {
+              echo "- \`$DST_REPOSITORY:$tag\` <- \`$src_digest\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::endgroup::"
+          done <<< "$TAGS"
+
+          echo "copied=$copied skipped=$skipped"
+          echo "copied $copied, skipped $skipped (already current)" >> "$GITHUB_STEP_SUMMARY"
+          exit "$failed"
