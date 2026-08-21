@@ -342,11 +342,23 @@ pnpm release 0.2.11 --push   # ...and push, starting the publish
 The `Publish Testnode` workflow publishes automatically when a `v*` tag is pushed.
 Tag-triggered publishes use the `default` entry in `config/testnodes.json`, with the
 Git tag as the image version. The workflow can also be run manually to publish one
-variant or `all`. It builds image tags as:
+variant or `all`. Each build is pushed to two registries under the same tag suffix:
 
 ```text
-ghcr.io/<owner>/arbitrum-testnode-ci:<version>-nc<contracts-version>-<variant>
+ghcr.io/<owner>/arbitrum-litro:<version>-nc<contracts-version>-<variant>
+offchainlabs/arbitrum-litro:<version>-nc<contracts-version>-<variant>
 ```
+
+Both carry identical images: the workflow builds once and pushes the same digest to
+each. The Docker Hub repository is public, so pulling it needs no credentials; the
+GHCR package is private and requires a token. Publishing requires the
+`DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` repository secrets, and refuses to
+replace a Docker Hub tag that already exists unless the manual run sets
+`overwrite`.
+
+Releases up to `v0.2.10` were published to `ghcr.io/<owner>/arbitrum-testnode-ci`.
+GHCR cannot rename a package, so that one stays as-is and keeps serving those tags;
+everything from the next release on uses `arbitrum-litro` in both registries.
 
 The `snapshot-version` workflow input provides the snapshot release tag used for every selected variant.
 For automatic tag publishes, the snapshot release tag comes from `config/testnodes.json`.
