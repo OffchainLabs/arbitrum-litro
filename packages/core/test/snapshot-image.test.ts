@@ -94,9 +94,9 @@ describe("prepareTestnodeContext", () => {
 		const runtimeConfig = JSON.parse(
 			fs.readFileSync(path.join(outputDir, "runtime-config", "l2-nodeConfig.json"), "utf-8"),
 		) as Record<string, string>;
-		expect(runtimeConfig.parent).toBe("http://127.0.0.1:8545");
-		expect(runtimeConfig.sequencer).toBe("http://127.0.0.1:8547");
-		expect(runtimeConfig.chainInfo).toBe(
+		expect(runtimeConfig["parent"]).toBe("http://127.0.0.1:8545");
+		expect(runtimeConfig["sequencer"]).toBe("http://127.0.0.1:8547");
+		expect(runtimeConfig["chainInfo"]).toBe(
 			"/opt/arbitrum-testnode/runtime-config/l2_chain_info.json",
 		);
 
@@ -104,7 +104,7 @@ describe("prepareTestnodeContext", () => {
 			fs.readFileSync(path.join(outputDir, "export-config", "l2-nodeConfig.json"), "utf-8"),
 		) as Record<string, string>;
 		// The export config maps the L3 host port to 3347.
-		expect(exportConfig.l3).toBe("http://127.0.0.1:3347");
+		expect(exportConfig["l3"]).toBe("http://127.0.0.1:3347");
 
 		// Volume archives are extracted into the runtime tree.
 		expect(fs.existsSync(path.join(outputDir, "runtime", "sequencer", ".arbitrum", "marker"))).toBe(

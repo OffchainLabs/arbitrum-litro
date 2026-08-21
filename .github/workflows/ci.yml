@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  validate:
+    name: Lint, build, typecheck, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm lint
+
+      - run: pnpm build
+
+      - run: pnpm typecheck
+
+      # No package type-checks its own tests: the four package tsconfigs set
+      # `include: ["src"]`, the root `test/` directory belongs to no project, and
+      # `packages/action` is absent from the root `references` entirely.
+      - run: pnpm typecheck:test
+
+      - run: pnpm test:run
+
+  # `test-action.yml` cannot catch what this job catches: it runs the action as
+  # `uses: ./`, so the action path is a checkout its own earlier steps have
+  # already filled with node_modules, an installed snapshot, and
+  # `.testnode-context`. A consumer at `uses: OffchainLabs/arbitrum-litro@<ref>`
+  # gets only what git tracks.
+  bare-checkout:
+    name: Entry points work from a tracked-files-only checkout
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      # `git archive`, not a copy: it materializes exactly what tracked-at-HEAD
+      # means, which is what the runner hands a `uses:` consumer.
+      - name: Extract tracked files only
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/bare"
+          git archive HEAD | tar -x -C "$RUNNER_TEMP/bare"
+
+      # The markers are `docker/docker-compose.yaml` and `config`, and `config/`
+      # is here only because .gitignore re-includes `!config/testnodes.json`.
+      # Rename or drop that one file and the walk breaks for every external
+      # consumer while still succeeding in every local tree.
+      - name: Repo-root markers survive a tracked-files-only checkout
+        working-directory: ${{ runner.temp }}/bare
+        run: |
+          node -e "
+            const m = await import('./packages/testnode/src/runtime.mjs');
+            console.log('repo root:', m.findRepoRoot());
+          " --input-type=module
+
+      # Ahead of `pnpm install` deliberately: an external consumer's action path
+      # is never installed, so resolve.mjs must reach only builtins and relative
+      # imports. Reordering these steps would hide a new dependency.
+      - name: The action's resolve step runs there
+        working-directory: ${{ runner.temp }}/bare
+        env:
+          GITHUB_OUTPUT: ${{ runner.temp }}/bare-outputs.txt
+          RUNNER_TEMP: ${{ runner.temp }}/bare-runner
+          INPUT_VERSION: v0.0.0-bare-checkout
+          INPUT_L3_ENABLED: "false"
+        run: |
+          node packages/action/src/resolve.mjs
+          grep -q '^base-image-ref=offchainlabs/arbitrum-litro:v0.0.0-bare-checkout-nc3.2-l2$' "$GITHUB_OUTPUT"
+          grep -q '^container-name=arbitrum-testnode-l2$' "$GITHUB_OUTPUT"
+
+      # An omitted version resolves because resolve.mjs defaults it itself, not
+      # because of action.yml's `default: latest` -- which this step bypasses.
+      - name: The resolve step runs there without an explicit version
+        working-directory: ${{ runner.temp }}/bare
+        env:
+          GITHUB_OUTPUT: ${{ runner.temp }}/bare-outputs-novers.txt
+          RUNNER_TEMP: ${{ runner.temp }}/bare-runner
+          INPUT_L3_ENABLED: "false"
+        run: |
+          node packages/action/src/resolve.mjs
+          grep -q '^base-image-ref=offchainlabs/arbitrum-litro:latest-l2$' "$GITHUB_OUTPUT"
+
+      - name: The workspace installs and builds from tracked files only
+        working-directory: ${{ runner.temp }}/bare
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+          node apps/cli/dist/index.js --version

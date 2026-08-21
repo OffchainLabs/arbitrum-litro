@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { type MockInstance, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	installSnapshotArchive,
 	installSnapshotRelease,
@@ -171,7 +171,7 @@ describe("installSnapshotArchive", () => {
 });
 
 describe("installSnapshotRelease", () => {
-	let fetchSpy: ReturnType<typeof vi.spyOn>;
+	let fetchSpy: MockInstance<typeof globalThis.fetch>;
 
 	beforeEach(() => {
 		fetchSpy = vi.spyOn(globalThis, "fetch");

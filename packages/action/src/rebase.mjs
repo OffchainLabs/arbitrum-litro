@@ -2,10 +2,12 @@
 // disagree with it about variant or image.
 import { pruneStaleRebasedImages, rebaseTestnodeImage } from "./lib.mjs";
 
+/** @param {string} message */
 function log(message) {
 	console.log(`[arbitrum-testnode] ${message}`);
 }
 
+/** @param {string} name */
 function required(name) {
 	const value = process.env[name]?.trim();
 	if (!value) {
