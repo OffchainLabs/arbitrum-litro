@@ -5,6 +5,11 @@ name: Publish Testnode
 # GENERATED inline in CI by running `init` (no pre-built snapshot release
 # bundles, nothing to publish out of band). The intended (variant x version)
 # matrix and the init flags per combo come from runtime.mjs resolvePublishMatrix.
+#
+# Publishing lands in GHCR only by default, where the package is private. Docker
+# Hub is public and its tags are permanent in practice, so getting there is a
+# separate promotion: verify the GHCR images, then dispatch Mirror Images to
+# Docker Hub, which copies the digests rather than rebuilding.
 on:
   push:
     tags:
@@ -30,6 +35,14 @@ on:
           - l3-custom-16
           - l3-custom-18
           - l3-custom-20
+      registries:
+        description: "Where to publish. Docker Hub is public and permanent; promote to it with Mirror Images to Docker Hub instead unless a direct publish is intended."
+        required: true
+        default: "ghcr"
+        type: choice
+        options:
+          - ghcr
+          - ghcr,dockerhub
       dockerhub-repository:
         description: "Docker Hub repository to publish to (retarget for a dry run)"
         required: false
@@ -46,10 +59,23 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
+      registries: ${{ steps.registries.outputs.selected }}
       version: ${{ steps.ver.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # Resolved once so the build and alias jobs cannot disagree about where a
+      # release went. Dispatch inputs do not exist on a tag push, so a tag falls
+      # through to the private registry.
+      - name: Resolve target registries
+        id: registries
+        env:
+          REGISTRIES: ${{ inputs.registries }}
+        run: |
+          set -euo pipefail
+          echo "selected=${REGISTRIES:-ghcr}" >> "$GITHUB_OUTPUT"
+          echo "publishing to ${REGISTRIES:-ghcr}"
 
       - name: Resolve image version
         id: ver
@@ -128,6 +154,23 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      # Before the snapshot below, which takes tens of minutes: a taken tag or a
+      # missing credential should fail in a minute, not after the build.
+      - name: Resolve image refs
+        id: refs
+        env:
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        run: >-
+          node scripts/ci/resolve-publish-refs.mjs
+          --registries "${{ needs.resolve-publish-matrix.outputs.registries }}"
+          --owner "${{ github.repository_owner }}"
+          --dockerhub-repository "${{ inputs.dockerhub-repository || 'offchainlabs/arbitrum-litro' }}"
+          --version "${{ needs.resolve-publish-matrix.outputs.version }}"
+          --variant "${{ matrix.variant }}"
+          --contracts-version "${{ matrix.contractsVersion }}"
+          ${{ inputs.overwrite && '--overwrite' || '' }}
 
       - name: Install Foundry (forge for token-bridge build)
         uses: foundry-rs/foundry-toolchain@v1
@@ -268,85 +311,21 @@ jobs:
           --variant "${{ matrix.variant }}"
           --snapshot-id "${{ matrix.snapshotId }}"
 
-      # Both refs are derived from one suffix so the registries cannot disagree
-      # about what a version means. The suffix shape must match
-      # buildTestnodeImageRef in packages/testnode/src/runtime.mjs -- that is
-      # what consumers resolve, so a drift here publishes tags nothing pulls.
-      - name: Resolve image refs
-        id: refs
-        env:
-          CONTRACTS_VERSION: ${{ matrix.contractsVersion }}
-          # Empty on tag pushes (dispatch inputs do not exist there), so a
-          # release always lands in the real repository.
-          DOCKERHUB_REPOSITORY: ${{ inputs.dockerhub-repository || 'offchainlabs/arbitrum-litro' }}
-          OWNER: ${{ github.repository_owner }}
-          VARIANT: ${{ matrix.variant }}
-          VERSION: ${{ needs.resolve-publish-matrix.outputs.version }}
-        run: |
-          set -euo pipefail
-          suffix="${VERSION}-nc${CONTRACTS_VERSION#v}-${VARIANT}"
-          owner="$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')"
-          {
-            echo "ghcr=ghcr.io/${owner}/arbitrum-litro:${suffix}"
-            echo "dockerhub=${DOCKERHUB_REPOSITORY}:${suffix}"
-          } >> "$GITHUB_OUTPUT"
-          echo "publishing ${suffix} to ghcr.io/${owner}/arbitrum-litro and ${DOCKERHUB_REPOSITORY}"
-
-      # Docker Hub tags are mutable and public: without this, a re-run silently
-      # replaces a shipped image. Queried through the Hub API rather than the
-      # registry because Docker Hub answers 401 for an unknown repository, which
-      # is indistinguishable from bad credentials. Assumes a public repository
-      # (a private one 404s whether or not the tag exists).
-      - name: Refuse to overwrite a published Docker Hub tag
-        if: ${{ !inputs.overwrite }}
-        env:
-          REF: ${{ steps.refs.outputs.dockerhub }}
-        run: |
-          set -euo pipefail
-          repository="${REF%:*}"
-          tag="${REF##*:}"
-          status="$(curl -sS -o /dev/null -w '%{http_code}' \
-            "https://hub.docker.com/v2/repositories/${repository}/tags/${tag}")"
-          case "$status" in
-            404)
-              echo "$REF is free"
-              ;;
-            200)
-              echo "$REF already exists; re-run with overwrite=true to replace it" >&2
-              exit 1
-              ;;
-            *)
-              echo "could not determine whether $REF exists (HTTP $status)" >&2
-              exit 1
-              ;;
-          esac
-
       # Supplies the container driver the gha cache below needs; the default
       # docker driver cannot export one.
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
+        if: ${{ contains(needs.resolve-publish-matrix.outputs.registries, 'ghcr') }}
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # A release must not degrade to GHCR-only when the credential is missing:
-      # half-published versions are worse than a failed run.
-      - name: Check Docker Hub credentials
-        env:
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-        run: |
-          set -euo pipefail
-          if [ -z "${DOCKERHUB_USERNAME}" ] || [ -z "${DOCKERHUB_TOKEN}" ]; then
-            echo "DOCKERHUB_USERNAME and DOCKERHUB_TOKEN are required to publish" >&2
-            exit 1
-          fi
-
       - name: Log in to Docker Hub
+        if: ${{ contains(needs.resolve-publish-matrix.outputs.registries, 'dockerhub') }}
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -362,23 +341,24 @@ jobs:
           build-args: |
             BUNDLE_VERSION=${{ needs.resolve-publish-matrix.outputs.version }}
             BUNDLE_VARIANT=${{ matrix.variant }}
+            IMAGE_SOURCE=${{ github.server_url }}/${{ github.repository }}
             NITRO_CONTRACTS_REF=${{ env.NITRO_CONTRACTS_REF }}
             NITRO_CONTRACTS_COMMIT=${{ env.NITRO_CONTRACTS_COMMIT }}
             TOKENBRIDGE_REF=${{ env.TOKEN_BRIDGE_REF }}
             TOKENBRIDGE_COMMIT=${{ env.TOKEN_BRIDGE_COMMIT }}
           push: true
-          # One build, two pushes -- a second build could diverge from the first.
-          tags: |
-            ${{ steps.refs.outputs.ghcr }}
-            ${{ steps.refs.outputs.dockerhub }}
+          # One build, one push per registry -- a second build could diverge from
+          # the first, giving the same tag a different digest per registry.
+          tags: ${{ steps.refs.outputs.tags }}
           # Unscoped on purpose: the token-bridge-contracts stage is identical
           # across matrix rows (same pinned ref), so sharing one scope is where
           # the saving is. Rows overwrite each other's entry; reads still hit.
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # Moves `latest-<variant>` onto this release, in both registries so the alias
-  # means the same thing wherever it is pulled from.
+  # Moves `latest-<variant>` onto this release, in every registry the release was
+  # pushed to. Registries this run skipped pick the alias up when the version is
+  # mirrored to them, so the alias never names a version that registry lacks.
   publish-latest-bundle:
     if: ${{ github.ref_type == 'tag' }}
     needs: [resolve-publish-matrix, publish-testnode-image]
@@ -400,6 +380,7 @@ jobs:
           tar -xzf /tmp/crane.tar.gz -C /usr/local/bin crane
 
       - name: Log in to GHCR
+        if: ${{ contains(needs.resolve-publish-matrix.outputs.registries, 'ghcr') }}
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -407,14 +388,11 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Log in to Docker Hub
+        if: ${{ contains(needs.resolve-publish-matrix.outputs.registries, 'dockerhub') }}
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Lowercase owner
-        id: owner
-        run: echo "name=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
       - name: Publish latest bundle aliases
         env:
@@ -422,5 +400,6 @@ jobs:
           VERSION: ${{ needs.resolve-publish-matrix.outputs.version }}
         run: >-
           node scripts/ci/publish-latest-aliases.mjs
-          --repository "ghcr.io/${{ steps.owner.outputs.name }}/arbitrum-litro"
-          --repository "offchainlabs/arbitrum-litro"
+          --registries "${{ needs.resolve-publish-matrix.outputs.registries }}"
+          --owner "${{ github.repository_owner }}"
+          --dockerhub-repository "${{ inputs.dockerhub-repository || 'offchainlabs/arbitrum-litro' }}"

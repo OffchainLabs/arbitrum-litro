@@ -19,6 +19,7 @@
 	},
 	"dependencies": {
 		"@arbitrum/chain-sdk": "0.26.0",
+		"@arbitrum/testnode": "workspace:*",
 		"viem": "^2.47.5"
 	}
 }

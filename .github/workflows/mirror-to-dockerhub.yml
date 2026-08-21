@@ -1,8 +1,10 @@
 name: Mirror Images to Docker Hub
 
-# Copies published GHCR tags to Docker Hub without rebuilding. A rebuild is not
-# equivalent: the Dockerfile fetches token-bridge-contracts and apt packages at
-# build time, so it lands a different digest than the tag it replaces.
+# Promotes published GHCR tags to public Docker Hub without rebuilding. A rebuild
+# is not equivalent: the Dockerfile fetches token-bridge-contracts and apt
+# packages at build time, so it lands a different digest than the tag it
+# replaces. Releases publish privately to GHCR; this is the deliberate step that
+# makes a verified version public.
 #
 # The tag list is read from the source registry, not derived from
 # resolvePublishMatrix: that function describes what a release publishes now, so
@@ -41,7 +43,7 @@ on:
       source-repository:
         description: "GHCR repository to copy from"
         required: false
-        default: "ghcr.io/offchainlabs/arbitrum-testnode-ci"
+        default: "ghcr.io/offchainlabs/arbitrum-litro"
         type: string
       dockerhub-repository:
         description: "Docker Hub repository to mirror into"
@@ -125,6 +127,7 @@ jobs:
 
       - name: Mirror tags
         env:
+          ALIASES: ${{ steps.tags.outputs.aliases }}
           DST_REPOSITORY: ${{ inputs.dockerhub-repository }}
           SRC_REPOSITORY: ${{ inputs.source-repository }}
           TAGS: ${{ steps.tags.outputs.list }}

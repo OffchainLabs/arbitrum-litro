@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { resolveRepositories } from "./registries.mjs";
 
 /**
  * Points `latest-<variant>` at the just-published version of that variant, in
@@ -10,20 +11,19 @@ import { execFileSync } from "node:child_process";
  * tell which release `latest-<variant>` currently is.
  */
 
-function readArgs(name) {
-	const values = [];
-	for (let index = 0; index < process.argv.length; index += 1) {
-		if (process.argv[index] === name && process.argv[index + 1]) {
-			values.push(process.argv[index + 1]);
-		}
+function readArg(name) {
+	const index = process.argv.indexOf(name);
+	if (index === -1) {
+		return "";
 	}
-	return values;
+	return process.argv[index + 1] || "";
 }
 
-const repositories = readArgs("--repository");
-if (repositories.length === 0) {
-	throw new Error("at least one --repository is required");
-}
+const repositories = resolveRepositories({
+	dockerhubRepository: readArg("--dockerhub-repository"),
+	owner: readArg("--owner"),
+	registries: readArg("--registries"),
+}).map((entry) => entry.repository);
 
 const version = process.env.VERSION;
 if (!version) {

@@ -147,14 +147,43 @@ describe("published bundle metadata", () => {
 		expect(workflow).toContain("node scripts/ci/publish-latest-aliases.mjs");
 	});
 
-	it("aliases every repository the release was pushed to", () => {
-		// An alias present in one registry but not the other means the same tag
-		// name resolves to different images depending on where it is pulled from.
+	it("aliases exactly the registries the release published to", () => {
+		// One resolved selection feeds the build and the aliases, so an alias
+		// cannot name a version the registry it lives in never received.
 		const aliases = readFileSync("scripts/ci/publish-latest-aliases.mjs", "utf-8");
-		expect(workflow).toContain('--repository "offchainlabs/arbitrum-litro"');
-		expect(workflow).toContain('/arbitrum-litro"');
+		expect(workflow).toContain(
+			'--registries "${{ needs.resolve-publish-matrix.outputs.registries }}"',
+		);
+		expect(aliases).toContain("resolveRepositories({");
 		// crane preserves the digest, so an alias and its version tag match.
 		expect(aliases).toContain('execFileSync("crane", ["copy"');
+	});
+
+	it("publishes privately by default and promotes by copying digests", () => {
+		// Docker Hub is public and its tags are permanent in practice, so getting
+		// there is a separate dispatch rather than a side effect of a tag push.
+		const mirror = readFileSync(".github/workflows/mirror-to-dockerhub.yml", "utf-8");
+		expect(workflow).toContain('default: "ghcr"');
+		expect(mirror).toContain('default: "ghcr.io/offchainlabs/arbitrum-litro"');
+		expect(mirror).toContain("node scripts/ci/mirror-tags.mjs");
+	});
+
+	it("carries latest aliases through promotion", () => {
+		// Without this the public registry has version tags but no `latest-*`,
+		// which is what the action and bake actions resolve by default.
+		const mirror = readFileSync("scripts/ci/mirror-tags.mjs", "utf-8");
+		const resolve = readFileSync("scripts/ci/resolve-mirror-tags.mjs", "utf-8");
+		expect(resolve).toContain("latest-");
+		expect(mirror).toContain('readList("ALIASES")');
+		// An alias only moves when the source alias is one of the mirrored digests.
+		expect(mirror).toContain("mirroredDigests.has(sourceDigest)");
+	});
+
+	it("links the published package to this repository", () => {
+		// GHCR grants a repository's workflows access to a private package through
+		// image.source; without it the package starts orphaned.
+		expect(dockerfile).toContain("org.opencontainers.image.source");
+		expect(workflow).toContain("IMAGE_SOURCE=");
 	});
 });
 
