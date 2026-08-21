@@ -5,8 +5,13 @@ name: Mirror Images to Docker Hub
 # Rebuilding a released version is not equivalent: the Dockerfile fetches
 # token-bridge-contracts and apt packages at build time, so a rebuild lands a
 # different digest, and re-running the publish workflow would overwrite the GHCR
-# tags consumers are already pinned to. `imagetools create` copies the manifest
-# as-is, so both registries end up on the identical digest, which this asserts.
+# tags consumers are already pinned to.
+#
+# The copy uses crane, not `docker buildx imagetools create`. imagetools wraps a
+# single-arch source in a NEW manifest index, so the destination tag gets a
+# different digest than the source even though the underlying image is identical
+# -- which breaks `repo@sha256:...` portability across the two registries. crane
+# copies the manifest byte-for-byte, so the digests match, which this asserts.
 #
 # The tag set comes from resolvePublishMatrix, the same source of truth the
 # publish workflow uses, so a mirror cannot drift from what a release produces.
@@ -85,8 +90,18 @@ jobs:
           const { appendFileSync } = await import('node:fs');
           appendFileSync(process.env.GITHUB_OUTPUT, 'list<<TAGS\\n' + tags.join('\\n') + '\\nTAGS\\n');"
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      # crane reads the same ~/.docker/config.json the login steps below write,
+      # so no separate credential wiring. Pinned rather than :latest so a mirror
+      # is reproducible.
+      - name: Install crane
+        env:
+          CRANE_VERSION: v0.21.9
+        run: |
+          set -euo pipefail
+          url="https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz"
+          curl -fsSL "$url" -o /tmp/crane.tar.gz
+          tar -xzf /tmp/crane.tar.gz -C /usr/local/bin crane
+          crane version
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -128,7 +143,7 @@ jobs:
           skipped=0
 
           digest_of() {
-            docker buildx imagetools inspect "$1" --format '{{.Manifest.Digest}}' 2>/dev/null
+            crane digest "$1" 2>/dev/null
           }
 
           while IFS= read -r tag; do
@@ -151,7 +166,7 @@ jobs:
             case "$status" in
               404) ;;
               200)
-                dst_digest="$(digest_of "docker.io/$DST_REPOSITORY:$tag" || true)"
+                dst_digest="$(digest_of "index.docker.io/$DST_REPOSITORY:$tag" || true)"
                 if [ "$dst_digest" = "$src_digest" ]; then
                   echo "already mirrored at $src_digest; skipping"
                   skipped=$((skipped + 1))
@@ -174,16 +189,16 @@ jobs:
                 ;;
             esac
 
-            if ! docker buildx imagetools create -t "docker.io/$DST_REPOSITORY:$tag" "$src_repo:$tag"; then
+            if ! crane copy "$src_repo:$tag" "index.docker.io/$DST_REPOSITORY:$tag"; then
               echo "copy failed" >&2
               failed=1
               echo "::endgroup::"
               continue
             fi
 
-            # A single-source copy preserves the manifest, so the digests must
-            # match. If they do not, the destination is not what was released.
-            dst_digest="$(digest_of "docker.io/$DST_REPOSITORY:$tag" || true)"
+            # crane preserves the manifest, so the digests must match. If they do
+            # not, the destination is not what was released.
+            dst_digest="$(digest_of "index.docker.io/$DST_REPOSITORY:$tag" || true)"
             if [ "$dst_digest" != "$src_digest" ]; then
               echo "digest mismatch after copy (src=$src_digest dst=$dst_digest)" >&2
               failed=1
