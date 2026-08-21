@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { describe, expect, it, vi } from "vitest";
 import {
+	DEFAULT_TESTNODE_IMAGE_REPOSITORY,
 	buildStartTestnodeState,
 	findRebaseDockerfile,
 	hasVariantSnapshot,
@@ -142,9 +143,7 @@ describe("buildStartTestnodeState", () => {
 
 		expect(state.variant).toBe("l2-timeboost");
 		expect(state.outputDir).toBe("/workspace/project/.arbitrum-testnode/v1.2.3/l2-timeboost");
-		expect(state.imageRef).toBe(
-			"ghcr.io/offchainlabs/arbitrum-testnode-ci:v1.2.3-nc3.2-l2-timeboost",
-		);
+		expect(state.imageRef).toBe(`${DEFAULT_TESTNODE_IMAGE_REPOSITORY}:v1.2.3-nc3.2-l2-timeboost`);
 		expect(state.rpcUrls.l3).toBe("");
 		const args = testnodeDockerRunArgs(state);
 		expect(args).toEqual(
@@ -171,7 +170,7 @@ describe("nitro image rebase", () => {
 	it("boots the rebased tag and keeps the resolved image as the rebase source", () => {
 		const state = stateFor("nitro-node-dev:latest");
 
-		expect(state.baseImageRef).toBe("ghcr.io/offchainlabs/arbitrum-testnode-ci:v1.2.3-nc3.2-l2");
+		expect(state.baseImageRef).toBe(`${DEFAULT_TESTNODE_IMAGE_REPOSITORY}:v1.2.3-nc3.2-l2`);
 		expect(state.imageRef).toBe(
 			rebasedTestnodeImageRef("l2", state.baseImageRef, "nitro-node-dev:latest"),
 		);
@@ -179,7 +178,7 @@ describe("nitro image rebase", () => {
 	});
 
 	it("scopes the rebased tag by variant and rebase inputs so runs cannot collide", () => {
-		const base = "ghcr.io/offchainlabs/arbitrum-testnode-ci:v1.2.3-nc3.2-l2";
+		const base = `${DEFAULT_TESTNODE_IMAGE_REPOSITORY}:v1.2.3-nc3.2-l2`;
 		const state = stateFor("nitro-node-dev:latest", true);
 
 		expect(state.imageRef).toBe(
@@ -203,7 +202,7 @@ describe("nitro image rebase", () => {
 	it("builds the rebase with both images as build args and an unused context", () => {
 		expect(
 			testnodeRebaseBuildArgs({
-				baseImageRef: "ghcr.io/offchainlabs/arbitrum-testnode-ci:v1.2.3-nc3.2-l2",
+				baseImageRef: `${DEFAULT_TESTNODE_IMAGE_REPOSITORY}:v1.2.3-nc3.2-l2`,
 				contextDir: "/tmp/empty",
 				dockerfile: "/repo/docker/testnode-rebase.Dockerfile",
 				imageRef: "local/arbitrum-testnode-rebase:l2",
@@ -214,7 +213,7 @@ describe("nitro image rebase", () => {
 			"-f",
 			"/repo/docker/testnode-rebase.Dockerfile",
 			"--build-arg",
-			"TESTNODE_IMAGE=ghcr.io/offchainlabs/arbitrum-testnode-ci:v1.2.3-nc3.2-l2",
+			`TESTNODE_IMAGE=${DEFAULT_TESTNODE_IMAGE_REPOSITORY}:v1.2.3-nc3.2-l2`,
 			"--build-arg",
 			"NITRO_IMAGE=nitro-node-dev:latest",
 			"-t",

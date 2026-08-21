@@ -17,7 +17,7 @@ pnpm dev start
 By default, `start` uses the CLI package version as the image version and resolves the `l3-eth` variant image:
 
 ```text
-ghcr.io/offchainlabs/arbitrum-testnode-ci:v0.2.5-nc3.2-l3-eth
+offchainlabs/arbitrum-litro:v0.2.10-nc3.2-l3-eth
 ```
 
 Config-driven usage can pin a different image version:
@@ -43,7 +43,7 @@ Optional config fields:
 | `l3Enabled` | `true` | Boot the L3-enabled testnode |
 | `feeTokenDecimals` | — | Custom L3 fee token decimals (`6`, `16`, `18`, `20`) |
 | `nitroContractsVersion` | `v3.2` | Nitro contracts version tag component |
-| `imageRepository` | `ghcr.io/offchainlabs/arbitrum-testnode-ci` | testnode image repository |
+| `imageRepository` | `offchainlabs/arbitrum-litro` | testnode image repository |
 | `containerName` | `arbitrum-testnode-<variant>` | Docker container name override |
 | `outputDir` | `./.arbitrum-testnode/<version>/<variant>` | Export directory for config files |
 | `startupTimeoutSeconds` | `120` | RPC readiness timeout |
@@ -67,7 +67,7 @@ polling interval when the container starts:
 ```bash
 docker run \
   -e TESTNODE_PARENT_CHAIN_POLL_INTERVAL=100ms \
-  ghcr.io/offchainlabs/arbitrum-testnode-ci:<tag>
+  offchainlabs/arbitrum-litro:<tag>
 ```
 
 The value is applied to `node.parent-chain-reader.poll-interval`,
@@ -80,11 +80,23 @@ and existing polling behavior are unchanged.
 ### GitHub Action
 
 ```yaml
-- uses: OffchainLabs/arbitrum-litro@v0.1.0
+- uses: OffchainLabs/arbitrum-litro@v0.2.10
   with:
-    version: v0.1.0
+    version: v0.2.10
     l3-enabled: true
     timeboost-enabled: false
+```
+
+The default image repository is `offchainlabs/arbitrum-litro` on Docker Hub, which is
+public, so no registry credentials are needed. `github-token` is only required when
+`image-repository` points at a private registry, such as the GHCR package holding
+releases up to `v0.2.10`:
+
+```yaml
+- uses: OffchainLabs/arbitrum-litro@v0.2.10
+  with:
+    version: v0.2.9
+    image-repository: ghcr.io/offchainlabs/arbitrum-testnode-ci
     github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
@@ -123,7 +135,6 @@ under the testnode's flags and config:
   with:
     version: v0.2.10
     nitro-image: nitro-node-dev:latest
-    github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
 Locally:
@@ -175,7 +186,6 @@ consumers can run scripts from that workspace without another image or build ste
   id: testnode
   with:
     version: v0.2.10
-    github-token: ${{ secrets.GITHUB_TOKEN }}
 
 - name: Run contract deployment command
   run: |
@@ -188,7 +198,7 @@ consumers can run scripts from that workspace without another image or build ste
       -e GAS_LIMIT_FOR_L2_FACTORY_DEPLOYMENT=10000000 \
       -e POLLING_INTERVAL=100 \
       -e DISABLE_CONTRACT_VERIFICATION=true \
-      ghcr.io/offchainlabs/arbitrum-testnode-ci:v0.2.10-nc3.2-l2 \
+      offchainlabs/arbitrum-litro:v0.2.10-nc3.2-l2 \
       deploy:token-bridge-creator
 ```
 
@@ -197,7 +207,7 @@ normally retains its single-purpose testnode entrypoint. `POLLING_INTERVAL=100` 
 polling to 100 ms for local deployments, while `DISABLE_CONTRACT_VERIFICATION=true` skips explorer
 verification.
 
-Snapshots built by `init --timeboost-enabled` deploy a local Timeboost `ExpressLaneAuction` contract on L2 and write its proxy address to `timeboost-auction.json`. The snapshot build starts a local compose Redis service only while building the snapshot. When `timeboost-enabled` / `timeboostEnabled` is true, the action and `start` command resolve the L2-only `l2-timeboost` image tag, for example `ghcr.io/offchainlabs/arbitrum-testnode-ci:v0.2.2-nc3.2-l2-timeboost`. The published image uses the deployed address by default; `TESTNODE_TIMEBOOST_AUCTION_CONTRACT_ADDRESS` can still override it. Published Timeboost stacks require an external Redis endpoint supplied through `TESTNODE_TIMEBOOST_REDIS_URL`; `start` and the action do not deploy Redis.
+Snapshots built by `init --timeboost-enabled` deploy a local Timeboost `ExpressLaneAuction` contract on L2 and write its proxy address to `timeboost-auction.json`. The snapshot build starts a local compose Redis service only while building the snapshot. When `timeboost-enabled` / `timeboostEnabled` is true, the action and `start` command resolve the L2-only `l2-timeboost` image tag, for example `offchainlabs/arbitrum-litro:<version>-nc3.2-l2-timeboost`. The published image uses the deployed address by default; `TESTNODE_TIMEBOOST_AUCTION_CONTRACT_ADDRESS` can still override it. Published Timeboost stacks require an external Redis endpoint supplied through `TESTNODE_TIMEBOOST_REDIS_URL`; `start` and the action do not deploy Redis.
 
 ### Local Development
 
@@ -356,9 +366,9 @@ GHCR package is private and requires a token. Publishing requires the
 replace a Docker Hub tag that already exists unless the manual run sets
 `overwrite`.
 
-Releases up to `v0.2.10` were published to `ghcr.io/<owner>/arbitrum-testnode-ci`.
-GHCR cannot rename a package, so that one stays as-is and keeps serving those tags;
-everything from the next release on uses `arbitrum-litro` in both registries.
+Releases up to `v0.2.10` live in a separate GHCR package,
+`ghcr.io/<owner>/arbitrum-testnode-ci`, which still serves those tags. Resolving one
+needs `image-repository` plus a token, since that package is private.
 
 The `snapshot-version` workflow input provides the snapshot release tag used for every selected variant.
 For automatic tag publishes, the snapshot release tag comes from `config/testnodes.json`.
@@ -439,8 +449,8 @@ Derived from the official nitro-testnode mnemonic. All accounts are pre-funded o
 | `image-ref` | No | — | Full image reference that bypasses catalog tag resolution |
 | `nitro-image` | No | — | Nitro image to rebase the testnode image onto before booting |
 | `l3-enabled` | No | `false` | Boot the L3-enabled testnode |
-| `github-token` | No | — | Token for GHCR authentication |
-| `image-repository` | No | `ghcr.io/offchainlabs/arbitrum-testnode-ci` | Container image repository |
+| `github-token` | No | — | Token for private GHCR images; unused for the public Docker Hub default |
+| `image-repository` | No | `offchainlabs/arbitrum-litro` | Container image repository |
 | `fee-token-decimals` | No | — | Custom fee token decimals (6, 16, 18, or 20) |
 | `nitro-contracts-version` | No | `v3.2` | Nitro contracts version tag component |
 | `output-dir` | No | — | Directory where exported config files should be written |

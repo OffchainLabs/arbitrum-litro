@@ -268,11 +268,6 @@ jobs:
       # about what a version means. The suffix shape must match
       # buildTestnodeImageRef in packages/testnode/src/runtime.mjs -- that is
       # what consumers resolve, so a drift here publishes tags nothing pulls.
-      #
-      # The GHCR image is `arbitrum-litro`, matching Docker Hub and this repo.
-      # GHCR has no rename, so this is a new package rather than a renamed one:
-      # everything up to v0.2.10 stays in `arbitrum-testnode-ci`, which keeps
-      # serving consumers pinned to a pre-rename action ref.
       - name: Resolve image refs
         id: refs
         env:

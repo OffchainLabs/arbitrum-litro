@@ -294,9 +294,10 @@ describe("buildActionTestnodeState", () => {
 			rebasedTestnodeImageRef("l3-eth", state.baseImageRef, "nitro-node-dev:latest"),
 		);
 		expect(state.nitroImage).toBe("nitro-node-dev:latest");
-		// The booted (rebased) ref is local, so the pull/login conditions that key
-		// off baseImageRef still see the ghcr.io source.
-		expect(state.baseImageRef.startsWith("ghcr.io/")).toBe(true);
+		// Only the booted ref is local. The pull and login conditions key off
+		// baseImageRef, which stays the remote ref they need to act on.
+		expect(state.imageRef.startsWith("local/")).toBe(true);
+		expect(state.baseImageRef.startsWith("local/")).toBe(false);
 		expect(testnodeDockerRunArgs(state)).toContain(state.imageRef);
 	});
 

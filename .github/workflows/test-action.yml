@@ -156,11 +156,13 @@ jobs:
           echo "checking health endpoint"
           curl -sfS http://127.0.0.1:8080/health
 
+  # No registry login and no github-token: the default repository is public, so a
+  # consumer needs no credentials. A failure here means the default has stopped
+  # resolving something anyone can pull.
   test-published-image-action:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -176,21 +178,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Run action against published image
         id: action
         uses: ./
         with:
-          version: dl-ci-fast-2
+          version: v0.2.10
           nitro-contracts-version: v3.2
           l3-enabled: true
-          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Validate L2 RPC
         run: |
