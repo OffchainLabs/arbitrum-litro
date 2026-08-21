@@ -7,10 +7,10 @@ inputs:
     description: "Pinned release version; required unless image-ref is set"
   github-token:
     required: false
-    description: "Token used for private GHCR authentication"
+    description: "Token for private GHCR images; not needed for the public Docker Hub default"
   image-repository:
     required: false
-    default: "ghcr.io/offchainlabs/arbitrum-testnode-ci"
+    default: "offchainlabs/arbitrum-litro"
     description: "Container repository prefix used to resolve the testnode image"
   image-ref:
     required: false

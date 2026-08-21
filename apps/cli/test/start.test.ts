@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { DEFAULT_TESTNODE_IMAGE_REPOSITORY } from "@arbitrum/testnode";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_START_IMAGE_VERSION, resolveStartInput, runStart } from "../src/commands/start.js";
 
@@ -248,7 +249,7 @@ describe("runStart", () => {
 		expect(calls).toEqual(["prune", "rebase", "boot"]);
 		expect(rebaseTestnodeImage).toHaveBeenCalledWith(
 			expect.objectContaining({
-				baseImageRef: "ghcr.io/offchainlabs/arbitrum-testnode-ci:v1.2.3-nc3.2-l2",
+				baseImageRef: `${DEFAULT_TESTNODE_IMAGE_REPOSITORY}:v1.2.3-nc3.2-l2`,
 				imageRef: expect.stringMatching(/^local\/arbitrum-testnode-rebase:l2-[0-9a-f]{12}$/),
 				nitroImage: "nitro-node-dev:latest",
 			}),
@@ -336,7 +337,7 @@ describe("runStart", () => {
 		expect(pruneStaleRebasedImages).not.toHaveBeenCalled();
 		expect(result.success).toBe(true);
 		expect(result).toMatchObject({
-			imageRef: "ghcr.io/offchainlabs/arbitrum-testnode-ci:v1.2.3-nc3.2-l2",
+			imageRef: `${DEFAULT_TESTNODE_IMAGE_REPOSITORY}:v1.2.3-nc3.2-l2`,
 			nitroImage: "",
 		});
 	});

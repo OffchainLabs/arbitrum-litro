@@ -1,20 +1,16 @@
 name: Mirror Images to Docker Hub
 
-# Copies already-published GHCR tags to Docker Hub without rebuilding.
+# Copies published GHCR tags to Docker Hub without rebuilding. A rebuild is not
+# equivalent: the Dockerfile fetches token-bridge-contracts and apt packages at
+# build time, so it lands a different digest than the tag it replaces.
 #
-# Rebuilding a released version is not equivalent: the Dockerfile fetches
-# token-bridge-contracts and apt packages at build time, so a rebuild lands a
-# different digest, and re-running the publish workflow would overwrite the GHCR
-# tags consumers are already pinned to.
+# The copy uses crane rather than `docker buildx imagetools create`, which wraps a
+# single-arch source in a new manifest index and so gives the destination a
+# different digest than the source. crane copies the manifest byte-for-byte, which
+# keeps `repo@sha256:...` valid against either registry and is asserted below.
 #
-# The copy uses crane, not `docker buildx imagetools create`. imagetools wraps a
-# single-arch source in a NEW manifest index, so the destination tag gets a
-# different digest than the source even though the underlying image is identical
-# -- which breaks `repo@sha256:...` portability across the two registries. crane
-# copies the manifest byte-for-byte, so the digests match, which this asserts.
-#
-# The tag set comes from resolvePublishMatrix, the same source of truth the
-# publish workflow uses, so a mirror cannot drift from what a release produces.
+# The tag set comes from resolvePublishMatrix, the same source of truth the publish
+# workflow uses, so a mirror cannot drift from what a release produces.
 on:
   workflow_dispatch:
     inputs:
@@ -45,6 +41,11 @@ on:
           - all
           - v2.1
           - v3.2
+      source-repository:
+        description: "GHCR repository to copy from"
+        required: false
+        default: "ghcr.io/offchainlabs/arbitrum-testnode-ci"
+        type: string
       dockerhub-repository:
         description: "Docker Hub repository to mirror into"
         required: false
@@ -133,11 +134,11 @@ jobs:
         env:
           DST_REPOSITORY: ${{ inputs.dockerhub-repository }}
           OVERWRITE: ${{ inputs.overwrite }}
-          OWNER: ${{ github.repository_owner }}
+          SRC_REPOSITORY: ${{ inputs.source-repository }}
           TAGS: ${{ steps.tags.outputs.list }}
         run: |
           set -uo pipefail
-          src_repo="ghcr.io/$(echo "$OWNER" | tr '[:upper:]' '[:lower:]')/arbitrum-testnode-ci"
+          src_repo="$SRC_REPOSITORY"
           failed=0
           copied=0
           skipped=0
