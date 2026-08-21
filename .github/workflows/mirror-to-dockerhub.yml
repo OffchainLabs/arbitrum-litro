@@ -4,13 +4,10 @@ name: Mirror Images to Docker Hub
 # equivalent: the Dockerfile fetches token-bridge-contracts and apt packages at
 # build time, so it lands a different digest than the tag it replaces.
 #
-# The copy uses crane rather than `docker buildx imagetools create`, which wraps a
-# single-arch source in a new manifest index and so gives the destination a
-# different digest than the source. crane copies the manifest byte-for-byte, which
-# keeps `repo@sha256:...` valid against either registry and is asserted below.
-#
-# The tag set comes from resolvePublishMatrix, the same source of truth the publish
-# workflow uses, so a mirror cannot drift from what a release produces.
+# The tag list is read from the source registry, not derived from
+# resolvePublishMatrix: that function describes what a release publishes now, so
+# using it would silently omit tags an older release published under rules since
+# changed.
 on:
   workflow_dispatch:
     inputs:
@@ -73,24 +70,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Emits one tag suffix per supported (variant x contracts version) combo,
-      # matching buildTestnodeImageRef in packages/testnode/src/runtime.mjs.
-      - name: Resolve tags
-        id: tags
-        env:
-          VARIANT_FILTER: ${{ inputs.variant }}
-          VERSION: ${{ inputs.version }}
-          VERSION_FILTER: ${{ inputs.nitro-contracts-version }}
-        run: >-
-          node --input-type=module -e
-          "import { resolvePublishMatrix, NITRO_CONTRACTS_VERSIONS } from './packages/testnode/src/runtime.mjs';
-          const rows = resolvePublishMatrix(process.env.VARIANT_FILTER, process.env.VERSION_FILTER);
-          if (!rows.length) throw new Error('empty mirror matrix');
-          const tags = rows.map((r) => process.env.VERSION + '-' + NITRO_CONTRACTS_VERSIONS[r.contractsVersion].tagComponent + '-' + r.variant);
-          console.error('mirroring ' + tags.length + ' tags:', tags.join(' '));
-          const { appendFileSync } = await import('node:fs');
-          appendFileSync(process.env.GITHUB_OUTPUT, 'list<<TAGS\\n' + tags.join('\\n') + '\\nTAGS\\n');"
-
       # crane reads the same ~/.docker/config.json the login steps below write,
       # so no separate credential wiring. Pinned rather than :latest so a mirror
       # is reproducible.
@@ -129,92 +108,28 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # Inputs arrive as env, never interpolated into the script body.
+      # Inputs arrive as env, never interpolated into a script body.
+      - name: Resolve tags
+        id: tags
+        env:
+          CONTRACTS_VERSION: ${{ inputs.nitro-contracts-version }}
+          SRC_REPOSITORY: ${{ inputs.source-repository }}
+          VARIANT: ${{ inputs.variant }}
+          VERSION: ${{ inputs.version }}
+        run: >-
+          node scripts/ci/resolve-mirror-tags.mjs
+          --repository "$SRC_REPOSITORY"
+          --version "$VERSION"
+          --variant "$VARIANT"
+          --contracts-version "$CONTRACTS_VERSION"
+
       - name: Mirror tags
         env:
           DST_REPOSITORY: ${{ inputs.dockerhub-repository }}
-          OVERWRITE: ${{ inputs.overwrite }}
           SRC_REPOSITORY: ${{ inputs.source-repository }}
           TAGS: ${{ steps.tags.outputs.list }}
-        run: |
-          set -uo pipefail
-          src_repo="$SRC_REPOSITORY"
-          failed=0
-          copied=0
-          skipped=0
-
-          digest_of() {
-            crane digest "$1" 2>/dev/null
-          }
-
-          while IFS= read -r tag; do
-            [ -n "$tag" ] || continue
-            echo "::group::$tag"
-
-            if ! src_digest="$(digest_of "$src_repo:$tag")" || [ -z "$src_digest" ]; then
-              echo "source missing: $src_repo:$tag" >&2
-              failed=1
-              echo "::endgroup::"
-              continue
-            fi
-
-            # Destination existence comes from the Hub API, not the registry:
-            # Docker Hub answers 401 for an unknown repository, which is
-            # indistinguishable from bad credentials.
-            status="$(curl -sS -o /dev/null -w '%{http_code}' \
-              "https://hub.docker.com/v2/repositories/${DST_REPOSITORY}/tags/${tag}")"
-
-            case "$status" in
-              404) ;;
-              200)
-                dst_digest="$(digest_of "index.docker.io/$DST_REPOSITORY:$tag" || true)"
-                if [ "$dst_digest" = "$src_digest" ]; then
-                  echo "already mirrored at $src_digest; skipping"
-                  skipped=$((skipped + 1))
-                  echo "::endgroup::"
-                  continue
-                fi
-                if [ "$OVERWRITE" != "true" ]; then
-                  echo "exists with a different digest (dst=$dst_digest src=$src_digest); re-run with overwrite=true" >&2
-                  failed=1
-                  echo "::endgroup::"
-                  continue
-                fi
-                echo "replacing $dst_digest with $src_digest"
-                ;;
-              *)
-                echo "could not determine whether $DST_REPOSITORY:$tag exists (HTTP $status)" >&2
-                failed=1
-                echo "::endgroup::"
-                continue
-                ;;
-            esac
-
-            if ! crane copy "$src_repo:$tag" "index.docker.io/$DST_REPOSITORY:$tag"; then
-              echo "copy failed" >&2
-              failed=1
-              echo "::endgroup::"
-              continue
-            fi
-
-            # crane preserves the manifest, so the digests must match. If they do
-            # not, the destination is not what was released.
-            dst_digest="$(digest_of "index.docker.io/$DST_REPOSITORY:$tag" || true)"
-            if [ "$dst_digest" != "$src_digest" ]; then
-              echo "digest mismatch after copy (src=$src_digest dst=$dst_digest)" >&2
-              failed=1
-              echo "::endgroup::"
-              continue
-            fi
-
-            echo "copied $src_digest"
-            copied=$((copied + 1))
-            {
-              echo "- \`$DST_REPOSITORY:$tag\` <- \`$src_digest\`"
-            } >> "$GITHUB_STEP_SUMMARY"
-            echo "::endgroup::"
-          done <<< "$TAGS"
-
-          echo "copied=$copied skipped=$skipped"
-          echo "copied $copied, skipped $skipped (already current)" >> "$GITHUB_STEP_SUMMARY"
-          exit "$failed"
+        run: >-
+          node scripts/ci/mirror-tags.mjs
+          --source "$SRC_REPOSITORY"
+          --destination "$DST_REPOSITORY"
+          ${{ inputs.overwrite && '--overwrite' || '' }}
