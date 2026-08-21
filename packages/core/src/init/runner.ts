@@ -21,6 +21,7 @@ import {
 	verifySnapshotSemanticState,
 } from "../snapshot.js";
 import { createState, getNextPendingStep, loadState, markStepFailed, saveState } from "../state.js";
+import { prepareTokenBridgeSource, resolveTokenBridgeSource } from "../token-bridge-source.js";
 import { makeStepRunners } from "./chain-steps.js";
 import { type InitContext, type InitRuntime, createInitRuntime } from "./context.js";
 import { resolveNitroContractsSource } from "./nitro-contracts-source.js";
@@ -63,6 +64,7 @@ async function runInitLoop(
 		rebuild?: boolean | undefined;
 		timeboostEnabled?: boolean | undefined;
 		nitroContractsSource: ReturnType<typeof resolveNitroContractsSource>;
+		tokenBridgeSource: ReturnType<typeof prepareTokenBridgeSource>;
 	},
 ): Promise<{
 	success: boolean;
@@ -75,6 +77,7 @@ async function runInitLoop(
 	const runners = makeStepRunners(runtime, {
 		feeTokenDecimals: options.feeTokenDecimals,
 		nitroContractsSource: options.nitroContractsSource,
+		tokenBridgeSource: options.tokenBridgeSource,
 	});
 	const steps = getInitSteps({ timeboostEnabled: options.timeboostEnabled });
 	const timings: Record<string, number> = {};
@@ -217,11 +220,14 @@ async function runInitForeground(
 	startRunLoggingFromEnv(runtime.configDir) ?? startInlineRunLogging(runtime.configDir, logArgs);
 	const nitroContractsSource = resolveNitroContractsSource(runtime.projectRoot);
 	console.log(`[init] Nitro contracts source: ${nitroContractsSource.identity}`);
+	const tokenBridgeSource = prepareTokenBridgeSource(resolveTokenBridgeSource(runtime.projectRoot));
+	console.log(`[init] Token Bridge contracts source: ${tokenBridgeSource.identity}`);
 	const result = await runInitLoop(runtime, {
 		feeTokenDecimals,
 		rebuild: options.rebuild,
 		timeboostEnabled: options.timeboostEnabled,
 		nitroContractsSource,
+		tokenBridgeSource,
 	});
 	const totalElapsed = Date.now() - totalStart;
 	logInitTimeline(result.timings, totalElapsed);

@@ -76,7 +76,8 @@ start_background /usr/local/bin/anvil \
 	--block-time 1 \
 	--chain-id 1337 \
 	--mnemonic "indoor dish desk flag debris potato excuse depart ticket judge file exit" \
-	--load-state "$DATA_ROOT/anvil-state"
+	--state "$DATA_ROOT/anvil-state/state.json" \
+	--state-interval 1
 
 echo "waiting for anvil on port 8545..."
 DEADLINE=$(($(date +%s) + 60))

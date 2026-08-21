@@ -133,6 +133,8 @@ services:
     build:
       context: .
       dockerfile: tokenbridge.Dockerfile
+      additional_contexts:
+        tokenbridge: ${TOKEN_BRIDGE_DOCKER_CONTEXT:-${TOKEN_BRIDGE_LOCAL_DIR:-../../token-bridge-contracts}}
     depends_on:
       - sequencer
       - l1

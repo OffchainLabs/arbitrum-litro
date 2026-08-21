@@ -207,6 +207,15 @@ describe("deployL2L3TokenBridge", () => {
 
 	beforeEach(() => {
 		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "token-bridge-test-"));
+		fs.mkdirSync(path.join(tmpDir, "token-bridge/node_modules/ts-node/dist"), {
+			recursive: true,
+		});
+		fs.writeFileSync(path.join(tmpDir, "token-bridge/node_modules/ts-node/dist/bin.js"), "");
+		fs.mkdirSync(path.join(tmpDir, "token-bridge/scripts/deployment"), { recursive: true });
+		fs.writeFileSync(
+			path.join(tmpDir, "token-bridge/scripts/deployment/deployTokenBridgeCreator.ts"),
+			"",
+		);
 		vi.clearAllMocks();
 		mocks.createTokenBridge.mockResolvedValue({
 			tokenBridgeContracts: mocks.tokenBridgeContracts,
@@ -301,6 +310,7 @@ describe("deployL2L3TokenBridge", () => {
 			childRpc: "http://l3node:8547",
 			parentKey: "0x3333333333333333333333333333333333333333333333333333333333333333",
 			childKey: "0x3333333333333333333333333333333333333333333333333333333333333333",
+			tokenBridgeDir: path.join(tmpDir, "token-bridge"),
 			parentWethOverride: "0x5555555555555555555555555555555555555555",
 		});
 
@@ -347,6 +357,7 @@ describe("deployL2L3TokenBridge", () => {
 			childRpc: "http://l3node:8547",
 			parentKey: "0x3333333333333333333333333333333333333333333333333333333333333333",
 			childKey: "0x3333333333333333333333333333333333333333333333333333333333333333",
+			tokenBridgeDir: path.join(tmpDir, "token-bridge"),
 			parentWethOverride: "0x5555555555555555555555555555555555555555",
 		});
 
@@ -557,6 +568,7 @@ describe("deployL2L3TokenBridge", () => {
 			childRpc: "http://l3node:8547",
 			parentKey: "0x3333333333333333333333333333333333333333333333333333333333333333",
 			childKey: "0x3333333333333333333333333333333333333333333333333333333333333333",
+			tokenBridgeDir: path.join(tmpDir, "token-bridge"),
 			parentWethOverride: "0x5555555555555555555555555555555555555555",
 		});
 

@@ -14,10 +14,10 @@ Minimal usage:
 pnpm dev start
 ```
 
-By default, `start` uses the CLI package version as the image version and resolves the `l3-eth` variant image:
+By default, `start` resolves the latest published `l3-eth` bundle:
 
 ```text
-offchainlabs/arbitrum-litro:v0.2.10-nc3.2-l3-eth
+offchainlabs/arbitrum-litro:latest-l3-eth
 ```
 
 Config-driven usage can pin a different image version:
@@ -39,7 +39,7 @@ Optional config fields:
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `version` | CLI package version | Testnode image release version override |
+| `version` | `latest` | Published bundle version override |
 | `l3Enabled` | `true` | Boot the L3-enabled testnode |
 | `feeTokenDecimals` | — | Custom L3 fee token decimals (`6`, `16`, `18`, `20`) |
 | `nitroContractsVersion` | `v3.2` | Nitro contracts version tag component |
@@ -224,9 +224,9 @@ pnpm dev status         # Show service and init state
 ## Custom snapshots
 
 Downstream repos can bake their **own** testnode images: boot the base stack, run a
-setup script against it (deploy contracts, seed activity, drop extra files into the
-config dir), snapshot the result, and build a runnable Docker image. The stock CLI and
-GitHub Action then boot those custom images.
+setup script against it (deploy contracts, seed activity, or add exported config),
+then commit the customized state as a runnable Docker image. The stock CLI and GitHub
+Action then boot those custom images.
 
 ### Setup-command environment contract
 
@@ -238,39 +238,37 @@ receives these environment variables:
 | `ARBITRUM_TESTNODE_L1_RPC_URL` | L1 (Anvil) RPC endpoint (`http://127.0.0.1:8545`) |
 | `ARBITRUM_TESTNODE_L2_RPC_URL` | L2 (Nitro) RPC endpoint (`http://127.0.0.1:8547`) |
 | `ARBITRUM_TESTNODE_L3_RPC_URL` | L3 (Orbit) RPC endpoint (`http://127.0.0.1:8549`) |
-| `ARBITRUM_TESTNODE_CONFIG_DIR` | Config dir; files written here ride along into the snapshot and config export |
+| `ARBITRUM_TESTNODE_CONFIG_DIR` | Exported config dir; files written here ride along into the customized image |
 | `ARBITRUM_TESTNODE_DEPLOYMENT_JSON` | Path to the exported `deployment.json` in the config dir |
 
 A non-zero exit from the setup command aborts the bake with a clear error.
 
 ### One-shot local bake
 
-`testnode bake` boots the base stack (by default it restores the installed base
-snapshot; `--rebuild` runs a full init instead), runs the setup command, captures a
-snapshot, and builds the image:
+`testnode bake` boots the latest published bundle, runs the setup command, stops the
+stack cleanly so Anvil and Nitro flush their state, and commits the container as the
+custom image:
 
 ```bash
 pnpm dev bake \
   --setup-command "./scripts/deploy-and-seed.sh" \
   --image-ref ghcr.io/acme/arbitrum-testnode:governance \
-  --snapshot-id custom \
   --push            # optional; docker login is your responsibility
 ```
 
-New builds use the stable Nitro contracts v3.2.0 release by default. For local
-development, point `NITRO_CONTRACTS_LOCAL_DIR` at a Nitro 3.x checkout; a sibling
-`../nitro-contracts` checkout is detected automatically:
+The bundle composes the runtime, initialized chain state, Nitro contracts, and Token
+Bridge contracts. Consumers never clone or rebuild either contracts repository.
+Override the published base with `--image-version` or `--base-image-ref`.
+
+Local base development still supports prepared contracts workspaces through
+`NITRO_CONTRACTS_LOCAL_DIR` and `TOKEN_BRIDGE_LOCAL_DIR`:
 
 ```bash
 NITRO_CONTRACTS_LOCAL_DIR=../nitro-contracts pnpm dev init --rebuild
-NITRO_CONTRACTS_LOCAL_DIR=../nitro-contracts pnpm dev bake --rebuild \
-  --setup-command "./scripts/deploy-and-seed.sh" \
-  --image-ref ghcr.io/acme/arbitrum-testnode:governance
 ```
 
-The checkout determines the contracts family; `init` and `bake` no longer expose
-separate Nitro version or branch selectors. New builds require Nitro 3.x. Existing
-published v2.1 images remain available through `start` and the run action.
+Those source settings are used only by `init` and release production. New releases
+default to Nitro contracts v3.2.0 and the compatible pinned Token Bridge commit.
 
 To bake straight from an existing snapshot (no setup step), use the à-la-carte
 subcommand:
@@ -278,6 +276,9 @@ subcommand:
 ```bash
 pnpm dev snapshot bake --id custom --image-ref ghcr.io/acme/arbitrum-testnode:governance --push
 ```
+
+This path also layers the snapshot onto the latest published bundle; it does not
+compile contract sources.
 
 ### CI bake via the composite action
 
@@ -296,12 +297,12 @@ job — log in before invoking it:
     setup-command: ./scripts/deploy-and-seed.sh
     image-ref: ghcr.io/acme/arbitrum-testnode:governance
     push: true
-    github-token: ${{ secrets.GITHUB_TOKEN }}   # base snapshot download
+    github-token: ${{ secrets.GITHUB_TOKEN }}   # published bundle pull
 ```
 
-By default the action installs a base snapshot release (via `github-token`) and
-restores it; set `rebuild: true` to run a full init instead. Rebuilds also accept
-`nitro-contracts-ref` (default `v3.2.0`) and `fee-token-decimals`.
+By default the action uses the latest composed bundle. Set `bundle-version` to pin a
+release or `bundle-image-ref` to use another already-published bundle. There is no
+consumer rebuild path.
 
 ### Booting a custom image
 
@@ -366,9 +367,9 @@ pnpm release 0.2.11 --push   # ...and push, starting the publish
 ```
 
 The `Publish Testnode` workflow publishes automatically when a `v*` tag is pushed.
-Tag-triggered publishes use the `default` entry in `config/testnodes.json`, with the
-Git tag as the image version. The workflow can also be run manually to publish one
-variant or `all`. Each build is pushed to two registries under the same tag suffix:
+The Git tag becomes the image version, and every current v3.2 variant is published.
+The workflow can also be run manually to publish one variant or `all`. Each build is
+pushed to two registries under the same tag suffix:
 
 ```text
 ghcr.io/<owner>/arbitrum-litro:<version>-nc<contracts-version>-<variant>
@@ -382,12 +383,14 @@ GHCR package is private and requires a token. Publishing requires the
 replace a Docker Hub tag that already exists unless the manual run sets
 `overwrite`.
 
+After every variant succeeds, a tag-triggered release also updates the corresponding
+`latest-<variant>` aliases, in both registries. These canonical aliases deliberately
+omit a contracts version: consumers follow the composed bundle, while its exact Nitro
+and Token Bridge refs and commits remain recorded as OCI labels.
+
 Releases up to `v0.2.10` live in a separate GHCR package,
 `ghcr.io/<owner>/arbitrum-testnode-ci`, which still serves those tags. Resolving one
 needs `image-repository` plus a token, since that package is private.
-
-The `snapshot-version` workflow input provides the snapshot release tag used for every selected variant.
-For automatic tag publishes, the snapshot release tag comes from `config/testnodes.json`.
 
 Publish the default testnode image automatically:
 
@@ -402,13 +405,13 @@ Publish one variant image from GitHub Actions:
 workflow: Publish Testnode
 version: v0.2.3
 variant: l3-eth
-snapshot-version: v0.1.6
 ```
 
 Publish every current catalog entry by setting `variant` to `all`. Existing v2.1
 images remain resolvable but are not rebuilt by new releases.
 
-The default Timeboost publish target is `l2-timeboost`, which expects the `l2-timeboost` snapshot ID in the selected snapshot release. It can be published directly with `variant: l2-timeboost` or through the `name: timeboost` entry in `config/testnodes.json`.
+The default Timeboost publish target is `l2-timeboost`; publish it directly with
+`variant: l2-timeboost` or as part of `all`.
 
 ## Init Sequence
 

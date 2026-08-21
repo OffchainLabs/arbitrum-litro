@@ -10,6 +10,13 @@ on:
         default: "v0.1.6"
         type: string
 
+# testnode.Dockerfile takes the Token Bridge workspace from a named context whose
+# default is `scratch`, so a build that omits it produces an empty /workspace and
+# fails at the git commit. Defined once here because every job that builds the
+# image needs the same pin.
+env:
+  TOKEN_BRIDGE_CONTEXT: https://github.com/OffchainLabs/token-bridge-contracts.git#5975d8f7360816341be7f94fd333ef240f4aec23
+
 jobs:
   test-l3-eth-action:
     runs-on: ubuntu-latest
@@ -38,7 +45,14 @@ jobs:
         run: node scripts/ci/prepare-testnode-context.mjs --variant l3-eth --snapshot-id default
 
       - name: Build local testnode image
-        run: docker build -f docker/testnode.Dockerfile -t local/arbitrum-testnode:${{ github.sha }}-nc3.2-l3-eth .
+        run: >-
+          docker build
+          --build-context tokenbridge=${{ env.TOKEN_BRIDGE_CONTEXT }}
+          --build-arg BUNDLE_VERSION=${{ github.sha }}
+          --build-arg BUNDLE_VARIANT=l3-eth
+          -f docker/testnode.Dockerfile
+          -t local/arbitrum-testnode:${{ github.sha }}-nc3.2-l3-eth
+          .
 
       - name: Run action
         id: action
@@ -104,7 +118,12 @@ jobs:
         run: node scripts/ci/prepare-testnode-context.mjs --variant l3-eth --snapshot-id default
 
       - name: Build local testnode image
-        run: docker build -f docker/testnode.Dockerfile -t local/arbitrum-testnode:${{ github.sha }}-nc3.2-l3-eth .
+        run: >-
+          docker build
+          --build-context tokenbridge=${{ env.TOKEN_BRIDGE_CONTEXT }}
+          -f docker/testnode.Dockerfile
+          -t local/arbitrum-testnode:${{ github.sha }}-nc3.2-l3-eth
+          .
 
       # Read the pin from the Dockerfile the image above was built with (its ARG
       # default, since the build passes no --build-arg) so this job cannot drift

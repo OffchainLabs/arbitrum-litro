@@ -33,20 +33,7 @@ import {
 } from "./rpc.js";
 
 const ARB_OWNER = "0x0000000000000000000000000000000000000070" as const;
-const LOCAL_TOKEN_BRIDGE_DIR =
-	process.env["TOKEN_BRIDGE_LOCAL_DIR"] ??
-	resolve(import.meta.dirname, "../../../../token-bridge-contracts");
-const TOKEN_BRIDGE_TS_NODE = resolve(LOCAL_TOKEN_BRIDGE_DIR, "node_modules/ts-node/dist/bin.js");
 const TOKEN_BRIDGE_CREATOR_SCRIPT = "./scripts/deployment/deployTokenBridgeCreator.ts";
-const SDK_LOCAL_NETWORK_PATH =
-	process.env["ARBITRUM_SDK_LOCAL_NETWORK_PATH"] ??
-	resolve(import.meta.dirname, "../../../../arbitrum-sdk/packages/sdk/localNetwork.json");
-const PORTAL_LOCAL_NETWORK_PATH =
-	process.env["ARBITRUM_PORTAL_LOCAL_NETWORK_PATH"] ??
-	resolve(
-		import.meta.dirname,
-		"../../../../arbitrum-portal/packages/arb-token-bridge-ui/src/util/networksNitroTestnode.generated.json",
-	);
 const FUNDING_RESERVE_WEI = 1n * 10n ** 18n;
 const TOKENBRIDGE_DEPLOYER_TARGET_L2_WEI = 100n * 10n ** 18n;
 const TOKENBRIDGE_DEPLOYER_TARGET_L3_WEI = 10n * 10n ** 18n;
@@ -70,7 +57,20 @@ interface BridgeDeployParams {
 	childRpc: string;
 	parentKey: string;
 	childKey: string;
+	tokenBridgeDir: string;
 	parentWethOverride?: string;
+}
+
+function localNetworkOutputPaths(): string[] {
+	return [
+		process.env["ARBITRUM_SDK_LOCAL_NETWORK_PATH"] ??
+			resolve(import.meta.dirname, "../../../../arbitrum-sdk/packages/sdk/localNetwork.json"),
+		process.env["ARBITRUM_PORTAL_LOCAL_NETWORK_PATH"] ??
+			resolve(
+				import.meta.dirname,
+				"../../../../arbitrum-portal/packages/arb-token-bridge-ui/src/util/networksNitroTestnode.generated.json",
+			),
+	];
 }
 
 interface L1L2NetworkFile {
@@ -248,9 +248,11 @@ function deployTokenBridgeCreator(params: {
 	compose: ComposeContext;
 	parentRpc: string;
 	parentKey: string;
+	tokenBridgeDir: string;
 	parentWeth?: string | undefined;
 }): string {
-	assertTokenBridgeDepsPresent(LOCAL_TOKEN_BRIDGE_DIR);
+	assertTokenBridgeDepsPresent(params.tokenBridgeDir);
+	const tokenBridgeTsNode = resolve(params.tokenBridgeDir, "node_modules/ts-node/dist/bin.js");
 	const requiresParentDeployGasOverride =
 		params.parentRpc !== "http://host.docker.internal:8545" &&
 		params.parentRpc !== "http://127.0.0.1:8545";
@@ -265,11 +267,11 @@ function deployTokenBridgeCreator(params: {
 			"DISABLE_CONTRACT_VERIFICATION=true",
 			"GAS_LIMIT_FOR_L2_FACTORY_DEPLOYMENT=10000000",
 			"node",
-			TOKEN_BRIDGE_TS_NODE,
+			tokenBridgeTsNode,
 			TOKEN_BRIDGE_CREATOR_SCRIPT,
 		],
 		{
-			cwd: LOCAL_TOKEN_BRIDGE_DIR,
+			cwd: params.tokenBridgeDir,
 			timeout: 600_000,
 		},
 	);
@@ -543,7 +545,7 @@ function publishLocalNetworkArtifacts(configDir: string): void {
 	}
 
 	const localNetwork = readFileSync(localNetworkPath, "utf-8");
-	for (const targetPath of [SDK_LOCAL_NETWORK_PATH, PORTAL_LOCAL_NETWORK_PATH]) {
+	for (const targetPath of localNetworkOutputPaths()) {
 		mkdirSync(dirname(targetPath), { recursive: true });
 		writeFileSync(targetPath, localNetwork);
 	}
@@ -619,6 +621,7 @@ export async function deployL1L2TokenBridge(params: BridgeDeployParams): Promise
 		compose: params.compose,
 		parentRpc: params.parentRpc,
 		parentKey: params.parentKey,
+		tokenBridgeDir: params.tokenBridgeDir,
 		parentWeth: l2Deployment["stake-token"] ?? ZERO_ADDRESS,
 	});
 	waitForCreatorSettlement();
@@ -671,6 +674,7 @@ export async function deployL2L3TokenBridge(params: BridgeDeployParams): Promise
 		compose: params.compose,
 		parentRpc: params.parentRpc,
 		parentKey: params.parentKey,
+		tokenBridgeDir: params.tokenBridgeDir,
 		parentWeth: params.parentWethOverride,
 	});
 	waitForCreatorSettlement();

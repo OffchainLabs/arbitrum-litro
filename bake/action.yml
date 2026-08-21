@@ -1,66 +1,58 @@
 name: Bake Custom Arbitrum Testnode Image
 description: >-
-  Boot a base Arbitrum testnode, run a downstream setup command against it,
-  snapshot the result, and build (optionally push) a runnable custom image.
+  Boot a published Arbitrum testnode bundle, run a downstream setup command,
+  and commit the customized state as a new image.
 inputs:
   setup-command:
     required: true
     description: >-
-      Shell command run against the booted base stack. Receives
-      ARBITRUM_TESTNODE_L1_RPC_URL, ARBITRUM_TESTNODE_L2_RPC_URL,
-      ARBITRUM_TESTNODE_L3_RPC_URL, ARBITRUM_TESTNODE_CONFIG_DIR and
-      ARBITRUM_TESTNODE_DEPLOYMENT_JSON in its environment.
+      Shell command run against the booted bundle. Receives the testnode RPC,
+      config, and deployment paths in its environment.
   image-ref:
     required: true
-    description: "Full image reference incl. tag to build (e.g. ghcr.io/acme/testnode:custom)"
+    description: "Full output image reference including tag"
   push:
     required: false
     default: "true"
-    description: "docker push the baked image (registry login is the caller's responsibility)"
-  snapshot-id:
+    description: "Push the customized image"
+  bundle-version:
     required: false
-    default: "custom"
-    description: "Snapshot id the customized stack is captured under"
-  rebuild:
+    default: "latest"
+    description: "Published bundle version; defaults to the latest bundle"
+  bundle-image-repository:
     required: false
-    default: "false"
-    description: "Run a full init for the base stack instead of installing/restoring a base snapshot"
-  base-snapshot-id:
-    required: false
-    default: "default"
-    description: "Base snapshot id to install and restore when not rebuilding"
-  snapshot-repo:
-    required: false
-    default: "OffchainLabs/arbitrum-litro"
-    description: "owner/repo hosting base snapshot releases (used when not rebuilding)"
-  version:
+    default: "offchainlabs/arbitrum-litro"
+    description: "Container repository hosting published bundles"
+  bundle-image-ref:
     required: false
     default: ""
-    description: "Base snapshot release tag to install (defaults to latest) when not rebuilding"
-  nitro-contracts-ref:
+    description: "Explicit published bundle image override"
+  l3-enabled:
     required: false
-    default: "v3.2.0"
-    description: >-
-      Nitro contracts release, branch, or commit used during a rebuild init.
+    default: "true"
+    description: "Use the L3 ETH bundle"
+  timeboost-enabled:
+    required: false
+    default: "false"
+    description: "Use the L2 Timeboost bundle"
   fee-token-decimals:
     required: false
     default: ""
-    description: >-
-      Custom L3 fee-token decimals (6, 16, 18, or 20) for a rebuild init.
-      Empty = ETH-fee (no custom fee token).
+    description: "Custom L3 fee-token decimals (6, 16, 18, or 20)"
+  startup-timeout-seconds:
+    required: false
+    default: "300"
+    description: "Maximum time to wait for the published bundle to start"
   github-token:
     required: false
     default: ""
-    description: "Token used to download base snapshot releases (the snapshot-install path)"
+    description: "Token used to pull a private GHCR bundle"
 runs:
   using: composite
   steps:
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        # Node 20 abandons an unsettled promise as a silent exit-13 (losing all
-        # output) in the bake's async restore path; 22 propagates errors
-        # normally. Node 20 is also deprecated on GitHub runners.
         node-version: 22
 
     - name: Setup pnpm
@@ -73,100 +65,55 @@ runs:
         pnpm install --frozen-lockfile
         pnpm build
 
-    - name: Install base snapshot
-      if: ${{ inputs.rebuild != 'true' }}
+    - name: Log in to GHCR for the base bundle
+      if: >-
+        ${{ inputs.github-token != '' &&
+            (startsWith(inputs.bundle-image-ref, 'ghcr.io/') ||
+             (inputs.bundle-image-ref == '' && startsWith(inputs.bundle-image-repository, 'ghcr.io/'))) }}
       shell: bash
-      working-directory: ${{ github.action_path }}/..
-      env:
-        GITHUB_TOKEN: ${{ inputs.github-token }}
-        TESTNODE_SNAPSHOT_GH_REPO: ${{ inputs.snapshot-repo }}
       run: |
         set -euo pipefail
-        node apps/cli/dist/index.js snapshot install \
-          --id "${{ inputs.base-snapshot-id }}" \
-          --force \
-          ${{ inputs.version != '' && format('--release-tag {0}', inputs.version) || '' }}
+        echo "${{ inputs.github-token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-    # No base-snapshot release exists for the default variant, so rebuild the
-    # base stack from scratch and capture it locally. init needs a
-    # token-bridge-contracts checkout with installed deps (it deploys the bridge
-    # via ts-node) and is intermittently flaky on cold runners, so provision the
-    # pinned checkout and retry until the snapshot manifest lands. The
-    # subsequent bake then restores this local snapshot — isolating the flaky
-    # init from the expensive setup-command.
-    - name: Rebuild and capture base snapshot
-      if: ${{ inputs.rebuild == 'true' }}
+    - name: Bake customized bundle
       shell: bash
       working-directory: ${{ github.action_path }}/..
       env:
-        BASE_SNAPSHOT_ID_INPUT: ${{ inputs.base-snapshot-id }}
-        FEE_TOKEN_DECIMALS_INPUT: ${{ inputs.fee-token-decimals }}
-        NITRO_CONTRACTS_REF_INPUT: ${{ inputs.nitro-contracts-ref }}
-        NITRO_CONTRACTS_DEFAULT_COMMIT: 2695e7b3e3f460531e2b77fed48a60561c54d90e
-        NITRO_CONTRACTS_LOCAL_DIR: ${{ runner.temp }}/nitro-contracts
-        TOKEN_BRIDGE_COMMIT: 5975d8f7360816341be7f94fd333ef240f4aec23
-        TOKEN_BRIDGE_LOCAL_DIR: ${{ runner.temp }}/token-bridge-contracts
-      run: |
-        set -euxo pipefail
-        npm install -g yarn@1.22.22
-        if [ ! -f "$NITRO_CONTRACTS_LOCAL_DIR/package.json" ]; then
-          mkdir -p "$NITRO_CONTRACTS_LOCAL_DIR"
-          (
-            cd "$NITRO_CONTRACTS_LOCAL_DIR"
-            git init .
-            git remote add origin https://github.com/OffchainLabs/nitro-contracts.git
-            git fetch --depth 1 origin "$NITRO_CONTRACTS_REF_INPUT"
-            git checkout --detach FETCH_HEAD
-            git submodule update --init --recursive --depth 1
-            if [ "$NITRO_CONTRACTS_REF_INPUT" = "v3.2.0" ]; then
-              test "$(git rev-parse HEAD)" = "$NITRO_CONTRACTS_DEFAULT_COMMIT"
-            fi
-          )
-        fi
-        if [ ! -f "$TOKEN_BRIDGE_LOCAL_DIR/node_modules/ts-node/dist/bin.js" ]; then
-          mkdir -p "$TOKEN_BRIDGE_LOCAL_DIR"
-          (
-            cd "$TOKEN_BRIDGE_LOCAL_DIR"
-            git init .
-            git remote add origin https://github.com/OffchainLabs/token-bridge-contracts.git
-            git fetch --depth 1 origin "$TOKEN_BRIDGE_COMMIT"
-            git checkout --detach FETCH_HEAD
-            yarn install --frozen-lockfile
-            yarn build
-          )
-        fi
-        base="$BASE_SNAPSHOT_ID_INPUT"
-        init_args=(--rebuild --capture-id "$base" --skip-post-capture-verify)
-        if [ -n "$FEE_TOKEN_DECIMALS_INPUT" ]; then
-          init_args+=(--fee-token-decimals "$FEE_TOKEN_DECIMALS_INPUT")
-        fi
-        for attempt in 1 2 3; do
-          if node apps/cli/dist/index.js init "${init_args[@]}" \
-             && test -f "config/snapshots/$base/manifest.json"; then
-            echo "base snapshot '$base' captured"
-            exit 0
-          fi
-          echo "init attempt $attempt did not capture; cleaning and retrying"
-          node apps/cli/dist/index.js clean || true
-        done
-        echo "base init failed to capture after 3 attempts" >&2
-        exit 1
-
-    - name: Bake custom testnode image
-      shell: bash
-      working-directory: ${{ github.action_path }}/..
-      env:
-        GITHUB_TOKEN: ${{ inputs.github-token }}
-        TESTNODE_SNAPSHOT_GH_REPO: ${{ inputs.snapshot-repo }}
-        # Booting nitro from the restored snapshot is slower on cold CI runners
-        # than the default 120s budget.
-        TESTNODE_RPC_TIMEOUT_MS: "300000"
+        BASE_IMAGE_REF: ${{ inputs.bundle-image-ref }}
+        BASE_IMAGE_REPOSITORY: ${{ inputs.bundle-image-repository }}
+        BASE_IMAGE_VERSION: ${{ inputs.bundle-version }}
+        FEE_TOKEN_DECIMALS: ${{ inputs.fee-token-decimals }}
+        L3_ENABLED: ${{ inputs.l3-enabled }}
+        OUTPUT_IMAGE_REF: ${{ inputs.image-ref }}
+        PUSH_IMAGE: ${{ inputs.push }}
+        SETUP_COMMAND: ${{ inputs.setup-command }}
+        STARTUP_TIMEOUT_SECONDS: ${{ inputs.startup-timeout-seconds }}
+        TIMEBOOST_ENABLED: ${{ inputs.timeboost-enabled }}
       run: |
         set -euo pipefail
-        node apps/cli/dist/index.js bake \
-          --setup-command "${{ inputs.setup-command }}" \
-          --setup-working-directory "${{ github.workspace }}" \
-          --image-ref "${{ inputs.image-ref }}" \
-          --snapshot-id "${{ inputs.snapshot-id }}" \
-          --base-snapshot-id "${{ inputs.base-snapshot-id }}" \
-          ${{ inputs.push == 'true' && '--push' || '' }}
+        args=(
+          --setup-command "$SETUP_COMMAND"
+          --setup-working-directory "${{ github.workspace }}"
+          --image-ref "$OUTPUT_IMAGE_REF"
+          --image-repository "$BASE_IMAGE_REPOSITORY"
+          --image-version "$BASE_IMAGE_VERSION"
+          --startup-timeout-seconds "$STARTUP_TIMEOUT_SECONDS"
+        )
+        if [ -n "$BASE_IMAGE_REF" ]; then
+          args+=(--base-image-ref "$BASE_IMAGE_REF")
+        fi
+        if [ -n "$FEE_TOKEN_DECIMALS" ]; then
+          args+=(--fee-token-decimals "$FEE_TOKEN_DECIMALS")
+        fi
+        if [ "$L3_ENABLED" = "true" ]; then
+          args+=(--l3-enabled)
+        else
+          args+=(--no-l3-enabled)
+        fi
+        if [ "$TIMEBOOST_ENABLED" = "true" ]; then
+          args+=(--timeboost-enabled)
+        fi
+        if [ "$PUSH_IMAGE" = "true" ]; then
+          args+=(--push)
+        fi
+        node apps/cli/dist/index.js bake "${args[@]}"
