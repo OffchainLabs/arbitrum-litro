@@ -8,6 +8,7 @@ config/runs/
 config/snapshots/
 .testnode-context/
 scratch/
+.tmp/
 config/l1-l2-admin/
 config/l2-l3-admin/
 *.log
