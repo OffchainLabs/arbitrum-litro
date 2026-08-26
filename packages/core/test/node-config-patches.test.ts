@@ -47,7 +47,7 @@ describe("patchGeneratedL2NodeConfig", () => {
 			"0xvalidator-key",
 		);
 
-		expect(result.chain).toEqual({
+		expect(result["chain"]).toEqual({
 			"info-json": JSON.stringify([
 				{
 					rollup: {
@@ -56,7 +56,7 @@ describe("patchGeneratedL2NodeConfig", () => {
 				},
 			]),
 		});
-		expect(result.node).toEqual({
+		expect(result["node"]).toEqual({
 			"batch-poster": {
 				enable: true,
 				"max-size": 90000,
@@ -87,7 +87,7 @@ describe("patchGeneratedL2NodeConfig", () => {
 				"disable-blob-reader": false,
 			},
 		});
-		expect(result.execution).toEqual({
+		expect(result["execution"]).toEqual({
 			sequencer: {
 				"max-block-speed": "100ms",
 			},
@@ -133,7 +133,7 @@ describe("patchGeneratedL3NodeConfig", () => {
 		);
 
 		expect(result["ensure-rollup-deployment"]).toBe(false);
-		expect(result.chain).toEqual({
+		expect(result["chain"]).toEqual({
 			id: 333333,
 			"info-files": ["/config/l3_chain_info.json"],
 			name: "orbit-dev-test",
@@ -143,7 +143,7 @@ describe("patchGeneratedL3NodeConfig", () => {
 				url: "http://sequencer:8547",
 			},
 		});
-		expect(result.node).toEqual({
+		expect(result["node"]).toEqual({
 			"batch-poster": {
 				enable: true,
 				"parent-chain-wallet": {
@@ -182,13 +182,13 @@ describe("patchGeneratedL3NodeConfig", () => {
 				"make-assertion-interval": "100ms",
 			},
 		});
-		expect(result.execution).toEqual({
+		expect(result["execution"]).toEqual({
 			"forwarding-target": "null",
 			sequencer: {
 				"max-block-speed": "333ms",
 			},
 		});
-		expect(result.persistent).toEqual({ chain: "local" });
-		expect(result.ws).toEqual({ addr: "0.0.0.0" });
+		expect(result["persistent"]).toEqual({ chain: "local" });
+		expect(result["ws"]).toEqual({ addr: "0.0.0.0" });
 	});
 });

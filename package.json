@@ -12,12 +12,13 @@
 		"lint": "biome check .",
 		"lint:fix": "biome check --write .",
 		"typecheck": "tsc -b",
+		"typecheck:test": "tsc -p tsconfig.test.json",
 		"release": "node scripts/release.mjs",
-		"validate": "pnpm lint && pnpm build && pnpm typecheck && pnpm test:run"
+		"validate": "pnpm lint && pnpm build && pnpm typecheck && pnpm typecheck:test && pnpm test:run"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^1.9.0",
-		"@types/node": "^25.3.4",
+		"@types/node": "^24",
 		"tsx": "^4.19.0",
 		"typescript": "^5.7.0",
 		"vitest": "^2.1.0"

@@ -1,6 +1,10 @@
 import { appendFileSync } from "node:fs";
 import { buildActionTestnodeState } from "./lib.mjs";
 
+/**
+ * @param {string} key
+ * @param {string} value
+ */
 function writeOutput(key, value) {
 	const outputFile = process.env["GITHUB_OUTPUT"];
 	if (!outputFile) {

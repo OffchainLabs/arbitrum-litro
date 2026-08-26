@@ -166,6 +166,7 @@ describe("runStart", () => {
 				containerName: undefined,
 				cwd,
 				feeTokenDecimals: undefined,
+				imageRef: undefined,
 				imageRepository: undefined,
 				l3Enabled: true,
 				networkConfigPaths: [path.join(cwd, "sdk/localNetwork.json")],
@@ -180,6 +181,7 @@ describe("runStart", () => {
 				bootTestnode,
 				collectContainerDiagnostics,
 				copyNetworkConfigPaths,
+				pruneStaleRebasedImages: vi.fn(),
 				rebaseTestnodeImage: vi.fn(),
 			},
 		);
@@ -198,6 +200,9 @@ describe("runStart", () => {
 			[path.join(cwd, "sdk/localNetwork.json")],
 		);
 		expect(result.success).toBe(true);
+		if (!result.success) {
+			throw new Error(result.error);
+		}
 		expect(result.localNetworkPath).toBe(
 			path.join(cwd, ".arbitrum-testnode/v1.2.3/l2-timeboost/config/localNetwork.json"),
 		);
@@ -224,6 +229,7 @@ describe("runStart", () => {
 				containerName: undefined,
 				cwd,
 				feeTokenDecimals: undefined,
+				imageRef: undefined,
 				imageRepository: undefined,
 				l3Enabled: false,
 				networkConfigPaths: [],
@@ -273,6 +279,7 @@ describe("runStart", () => {
 				containerName: undefined,
 				cwd,
 				feeTokenDecimals: undefined,
+				imageRef: undefined,
 				imageRepository: undefined,
 				l3Enabled: false,
 				networkConfigPaths: [],
@@ -311,6 +318,7 @@ describe("runStart", () => {
 				containerName: undefined,
 				cwd,
 				feeTokenDecimals: undefined,
+				imageRef: undefined,
 				imageRepository: undefined,
 				l3Enabled: false,
 				networkConfigPaths: [],
@@ -346,10 +354,12 @@ describe("runStart", () => {
 				containerName: undefined,
 				cwd: "/tmp/project",
 				feeTokenDecimals: undefined,
+				imageRef: undefined,
 				imageRepository: undefined,
 				l3Enabled: true,
 				networkConfigPaths: [],
 				nitroContractsVersion: undefined,
+				nitroImage: undefined,
 				outputDir: undefined,
 				startupTimeoutSeconds: 0,
 				timeboostEnabled: false,

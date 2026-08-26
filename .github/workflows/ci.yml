@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  validate:
+    name: Lint, build, typecheck, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm lint
+
+      - run: pnpm build
+
+      - run: pnpm typecheck
+
+      # Every package tsconfig is `include: ["src"]`, so no test file belongs to a
+      # build project and `tsc -b` never sees one.
+      - run: pnpm typecheck:test
+
+      - run: pnpm test:run
+
+  # `test-action.yml` runs the action as `uses: ./`, so its action path already has
+  # node_modules, a snapshot and `.testnode-context` from earlier steps. A consumer
+  # at `uses: OffchainLabs/arbitrum-litro@<ref>` gets only what git tracks.
+  bare-checkout:
+    name: Entry points work from a tracked-files-only checkout
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      # `git archive`, not a copy: exactly what tracked-at-HEAD means.
+      - name: Extract tracked files only
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/bare"
+          git archive HEAD | tar -x -C "$RUNNER_TEMP/bare"
+
+      # `config/` is a marker only because .gitignore re-includes
+      # `!config/testnodes.json`. Drop that file and the walk breaks for consumers
+      # while still passing in every local tree.
+      - name: Repo-root markers survive a tracked-files-only checkout
+        working-directory: ${{ runner.temp }}/bare
+        run: |
+          node -e "
+            const m = await import('./packages/testnode/src/runtime.mjs');
+            console.log('repo root:', m.findRepoRoot());
+          " --input-type=module
+
+      # Before `pnpm install` deliberately: a consumer's action path is never
+      # installed, so resolve.mjs must reach only builtins and relative imports.
+      - name: The action's resolve step runs there
+        working-directory: ${{ runner.temp }}/bare
+        env:
+          GITHUB_OUTPUT: ${{ runner.temp }}/bare-outputs.txt
+          RUNNER_TEMP: ${{ runner.temp }}/bare-runner
+          INPUT_VERSION: v0.0.0-bare-checkout
+          INPUT_L3_ENABLED: "false"
+        # `nc*`, not `nc3.2`: action.test.ts owns the exact default, asserted
+        # against the imported constant. Repeating it here would make the next
+        # contracts bump fail far from the change that caused it.
+        run: |
+          node packages/action/src/resolve.mjs
+          grep -q '^base-image-ref=.*:v0.0.0-bare-checkout-nc.*-l2$' "$GITHUB_OUTPUT"
+          grep -q '^container-name=arbitrum-testnode-l2$' "$GITHUB_OUTPUT"
+
+      # resolve.mjs defaults the version itself; this step bypasses action.yml.
+      - name: The resolve step runs there without an explicit version
+        working-directory: ${{ runner.temp }}/bare
+        env:
+          GITHUB_OUTPUT: ${{ runner.temp }}/bare-outputs-novers.txt
+          RUNNER_TEMP: ${{ runner.temp }}/bare-runner
+          INPUT_L3_ENABLED: "false"
+        run: |
+          node packages/action/src/resolve.mjs
+          grep -q '^base-image-ref=.*:latest-l2$' "$GITHUB_OUTPUT"
+
+      - name: The workspace installs and builds from tracked files only
+        working-directory: ${{ runner.temp }}/bare
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+          node apps/cli/dist/index.js --version

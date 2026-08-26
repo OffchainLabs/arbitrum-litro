@@ -7,10 +7,15 @@ import {
 	copyNetworkConfigPaths,
 } from "./lib.mjs";
 
+/** @param {string} message */
 function log(message) {
 	console.log(`[arbitrum-testnode] ${message}`);
 }
 
+/**
+ * @param {string} key
+ * @param {string} value
+ */
 function writeEnv(key, value) {
 	const envFile = process.env["GITHUB_ENV"];
 	if (!envFile) {
