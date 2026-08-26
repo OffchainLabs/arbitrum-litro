@@ -3,10 +3,8 @@ import { execFileSync } from "node:child_process";
 /**
  * Asserts a tag resolves to a multi-arch index covering the expected platforms.
  *
- * The failure this catches is silent: `imagetools create` succeeds when handed
- * one source, so a merge that lost the amd64 half publishes an arm64-only tag
- * under a name every consumer pulls. Nothing downstream notices -- crane copies
- * whatever index it is given straight into the `latest-<variant>` aliases.
+ * `imagetools create` succeeds when handed one source, so a merge that lost a
+ * platform publishes silently and crane copies it on into the aliases.
  */
 
 function readArg(name) {
@@ -35,16 +33,15 @@ const manifest = JSON.parse(
 	),
 );
 
-// A tag with no arm64 manifest merged into it is a plain manifest rather than an
-// index, which would otherwise read as an index covering no platforms.
+// An unmerged tag is a plain manifest, which would otherwise read as an index
+// covering no platforms.
 if (!Array.isArray(manifest.manifests)) {
 	throw new Error(
 		`${imageRef} is a single-platform manifest (${manifest.mediaType}), not a multi-arch index`,
 	);
 }
 
-// Attestation manifests ride along as `unknown/unknown` entries; they are not
-// platforms anything can run.
+// Attestation manifests ride along as `unknown/unknown`; not runnable platforms.
 const platforms = manifest.manifests
 	.map((entry) => `${entry.platform?.os}/${entry.platform?.architecture}`)
 	.filter((platform) => !platform.includes("unknown"));

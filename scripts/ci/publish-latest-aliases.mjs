@@ -4,11 +4,9 @@ import { DEFAULT_TESTNODE_IMAGE_REPOSITORY } from "../../packages/testnode/src/r
 /**
  * Points `latest-<variant>` at the just-published version of that variant.
  *
- * Copies with crane rather than `docker buildx imagetools create`, which wraps a
- * multi-arch source in a new index and so would give the alias a different
- * digest than the version tag it names. Matching digests are what let a consumer
- * tell which release `latest-<variant>` currently is -- and what carries the
- * published index across intact rather than rebuilding it.
+ * crane rather than `imagetools create`, which re-wraps its source in a new
+ * index: matching digests are what let a consumer tell which release the alias
+ * is, and what carries the published index across intact.
  */
 
 function readArg(name) {
@@ -24,8 +22,8 @@ if (!owner) {
 	throw new Error("--owner is required");
 }
 
-// Same derivation as resolve-publish-refs.mjs: the image name comes from the one
-// constant consumers resolve, so an alias cannot name a repository nothing pulls.
+// Same derivation as resolve-publish-refs.mjs, so an alias cannot name a
+// repository nothing pulls.
 const imageName = DEFAULT_TESTNODE_IMAGE_REPOSITORY.split("/").pop();
 const repository = `ghcr.io/${owner.toLowerCase()}/${imageName}`;
 

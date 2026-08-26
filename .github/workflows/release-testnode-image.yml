@@ -98,8 +98,7 @@ jobs:
       contents: read
       packages: write
     env:
-      # Where the host checkouts land. The contracts pins themselves come from
-      # resolve-external-pins below, not from here.
+      # Paths only; the contracts pins come from resolve-external-pins below.
       TOKEN_BRIDGE_LOCAL_DIR: ${{ github.workspace }}/../token-bridge-contracts
       NITRO_CONTRACTS_LOCAL_DIR: ${{ github.workspace }}/../nitro-contracts
     steps:
@@ -117,9 +116,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # Contracts pins come from packages/core/src/external-pins.ts, the same
-      # module `init` resolves them through, so the checkout deployed from, the
-      # context built from and the labels recorded cannot name different commits.
+      # From external-pins.ts, the module `init` resolves through, so the
+      # checkout, the build context and the labels cannot name different commits.
       - name: Resolve external contracts pins
         run: pnpm exec tsx scripts/ci/resolve-external-pins.ts
 
@@ -273,16 +271,12 @@ jobs:
           --variant "${{ matrix.variant }}"
           --snapshot-id "${{ matrix.snapshotId }}"
 
-      # The arm64 job bakes this exact context rather than generating its own.
-      # A snapshot is an Anvil state file plus Pebble databases -- identical
-      # bytes on either architecture -- so regenerating would only risk the two
+      # The arm64 job bakes this context rather than regenerating it: snapshot
+      # state is architecture-neutral, so a second `init` would only risk the two
       # images under one tag disagreeing about deployed contract addresses.
       #
-      # Tarred first because the context is thousands of small database files,
-      # which the artifact upload handles an order of magnitude slower than one
-      # archive. The archive goes outside the repo: there is no .dockerignore,
-      # so the build below would otherwise ship it to the builder as part of
-      # its own build context.
+      # Tarred because the context is thousands of small files, and kept outside
+      # the repo because there is no .dockerignore to exclude it from the build.
       - name: Archive testnode context
         run: tar -cf "$RUNNER_TEMP/testnode-context.tar" .testnode-context
 
@@ -323,27 +317,21 @@ jobs:
             TOKENBRIDGE_COMMIT=${{ env.TOKEN_BRIDGE_COMMIT }}
           push: true
           tags: ${{ steps.refs.outputs.tag }}
-          # Scoped by architecture and nothing else. The token-bridge-contracts
-          # stage is identical across matrix rows (same pinned ref), so rows
-          # sharing one scope is where the saving is -- they overwrite each
-          # other's entry and reads still hit. Architectures cannot share it:
-          # the stage's output includes an arm64 or amd64 `node` binary, so an
-          # unscoped cache would have the two jobs evict each other every run.
+          # Scoped by architecture and nothing else: rows share the identical
+          # token-bridge-contracts stage, but its output holds an arch-specific
+          # `node`, so unscoped the two architectures evict each other.
           cache-from: type=gha,scope=amd64
           cache-to: type=gha,mode=max,scope=amd64
 
-  # Adds the linux/arm64 manifest to each tag the job above published, turning it
-  # into a multi-arch index. Consumers pull the same tag either way; Docker
-  # resolves the native manifest, so Apple Silicon runs the stack natively.
+  # Merges linux/arm64 into each tag the job above published, making it a
+  # multi-arch index that Docker resolves natively on Apple Silicon.
   #
-  # A separate native job rather than `platforms:` on the build above: the
-  # token-bridge-contracts stage runs a full yarn+forge build and the final image
-  # copies that stage's `node` binary out, so it genuinely has to be built per
-  # architecture. Under QEMU that would not fit in the job budget.
+  # Native runner rather than `platforms:` above: the token-bridge-contracts
+  # stage runs a full yarn+forge build whose `node` binary the image copies out,
+  # so it is per-architecture, and under QEMU it exceeds the job budget.
   #
-  # This job needs none of the heavy host setup above -- no Foundry, no yarn, no
-  # token-bridge checkout. Those exist for `init`, which does not run here; the
-  # image build fetches token-bridge through its named build context.
+  # No Foundry, yarn or token-bridge checkout here -- those serve `init`, which
+  # does not run in this job.
   publish-testnode-image-arm64:
     needs: [resolve-publish-matrix, publish-testnode-image]
     runs-on: ubuntu-24.04-arm
@@ -370,13 +358,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # Resolved the same way as the amd64 job, so the two halves of one tag
-      # cannot be built against different contracts.
+      # Same source as the amd64 job, so one tag's two halves cannot be built
+      # against different contracts.
       - name: Resolve external contracts pins
         run: pnpm exec tsx scripts/ci/resolve-external-pins.ts
 
-      # Same helper the amd64 job resolves through, so the two architectures of
-      # one row cannot land under different tags.
+      # Same helper as the amd64 job, so the two architectures of one row cannot
+      # land under different tags.
       - name: Resolve image refs
         id: refs
         run: >-
@@ -409,10 +397,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Build args mirror the amd64 job exactly. A build arg naming an undefined
-      # env expands to empty and overrides the Dockerfile's ARG default, which
-      # would strip this manifest's provenance labels while leaving the amd64
-      # half of the same tag correctly labelled.
+      # Must mirror the amd64 job: a build arg naming an undefined env expands to
+      # empty, silently unlabelling this half of the tag.
       - name: Build and push arm64 testnode image
         id: build
         uses: docker/build-push-action@v6
@@ -430,21 +416,17 @@ jobs:
             NITRO_CONTRACTS_COMMIT=${{ env.NITRO_CONTRACTS_COMMIT }}
             TOKENBRIDGE_REF=${{ env.TOKEN_BRIDGE_REF }}
             TOKENBRIDGE_COMMIT=${{ env.TOKEN_BRIDGE_COMMIT }}
-          # Pushed by digest rather than under a tag of its own: an `-arm64` tag
-          # would be a pullable, pinnable half of a release sitting in the
-          # package listing forever. The merge below is what names this manifest.
+          # By digest, not a tag: an `-arm64` tag would leave a pinnable half of
+          # a release in the package listing. The merge below names it.
           outputs: type=image,name=${{ steps.refs.outputs.repository }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=arm64
           cache-to: type=gha,mode=max,scope=arm64
 
-      # `imagetools create` here, rather than the crane copy the alias step uses.
-      # That one avoids it because it re-wraps its source in a fresh index,
-      # giving a copy a different digest than its source. Creating an index is
-      # exactly what is wanted here; crane then carries the result through
-      # aliasing unchanged.
+      # `imagetools create`, not the crane copy the alias step uses: re-wrapping
+      # a source in a fresh index is the point here, not a hazard.
       #
-      # Passing the tag as its own source folds in the amd64 manifest already
-      # behind it, so re-running a row is idempotent.
+      # The tag is its own source, folding in the amd64 manifest behind it, so a
+      # re-run is idempotent.
       - name: Merge arm64 into the published tag
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
@@ -457,11 +439,9 @@ jobs:
           docker buildx imagetools create --tag "$TAG" "$TAG" "${REPOSITORY}@${DIGEST}"
           node scripts/ci/assert-image-platforms.mjs --image-ref "$TAG"
 
-  # Moves `latest-<variant>` onto this release.
-  #
-  # Waits on the arm64 merge, not just the amd64 build: crane copies the digest a
-  # tag has at the moment it runs, so aliasing before the merge would pin
-  # `latest-<variant>` to the amd64-only manifest the tag briefly held.
+  # Moves `latest-<variant>` onto this release. Waits on the arm64 merge: crane
+  # copies the digest a tag holds when it runs, so aliasing earlier would pin the
+  # alias to the amd64-only manifest the tag briefly holds.
   publish-latest-bundle:
     if: ${{ github.ref_type == 'tag' }}
     needs: [resolve-publish-matrix, publish-testnode-image, publish-testnode-image-arm64]

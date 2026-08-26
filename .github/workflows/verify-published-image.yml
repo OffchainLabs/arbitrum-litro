@@ -1,9 +1,7 @@
 name: Verify Published Image
 
-# Boots a published version through the action, on demand. Distinct from
-# test-action.yml, which builds an image from the working tree: this one pulls
-# what a release actually pushed, so it is the check to run after publishing and
-# before telling anyone a version is good.
+# Boots a published version through the action. Unlike test-action.yml, which
+# builds from the working tree, this pulls what a release actually pushed.
 on:
   workflow_dispatch:
     inputs:
@@ -30,10 +28,8 @@ jobs:
   # stack. Both resolve their tag through the action, so a tag the action cannot
   # name fails here rather than in a consumer's repository.
   #
-  # The l3-eth row runs on both architectures. A published tag is a multi-arch
-  # index and each runner pulls its own manifest, so this is the step that proves
-  # the arm64 half boots -- `imagetools inspect` at release time proves only that
-  # the manifest exists.
+  # l3-eth runs on both architectures: each runner pulls its own manifest, so
+  # this proves the arm64 half boots, not merely that it exists.
   verify:
     strategy:
       fail-fast: false
@@ -113,9 +109,8 @@ jobs:
           --variant "${{ matrix.variant }}"
           --version "${{ inputs.version }}"
 
-      # Docker resolves an index to the host platform, so the architecture of
-      # what got pulled is what proves the index carries a manifest for this
-      # runner -- and that the chain above booted on it natively.
+      # Docker resolves an index to the host platform, so this is what proves the
+      # index covers this runner and that the chain above booted natively.
       - name: Validate the pulled manifest is native
         env:
           EXPECTED: ${{ matrix.arch }}

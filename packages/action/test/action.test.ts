@@ -148,17 +148,16 @@ describe("published bundle metadata", () => {
 	});
 
 	it("aliases with crane so the alias and its version tag share a digest", () => {
-		// `imagetools create` would re-wrap the source in a fresh index, giving the
-		// alias a different digest than the version tag it names -- and rebuilding
-		// the multi-arch index rather than carrying the published one across.
+		// `imagetools create` would re-wrap the source, giving the alias a different
+		// digest than the tag it names and rebuilding the index rather than copying it.
 		const aliases = readFileSync("scripts/ci/publish-latest-aliases.mjs", "utf-8");
 		expect(aliases).toContain('execFileSync("crane", ["copy"');
 		expect(aliases).not.toMatch(/^\s*execFileSync\("docker"/m);
 	});
 
 	it("publishes to GHCR and nowhere else", () => {
-		// GHCR is the only registry. A second one lets tag shapes, aliases and
-		// digests disagree about what a version means.
+		// A second registry lets tag shapes, aliases and digests disagree about what
+		// a version means.
 		const aliases = readFileSync("scripts/ci/publish-latest-aliases.mjs", "utf-8");
 		const refs = readFileSync("scripts/ci/resolve-publish-refs.mjs", "utf-8");
 		for (const source of [workflow, aliases, refs]) {
@@ -168,8 +167,8 @@ describe("published bundle metadata", () => {
 	});
 
 	it("derives the published repository from the constant consumers resolve", () => {
-		// A rename that moved the default without moving the publish target would
-		// leave releases landing under a name nothing pulls.
+		// A rename that moved the default but not the publish target would land
+		// releases under a name nothing pulls.
 		const aliases = readFileSync("scripts/ci/publish-latest-aliases.mjs", "utf-8");
 		const refs = readFileSync("scripts/ci/resolve-publish-refs.mjs", "utf-8");
 		for (const source of [aliases, refs]) {
@@ -179,17 +178,15 @@ describe("published bundle metadata", () => {
 	});
 
 	it("links the published package to this repository", () => {
-		// GHCR links a package to a repository through image.source; without it the
-		// package starts orphaned and the repository's workflows lose access.
+		// Without image.source the package starts orphaned and this repository's
+		// workflows lose access.
 		expect(dockerfile).toContain("org.opencontainers.image.source");
 		expect(workflow).toContain("IMAGE_SOURCE=");
 	});
 
 	it("takes every external contracts pin from external-pins.ts", () => {
-		// A pasted commit is undetectable once an image ships: the labels would
-		// describe contracts the image does not contain, and a bump would have to
-		// find every copy. CI resolves the pins instead, so external-pins.ts is the
-		// only place a commit appears.
+		// A pasted commit is undetectable once an image ships: its labels would
+		// describe contracts it does not contain.
 		const pins = readFileSync("packages/core/src/external-pins.ts", "utf-8");
 		const commits = [...pins.matchAll(/"([0-9a-f]{40})"/g)].map((match) => match[1]);
 		expect(commits.length).toBeGreaterThan(0);
@@ -200,8 +197,8 @@ describe("published bundle metadata", () => {
 			expect(source).not.toMatch(/[0-9a-f]{40}/);
 			expect(source).not.toMatch(/github\.com\/OffchainLabs\/(token-bridge|nitro)-contracts/);
 		}
-		// The Dockerfile cannot compute a default, so it declares the args bare
-		// rather than carrying a copy that silently outlives the real pin.
+		// The Dockerfile cannot compute a default, so the args stay bare rather than
+		// carrying a copy that outlives the real pin.
 		for (const arg of ["NITRO_CONTRACTS_COMMIT", "TOKENBRIDGE_COMMIT"]) {
 			expect(dockerfile).toContain(`ARG ${arg}\n`);
 		}
@@ -215,66 +212,59 @@ describe("multi-arch bundles", () => {
 	const verify = readFileSync(".github/workflows/verify-published-image.yml", "utf-8");
 
 	it("builds arm64 on a native runner rather than under emulation", () => {
-		// The token-bridge-contracts stage runs a full yarn+forge build and the
-		// final image copies its `node` binary out, so it cannot be shared across
-		// architectures. Building it under QEMU does not fit the job budget, so
-		// `platforms: linux/amd64,linux/arm64` on one job is the wrong shape here.
+		// The token-bridge-contracts stage is per-architecture (the image copies its
+		// `node` binary out) and exceeds the job budget under QEMU.
 		expect(workflow).toContain("runs-on: ubuntu-24.04-arm");
 		expect(workflow).not.toContain("setup-qemu-action");
 		expect(workflow).not.toContain("linux/amd64,linux/arm64");
 	});
 
 	it("bakes one snapshot into both architectures", () => {
-		// Chain state is architecture-neutral, so a second `init` would only buy a
-		// chance of the two images under one tag disagreeing about deployed
-		// contract addresses -- on top of doubling the slowest step in the release.
+		// Chain state is architecture-neutral, so a second `init` would only risk the
+		// two images under one tag disagreeing about deployed contract addresses.
 		expect(workflow.match(/pnpm dev init/g)).toHaveLength(1);
 		expect(workflow).toContain("actions/upload-artifact@v4");
 		expect(workflow).toContain("actions/download-artifact@v4");
 	});
 
 	it("scopes the build cache per architecture", () => {
-		// Unscoped, the two jobs evict each other's token-bridge-contracts stage
-		// every run: the cached layers contain an architecture-specific `node`.
+		// The cached layers hold an arch-specific `node`, so unscoped the two jobs
+		// evict each other every run.
 		expect(workflow).toContain("cache-to: type=gha,mode=max,scope=amd64");
 		expect(workflow).toContain("cache-to: type=gha,mode=max,scope=arm64");
 		expect(workflow).not.toMatch(/cache-(from|to): type=gha(,mode=max)?$/m);
 	});
 
 	it("gives the arm64 manifest no tag of its own", () => {
-		// An `-arm64` tag would be a pullable, pinnable half of a release sitting
-		// in the package listing forever. Pushing by digest means the merge below
-		// is the only thing that ever names this manifest.
+		// An `-arm64` tag would leave a pinnable half of a release in the package
+		// listing; by digest, only the merge ever names it.
 		expect(workflow).toContain("push-by-digest=true");
 	});
 
 	it("merges into the published tag and proves both platforms landed", () => {
-		// `imagetools create` succeeds when handed a single source, so a merge that
-		// lost the amd64 half would publish an arm64-only tag under the name every
-		// consumer pulls, and crane would copy it straight into the aliases.
+		// `imagetools create` succeeds on a single source, so a merge that lost the
+		// amd64 half publishes silently and crane copies it into the aliases.
 		expect(workflow).toContain("docker buildx imagetools create --tag");
 		expect(workflow).toContain("node scripts/ci/assert-image-platforms.mjs");
 	});
 
 	it("resolves both architectures' refs through one helper", () => {
-		// Each job resolves its own ref, so the only thing keeping the two halves
-		// of a row under one tag is that they compute it the same way.
+		// Each job resolves its own ref; computing it the same way is the only thing
+		// keeping a row's two halves under one tag.
 		expect(workflow.match(/node scripts\/ci\/resolve-publish-refs\.mjs/g)).toHaveLength(2);
 	});
 
 	it("aliases only after the arm64 manifest is merged in", () => {
-		// crane copies the digest a tag holds when it runs, so aliasing before the
-		// merge would pin `latest-<variant>` to the amd64-only manifest the tag
-		// briefly holds between the two builds.
+		// crane copies the digest a tag holds when it runs, so aliasing earlier would
+		// pin the alias to the amd64-only manifest the tag briefly holds.
 		expect(workflow).toContain(
 			"needs: [resolve-publish-matrix, publish-testnode-image, publish-testnode-image-arm64]",
 		);
 	});
 
 	it("boots arm64 in CI and against the published image", () => {
-		// Publishing an arm64 manifest is not evidence it runs. Both checks assert
-		// the architecture of what actually booted, because a runner with binfmt
-		// registered would otherwise pass while running the amd64 image emulated.
+		// Publishing an arm64 manifest is not evidence it runs, and a runner with
+		// binfmt would pass while emulating amd64 -- so both assert what booted.
 		expect(testAction).toContain("runner: ubuntu-24.04-arm");
 		expect(verify).toContain("runner: ubuntu-24.04-arm");
 		expect(testAction).toContain("{{.Architecture}}");

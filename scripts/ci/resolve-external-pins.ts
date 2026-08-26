@@ -9,15 +9,9 @@ import {
 } from "../../packages/core/src/external-pins.js";
 
 /**
- * Exports the pinned external contracts repositories to `$GITHUB_ENV`.
- *
- * Workflows read their pins from here rather than pasting commits inline, so the
- * host checkout `init` deploys from, the build context the image is built with,
- * and the OCI labels recording what the image contains cannot drift apart -- and
- * bumping a contracts pin is a one-line change in external-pins.ts.
- *
- * Run through tsx: this has to work before the workspace is built, since the
- * jobs that need the pins run before anything compiles.
+ * Exports the pinned external contracts repositories to `$GITHUB_ENV`, so the
+ * checkout, the build context and the image labels cannot name different
+ * commits. Run through tsx, since the jobs needing pins run before any build.
  */
 
 const pins = {
@@ -33,8 +27,8 @@ const pins = {
 		TOKEN_BRIDGE_REPOSITORY,
 		DEFAULT_TOKEN_BRIDGE_COMMIT,
 	),
-	// The ref and the commit are the same value: the pin is a commit, and the
-	// label records it under both names for callers that expect a symbolic ref.
+	// Same value: the pin is a commit, recorded under both names for callers
+	// expecting a symbolic ref.
 	TOKEN_BRIDGE_REF: DEFAULT_TOKEN_BRIDGE_COMMIT,
 	TOKEN_BRIDGE_REPOSITORY,
 };

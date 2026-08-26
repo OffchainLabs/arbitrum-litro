@@ -4,12 +4,9 @@ ARG NITRO_IMAGE=offchainlabs/nitro-node:v3.9.5-66e42c4
 ARG BUNDLE_VERSION=dev
 ARG BUNDLE_VARIANT=unknown
 
-# Deliberately without defaults. These record which contracts the image actually
-# contains, and the contracts themselves arrive through the `tokenbridge` build
-# context -- a default here could not follow that context, so it would sooner or
-# later label an image with a commit it does not contain. Callers pass them from
-# packages/core/src/external-pins.ts; an omitted arg leaves the label empty,
-# which is at least honest.
+# No defaults on purpose: the contracts arrive through the `tokenbridge` build
+# context, which a default cannot follow, so it would eventually label an image
+# with a commit it does not contain. Callers pass them from external-pins.ts.
 ARG NITRO_CONTRACTS_REF
 ARG NITRO_CONTRACTS_COMMIT
 ARG TOKENBRIDGE_REF
@@ -48,9 +45,8 @@ ARG TOKENBRIDGE_REF
 ARG TOKENBRIDGE_COMMIT
 ARG IMAGE_SOURCE="https://github.com/OffchainLabs/arbitrum-litro"
 
-# GHCR links a package to a repository through image.source. Without it a
-# published package starts orphaned and has to be linked by hand, losing the
-# repository's own workflows their access to it.
+# GHCR links a package to a repository through image.source; without it the
+# package starts orphaned and this repository's workflows lose access.
 LABEL org.opencontainers.image.source="${IMAGE_SOURCE}" \
 	io.arbitrum.testnode.bundle.version="${BUNDLE_VERSION}" \
 	io.arbitrum.testnode.bundle.variant="${BUNDLE_VARIANT}" \

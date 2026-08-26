@@ -11,11 +11,8 @@ on:
         type: string
 
 jobs:
-  # Run on both architectures the release publishes. Released images are a
-  # multi-arch index, so an arm64 regression -- in the Nitro base image, in the
-  # `node` binary the token-bridge stage hands over, in anything the entrypoint
-  # shells out to -- would otherwise surface only when a developer pulls the
-  # bundle on Apple Silicon.
+  # Both architectures the release publishes: an arm64 regression would
+  # otherwise surface only when a developer pulls the bundle on Apple Silicon.
   test-l3-eth-action:
     name: test-l3-eth-action (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
@@ -42,11 +39,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # testnode.Dockerfile takes the Token Bridge workspace from a named context
-      # whose default is `scratch`, so a build that omits it produces an empty
-      # /workspace and fails at the git commit. The pin comes from
-      # packages/core/src/external-pins.ts so this build uses the same contracts
-      # a release does.
+      # The Dockerfile's `tokenbridge` context defaults to `scratch`, so a build
+      # that omits it fails; the pin comes from external-pins.ts, as a release's
+      # does.
       - name: Resolve external contracts pins
         run: pnpm exec tsx scripts/ci/resolve-external-pins.ts
 
@@ -73,9 +68,8 @@ jobs:
           -t local/arbitrum-testnode:${{ github.sha }}-nc3.2-l3-eth
           .
 
-      # Without this the arm64 row could pass while silently proving nothing: a
-      # runner with binfmt registered runs an amd64 image under emulation just
-      # fine, which is the exact situation this job exists to rule out.
+      # A runner with binfmt registered runs an amd64 image fine, so without this
+      # the arm64 row could pass while proving nothing.
       - name: Image is native to this runner
         env:
           EXPECTED: ${{ matrix.arch }}
@@ -140,11 +134,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # testnode.Dockerfile takes the Token Bridge workspace from a named context
-      # whose default is `scratch`, so a build that omits it produces an empty
-      # /workspace and fails at the git commit. The pin comes from
-      # packages/core/src/external-pins.ts so this build uses the same contracts
-      # a release does.
+      # The Dockerfile's `tokenbridge` context defaults to `scratch`, so a build
+      # that omits it fails; the pin comes from external-pins.ts, as a release's
+      # does.
       - name: Resolve external contracts pins
         run: pnpm exec tsx scripts/ci/resolve-external-pins.ts
 
