@@ -1,9 +1,9 @@
 name: Verify Published Image
 
-# Boots a published image through the action, so a version can be checked in the
-# private registry before it is promoted to public Docker Hub. GHCR needs a
-# credential, which is what makes this distinct from test-action.yml's
-# credential-free check of the public default.
+# Boots a published version through the action, on demand. Distinct from
+# test-action.yml, which builds an image from the working tree: this one pulls
+# what a release actually pushed, so it is the check to run after publishing and
+# before telling anyone a version is good.
 on:
   workflow_dispatch:
     inputs:
@@ -29,6 +29,11 @@ jobs:
   # One row per shape a consumer boots: an L2-only chain and a full L1/L2/L3
   # stack. Both resolve their tag through the action, so a tag the action cannot
   # name fails here rather than in a consumer's repository.
+  #
+  # The l3-eth row runs on both architectures. A published tag is a multi-arch
+  # index and each runner pulls its own manifest, so this is the step that proves
+  # the arm64 half actually boots before the version is promoted to the public
+  # registry -- `imagetools inspect` at release time only proves it exists.
   verify:
     strategy:
       fail-fast: false
@@ -36,10 +41,18 @@ jobs:
         include:
           - variant: l2
             l3-enabled: "false"
+            arch: amd64
+            runner: ubuntu-latest
           - variant: l3-eth
             l3-enabled: "true"
-    name: verify (${{ matrix.variant }})
-    runs-on: ubuntu-latest
+            arch: amd64
+            runner: ubuntu-latest
+          - variant: l3-eth
+            l3-enabled: "true"
+            arch: arm64
+            runner: ubuntu-24.04-arm
+    name: verify (${{ matrix.variant }}, ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     permissions:
       contents: read
@@ -99,3 +112,16 @@ jobs:
           --image-ref "${{ steps.action.outputs.image-ref }}"
           --variant "${{ matrix.variant }}"
           --version "${{ inputs.version }}"
+
+      # Docker resolves an index to the host platform, so the architecture of
+      # what got pulled is what proves the index carries a manifest for this
+      # runner -- and that the chain above booted on it natively.
+      - name: Validate the pulled manifest is native
+        env:
+          EXPECTED: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          actual="$(docker image inspect --format '{{.Architecture}}' \
+            "${{ steps.action.outputs.image-ref }}")"
+          echo "image architecture: $actual"
+          test "$actual" = "$EXPECTED"

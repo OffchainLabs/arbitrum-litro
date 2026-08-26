@@ -41,9 +41,9 @@ ARG TOKENBRIDGE_REF
 ARG TOKENBRIDGE_COMMIT
 ARG IMAGE_SOURCE="https://github.com/OffchainLabs/arbitrum-litro"
 
-# GHCR links a package to a repository through image.source, which is what grants
-# the repository's own workflows access to a private package. Without it a
-# published package starts orphaned and has to be linked by hand.
+# GHCR links a package to a repository through image.source. Without it a
+# published package starts orphaned and has to be linked by hand, losing the
+# repository's own workflows their access to it.
 LABEL org.opencontainers.image.source="${IMAGE_SOURCE}" \
 	io.arbitrum.testnode.bundle.version="${BUNDLE_VERSION}" \
 	io.arbitrum.testnode.bundle.variant="${BUNDLE_VARIANT}" \

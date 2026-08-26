@@ -18,8 +18,22 @@ env:
   TOKEN_BRIDGE_CONTEXT: https://github.com/OffchainLabs/token-bridge-contracts.git#5975d8f7360816341be7f94fd333ef240f4aec23
 
 jobs:
+  # Run on both architectures the release publishes. Released images are a
+  # multi-arch index, so an arm64 regression -- in the Nitro base image, in the
+  # `node` binary the token-bridge stage hands over, in anything the entrypoint
+  # shells out to -- would otherwise surface only when a developer pulls the
+  # bundle on Apple Silicon.
   test-l3-eth-action:
-    runs-on: ubuntu-latest
+    name: test-l3-eth-action (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -53,6 +67,19 @@ jobs:
           -f docker/testnode.Dockerfile
           -t local/arbitrum-testnode:${{ github.sha }}-nc3.2-l3-eth
           .
+
+      # Without this the arm64 row could pass while silently proving nothing: a
+      # runner with binfmt registered runs an amd64 image under emulation just
+      # fine, which is the exact situation this job exists to rule out.
+      - name: Image is native to this runner
+        env:
+          EXPECTED: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          actual="$(docker image inspect --format '{{.Architecture}}' \
+            "local/arbitrum-testnode:${{ github.sha }}-nc3.2-l3-eth")"
+          echo "image architecture: $actual"
+          test "$actual" = "$EXPECTED"
 
       - name: Run action
         id: action

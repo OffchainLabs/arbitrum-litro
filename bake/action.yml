@@ -21,7 +21,7 @@ inputs:
     description: "Published bundle version; defaults to the latest bundle"
   bundle-image-repository:
     required: false
-    default: "offchainlabs/arbitrum-litro"
+    default: "ghcr.io/offchainlabs/arbitrum-litro"
     description: "Container repository hosting published bundles"
   bundle-image-ref:
     required: false
