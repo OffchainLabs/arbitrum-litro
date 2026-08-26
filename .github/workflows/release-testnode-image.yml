@@ -98,15 +98,10 @@ jobs:
       contents: read
       packages: write
     env:
-      # Prepare the same pinned Token Bridge checkout for host deployment and
-      # the baked image's named build context.
+      # Where the host checkouts land. The contracts pins themselves come from
+      # resolve-external-pins below, not from here.
       TOKEN_BRIDGE_LOCAL_DIR: ${{ github.workspace }}/../token-bridge-contracts
-      TOKEN_BRIDGE_REF: 5975d8f7360816341be7f94fd333ef240f4aec23
-      TOKEN_BRIDGE_COMMIT: 5975d8f7360816341be7f94fd333ef240f4aec23
-      TOKEN_BRIDGE_DOCKER_CONTEXT: https://github.com/OffchainLabs/token-bridge-contracts.git#5975d8f7360816341be7f94fd333ef240f4aec23
       NITRO_CONTRACTS_LOCAL_DIR: ${{ github.workspace }}/../nitro-contracts
-      NITRO_CONTRACTS_REF: v3.2.0
-      NITRO_CONTRACTS_COMMIT: 2695e7b3e3f460531e2b77fed48a60561c54d90e
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -121,6 +116,12 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      # Contracts pins come from packages/core/src/external-pins.ts, the same
+      # module `init` resolves them through, so the checkout deployed from, the
+      # context built from and the labels recorded cannot name different commits.
+      - name: Resolve external contracts pins
+        run: pnpm exec tsx scripts/ci/resolve-external-pins.ts
 
       # Before the snapshot below, which takes tens of minutes: an unresolvable
       # ref should fail in a minute, not after the build.
@@ -145,7 +146,7 @@ jobs:
           mkdir -p "$TOKEN_BRIDGE_LOCAL_DIR"
           cd "$TOKEN_BRIDGE_LOCAL_DIR"
           git init .
-          git remote add origin https://github.com/OffchainLabs/token-bridge-contracts.git
+          git remote add origin "$TOKEN_BRIDGE_REPOSITORY"
           git fetch --depth 1 origin "$TOKEN_BRIDGE_COMMIT"
           git checkout --detach FETCH_HEAD
           git submodule update --init --recursive --depth 1
@@ -160,12 +161,12 @@ jobs:
           mkdir -p "$NITRO_CONTRACTS_LOCAL_DIR"
           cd "$NITRO_CONTRACTS_LOCAL_DIR"
           git init .
-          git remote add origin https://github.com/OffchainLabs/nitro-contracts.git
+          git remote add origin "$NITRO_CONTRACTS_REPOSITORY"
           git fetch --depth 1 origin "$NITRO_CONTRACTS_COMMIT"
           git checkout --detach FETCH_HEAD
           git submodule update --init --recursive --depth 1
           test "$(node -p 'require("./package.json").name')" = "@arbitrum/nitro-contracts"
-          test "$(node -p 'require("./package.json").version')" = "3.2.0"
+          test "$(node -p 'require("./package.json").version')" = "${NITRO_CONTRACTS_REF#v}"
 
       # Generate this combo's snapshot inline via init. init is flaky in CI
       # (intermittently exits 0 at wait-l1 before capturing, ~50%), so success
@@ -332,8 +333,8 @@ jobs:
           cache-to: type=gha,mode=max,scope=amd64
 
   # Adds the linux/arm64 manifest to each tag the job above published, turning it
-  # into a multi-arch index. Consumers keep pulling the same tag; Docker resolves
-  # the native manifest, so Apple Silicon stops running the stack under emulation.
+  # into a multi-arch index. Consumers pull the same tag either way; Docker
+  # resolves the native manifest, so Apple Silicon runs the stack natively.
   #
   # A separate native job rather than `platforms:` on the build above: the
   # token-bridge-contracts stage runs a full yarn+forge build and the final image
@@ -354,12 +355,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-    env:
-      TOKEN_BRIDGE_REF: 5975d8f7360816341be7f94fd333ef240f4aec23
-      TOKEN_BRIDGE_COMMIT: 5975d8f7360816341be7f94fd333ef240f4aec23
-      TOKEN_BRIDGE_DOCKER_CONTEXT: https://github.com/OffchainLabs/token-bridge-contracts.git#5975d8f7360816341be7f94fd333ef240f4aec23
-      NITRO_CONTRACTS_REF: v3.2.0
-      NITRO_CONTRACTS_COMMIT: 2695e7b3e3f460531e2b77fed48a60561c54d90e
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -374,6 +369,11 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      # Resolved the same way as the amd64 job, so the two halves of one tag
+      # cannot be built against different contracts.
+      - name: Resolve external contracts pins
+        run: pnpm exec tsx scripts/ci/resolve-external-pins.ts
 
       # Same helper the amd64 job resolves through, so the two architectures of
       # one row cannot land under different tags.

@@ -32,8 +32,8 @@ jobs:
   #
   # The l3-eth row runs on both architectures. A published tag is a multi-arch
   # index and each runner pulls its own manifest, so this is the step that proves
-  # the arm64 half actually boots before the version is promoted to the public
-  # registry -- `imagetools inspect` at release time only proves it exists.
+  # the arm64 half boots -- `imagetools inspect` at release time proves only that
+  # the manifest exists.
   verify:
     strategy:
       fail-fast: false

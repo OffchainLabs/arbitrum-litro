@@ -3,10 +3,17 @@ ARG FOUNDRY_IMAGE=ghcr.io/foundry-rs/foundry:v1.3.5
 ARG NITRO_IMAGE=offchainlabs/nitro-node:v3.9.5-66e42c4
 ARG BUNDLE_VERSION=dev
 ARG BUNDLE_VARIANT=unknown
-ARG NITRO_CONTRACTS_REF=v3.2.0
-ARG NITRO_CONTRACTS_COMMIT=2695e7b3e3f460531e2b77fed48a60561c54d90e
-ARG TOKENBRIDGE_REF=5975d8f7360816341be7f94fd333ef240f4aec23
-ARG TOKENBRIDGE_COMMIT=5975d8f7360816341be7f94fd333ef240f4aec23
+
+# Deliberately without defaults. These record which contracts the image actually
+# contains, and the contracts themselves arrive through the `tokenbridge` build
+# context -- a default here could not follow that context, so it would sooner or
+# later label an image with a commit it does not contain. Callers pass them from
+# packages/core/src/external-pins.ts; an omitted arg leaves the label empty,
+# which is at least honest.
+ARG NITRO_CONTRACTS_REF
+ARG NITRO_CONTRACTS_COMMIT
+ARG TOKENBRIDGE_REF
+ARG TOKENBRIDGE_COMMIT
 
 FROM scratch AS tokenbridge
 

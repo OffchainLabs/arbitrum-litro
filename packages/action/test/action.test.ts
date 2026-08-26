@@ -157,9 +157,8 @@ describe("published bundle metadata", () => {
 	});
 
 	it("publishes to GHCR and nowhere else", () => {
-		// Docker Hub was dropped once the GHCR package went public. A second
-		// registry is what made tag shapes, aliases and digests able to disagree
-		// about what a version means.
+		// GHCR is the only registry. A second one lets tag shapes, aliases and
+		// digests disagree about what a version means.
 		const aliases = readFileSync("scripts/ci/publish-latest-aliases.mjs", "utf-8");
 		const refs = readFileSync("scripts/ci/resolve-publish-refs.mjs", "utf-8");
 		for (const source of [workflow, aliases, refs]) {
@@ -184,6 +183,29 @@ describe("published bundle metadata", () => {
 		// package starts orphaned and the repository's workflows lose access.
 		expect(dockerfile).toContain("org.opencontainers.image.source");
 		expect(workflow).toContain("IMAGE_SOURCE=");
+	});
+
+	it("takes every external contracts pin from external-pins.ts", () => {
+		// A pasted commit is undetectable once an image ships: the labels would
+		// describe contracts the image does not contain, and a bump would have to
+		// find every copy. CI resolves the pins instead, so external-pins.ts is the
+		// only place a commit appears.
+		const pins = readFileSync("packages/core/src/external-pins.ts", "utf-8");
+		const commits = [...pins.matchAll(/"([0-9a-f]{40})"/g)].map((match) => match[1]);
+		expect(commits.length).toBeGreaterThan(0);
+
+		for (const name of ["release-testnode-image.yml", "test-action.yml"]) {
+			const source = readFileSync(`.github/workflows/${name}`, "utf-8");
+			expect(source).toContain("scripts/ci/resolve-external-pins.ts");
+			expect(source).not.toMatch(/[0-9a-f]{40}/);
+			expect(source).not.toMatch(/github\.com\/OffchainLabs\/(token-bridge|nitro)-contracts/);
+		}
+		// The Dockerfile cannot compute a default, so it declares the args bare
+		// rather than carrying a copy that silently outlives the real pin.
+		for (const arg of ["NITRO_CONTRACTS_COMMIT", "TOKENBRIDGE_COMMIT"]) {
+			expect(dockerfile).toContain(`ARG ${arg}\n`);
+		}
+		expect(dockerfile).not.toMatch(/ARG [A-Z_]+=[0-9a-f]{40}/);
 	});
 });
 
@@ -229,7 +251,7 @@ describe("multi-arch bundles", () => {
 	it("merges into the published tag and proves both platforms landed", () => {
 		// `imagetools create` succeeds when handed a single source, so a merge that
 		// lost the amd64 half would publish an arm64-only tag under the name every
-		// existing consumer pulls, and crane would carry it through promotion.
+		// consumer pulls, and crane would copy it straight into the aliases.
 		expect(workflow).toContain("docker buildx imagetools create --tag");
 		expect(workflow).toContain("node scripts/ci/assert-image-platforms.mjs");
 	});
@@ -243,13 +265,13 @@ describe("multi-arch bundles", () => {
 	it("aliases only after the arm64 manifest is merged in", () => {
 		// crane copies the digest a tag holds when it runs, so aliasing before the
 		// merge would pin `latest-<variant>` to the amd64-only manifest the tag
-		// briefly held -- and promotion would carry that to the public registry.
+		// briefly holds between the two builds.
 		expect(workflow).toContain(
 			"needs: [resolve-publish-matrix, publish-testnode-image, publish-testnode-image-arm64]",
 		);
 	});
 
-	it("boots arm64 in CI and before promotion", () => {
+	it("boots arm64 in CI and against the published image", () => {
 		// Publishing an arm64 manifest is not evidence it runs. Both checks assert
 		// the architecture of what actually booted, because a runner with binfmt
 		// registered would otherwise pass while running the amd64 image emulated.

@@ -5,8 +5,8 @@ import { execFileSync } from "node:child_process";
  *
  * The failure this catches is silent: `imagetools create` succeeds when handed
  * one source, so a merge that lost the amd64 half publishes an arm64-only tag
- * under a name every existing consumer pulls. Nothing downstream would notice --
- * crane copies whatever index it is given through aliasing and promotion.
+ * under a name every consumer pulls. Nothing downstream notices -- crane copies
+ * whatever index it is given straight into the `latest-<variant>` aliases.
  */
 
 function readArg(name) {
@@ -35,8 +35,8 @@ const manifest = JSON.parse(
 	),
 );
 
-// A tag that never got merged is a plain manifest rather than an index, which
-// would otherwise read as an index covering nothing.
+// A tag with no arm64 manifest merged into it is a plain manifest rather than an
+// index, which would otherwise read as an index covering no platforms.
 if (!Array.isArray(manifest.manifests)) {
 	throw new Error(
 		`${imageRef} is a single-platform manifest (${manifest.mediaType}), not a multi-arch index`,

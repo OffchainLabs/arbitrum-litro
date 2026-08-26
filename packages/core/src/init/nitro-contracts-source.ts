@@ -2,11 +2,14 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-export const DEFAULT_NITRO_CONTRACTS_RELEASE = "v3.2.0";
-export const DEFAULT_NITRO_CONTRACTS_COMMIT = "2695e7b3e3f460531e2b77fed48a60561c54d90e";
-export const NITRO_CONTRACTS_FAMILY = "v3.2";
+import {
+	DEFAULT_NITRO_CONTRACTS_COMMIT,
+	DEFAULT_NITRO_CONTRACTS_RELEASE,
+	NITRO_CONTRACTS_REPOSITORY,
+} from "../external-pins.js";
 
-const NITRO_CONTRACTS_REPOSITORY = "https://github.com/OffchainLabs/nitro-contracts.git";
+export { DEFAULT_NITRO_CONTRACTS_COMMIT, DEFAULT_NITRO_CONTRACTS_RELEASE };
+export const NITRO_CONTRACTS_FAMILY = "v3.2";
 const NITRO_CONTRACTS_PACKAGE = "@arbitrum/nitro-contracts";
 
 export type NitroContractsSource =
