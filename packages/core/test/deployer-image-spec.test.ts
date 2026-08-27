@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { NITRO_CONTRACTS_REPOSITORY, gitBuildContext } from "../src/external-pins.js";
 import { ensureContractDeployerImage } from "../src/init/chain-steps.js";
 import {
 	DEFAULT_NITRO_CONTRACTS_COMMIT,
@@ -58,7 +59,7 @@ describe("resolveNitroContractsSource", () => {
 			family: "v3.2",
 			release: DEFAULT_NITRO_CONTRACTS_RELEASE,
 			commit: DEFAULT_NITRO_CONTRACTS_COMMIT,
-			buildContext: `https://github.com/OffchainLabs/nitro-contracts.git#${DEFAULT_NITRO_CONTRACTS_COMMIT}`,
+			buildContext: gitBuildContext(NITRO_CONTRACTS_REPOSITORY, DEFAULT_NITRO_CONTRACTS_COMMIT),
 			identity: `release:${DEFAULT_NITRO_CONTRACTS_RELEASE}@${DEFAULT_NITRO_CONTRACTS_COMMIT}`,
 		});
 	});

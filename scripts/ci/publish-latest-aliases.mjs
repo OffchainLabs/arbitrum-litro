@@ -1,14 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { resolveRepositories } from "./registries.mjs";
+import { DEFAULT_TESTNODE_IMAGE_REPOSITORY } from "../../packages/testnode/src/runtime.mjs";
 
 /**
- * Points `latest-<variant>` at the just-published version of that variant, in
- * every repository the release was pushed to.
+ * Points `latest-<variant>` at the just-published version of that variant.
  *
- * Copies with crane rather than `docker buildx imagetools create`, which wraps a
- * single-arch source in a new index and so would give the alias a different
- * digest than the version tag it names. Matching digests are what let a consumer
- * tell which release `latest-<variant>` currently is.
+ * crane rather than `imagetools create`, which re-wraps its source in a new
+ * index: matching digests are what let a consumer tell which release the alias
+ * is, and what carries the published index across intact.
  */
 
 function readArg(name) {
@@ -19,11 +17,15 @@ function readArg(name) {
 	return process.argv[index + 1] || "";
 }
 
-const repositories = resolveRepositories({
-	dockerhubRepository: readArg("--dockerhub-repository"),
-	owner: readArg("--owner"),
-	registries: readArg("--registries"),
-}).map((entry) => entry.repository);
+const owner = readArg("--owner");
+if (!owner) {
+	throw new Error("--owner is required");
+}
+
+// Same derivation as resolve-publish-refs.mjs, so an alias cannot name a
+// repository nothing pulls.
+const imageName = DEFAULT_TESTNODE_IMAGE_REPOSITORY.split("/").pop();
+const repository = `ghcr.io/${owner.toLowerCase()}/${imageName}`;
 
 const version = process.env.VERSION;
 if (!version) {
@@ -38,11 +40,9 @@ if (rows.length === 0) {
 
 const contractsTag = (contractsVersion) => `nc${contractsVersion.replace(/^v/, "")}`;
 
-for (const repository of repositories) {
-	for (const row of rows) {
-		const source = `${repository}:${version}-${contractsTag(row.contractsVersion)}-${row.variant}`;
-		const target = `${repository}:latest-${row.variant}`;
-		console.log(`${target} -> ${source}`);
-		execFileSync("crane", ["copy", source, target], { stdio: "inherit" });
-	}
+for (const row of rows) {
+	const source = `${repository}:${version}-${contractsTag(row.contractsVersion)}-${row.variant}`;
+	const target = `${repository}:latest-${row.variant}`;
+	console.log(`${target} -> ${source}`);
+	execFileSync("crane", ["copy", source, target], { stdio: "inherit" });
 }

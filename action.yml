@@ -7,10 +7,10 @@ inputs:
     description: "Published bundle version; defaults to latest"
   github-token:
     required: false
-    description: "Token for private GHCR images; not needed for the public Docker Hub default"
+    description: "Token for a private image repository; not needed for the public default"
   image-repository:
     required: false
-    default: "offchainlabs/arbitrum-litro"
+    default: "ghcr.io/offchainlabs/arbitrum-litro"
     description: "Container repository prefix used to resolve the testnode image"
   image-ref:
     required: false

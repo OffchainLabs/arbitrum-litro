@@ -17,7 +17,7 @@ pnpm dev start
 By default, `start` resolves the latest published `l3-eth` bundle:
 
 ```text
-offchainlabs/arbitrum-litro:latest-l3-eth
+ghcr.io/offchainlabs/arbitrum-litro:latest-l3-eth
 ```
 
 Config-driven usage can pin a different image version:
@@ -43,7 +43,7 @@ Optional config fields:
 | `l3Enabled` | `true` | Boot the L3-enabled testnode |
 | `feeTokenDecimals` | — | Custom L3 fee token decimals (`6`, `16`, `18`, `20`) |
 | `nitroContractsVersion` | `v3.2` | Nitro contracts version tag component |
-| `imageRepository` | `offchainlabs/arbitrum-litro` | testnode image repository |
+| `imageRepository` | `ghcr.io/offchainlabs/arbitrum-litro` | testnode image repository |
 | `containerName` | `arbitrum-testnode-<variant>` | Docker container name override |
 | `outputDir` | `./.arbitrum-testnode/<version>/<variant>` | Export directory for config files |
 | `startupTimeoutSeconds` | `120` | RPC readiness timeout |
@@ -67,7 +67,7 @@ polling interval when the container starts:
 ```bash
 docker run \
   -e TESTNODE_PARENT_CHAIN_POLL_INTERVAL=100ms \
-  offchainlabs/arbitrum-litro:<tag>
+  ghcr.io/offchainlabs/arbitrum-litro:<tag>
 ```
 
 The value is applied to `node.parent-chain-reader.poll-interval`,
@@ -87,9 +87,9 @@ and existing polling behavior are unchanged.
     timeboost-enabled: false
 ```
 
-The default image repository is `offchainlabs/arbitrum-litro` on Docker Hub, which is
-public, so no registry credentials are needed. `github-token` is only required when
-`image-repository` points at a private registry, such as the GHCR package holding
+The default image repository is `ghcr.io/offchainlabs/arbitrum-litro`, which is public,
+so no registry credentials are needed. `github-token` is only required when
+`image-repository` points at a private repository, such as the GHCR package holding
 releases up to `v0.2.10`:
 
 ```yaml
@@ -198,7 +198,7 @@ consumers can run scripts from that workspace without another image or build ste
       -e GAS_LIMIT_FOR_L2_FACTORY_DEPLOYMENT=10000000 \
       -e POLLING_INTERVAL=100 \
       -e DISABLE_CONTRACT_VERIFICATION=true \
-      offchainlabs/arbitrum-litro:v0.2.10-nc3.2-l2 \
+      ghcr.io/offchainlabs/arbitrum-litro:v0.3.0-nc3.2-l2 \
       deploy:token-bridge-creator
 ```
 
@@ -207,7 +207,7 @@ normally retains its single-purpose testnode entrypoint. `POLLING_INTERVAL=100` 
 polling to 100 ms for local deployments, while `DISABLE_CONTRACT_VERIFICATION=true` skips explorer
 verification.
 
-Snapshots built by `init --timeboost-enabled` deploy a local Timeboost `ExpressLaneAuction` contract on L2 and write its proxy address to `timeboost-auction.json`. The snapshot build starts a local compose Redis service only while building the snapshot. When `timeboost-enabled` / `timeboostEnabled` is true, the action and `start` command resolve the L2-only `l2-timeboost` image tag, for example `offchainlabs/arbitrum-litro:<version>-nc3.2-l2-timeboost`. The published image uses the deployed address by default; `TESTNODE_TIMEBOOST_AUCTION_CONTRACT_ADDRESS` can still override it. Published Timeboost stacks require an external Redis endpoint supplied through `TESTNODE_TIMEBOOST_REDIS_URL`; `start` and the action do not deploy Redis.
+Snapshots built by `init --timeboost-enabled` deploy a local Timeboost `ExpressLaneAuction` contract on L2 and write its proxy address to `timeboost-auction.json`. The snapshot build starts a local compose Redis service only while building the snapshot. When `timeboost-enabled` / `timeboostEnabled` is true, the action and `start` command resolve the L2-only `l2-timeboost` image tag, for example `ghcr.io/offchainlabs/arbitrum-litro:<version>-nc3.2-l2-timeboost`. The published image uses the deployed address by default; `TESTNODE_TIMEBOOST_AUCTION_CONTRACT_ADDRESS` can still override it. Published Timeboost stacks require an external Redis endpoint supplied through `TESTNODE_TIMEBOOST_REDIS_URL`; `start` and the action do not deploy Redis.
 
 ### Local Development
 
@@ -370,42 +370,39 @@ The `Publish Testnode` workflow publishes automatically when a `v*` tag is pushe
 The Git tag becomes the image version, and every current v3.2 variant is published.
 The workflow can also be run manually to publish one variant or `all`.
 
-Publishing goes to the private GHCR package, and reaching the public Docker Hub
-repository is a separate step. Both use the same tag suffix, so a version means the
-same thing in either:
+Publishing goes to one place, the public GHCR package:
 
 ```text
 ghcr.io/<owner>/arbitrum-litro:<version>-nc<contracts-version>-<variant>
-offchainlabs/arbitrum-litro:<version>-nc<contracts-version>-<variant>
 ```
 
-Getting from one to the other is a three-step promotion:
+Every published tag, including `latest-<variant>`, is a multi-arch index covering
+`linux/amd64` and `linux/arm64`, so Docker resolves the native manifest and Apple
+Silicon runs the stack without emulation. Nothing selects a platform: pull the same
+tag either way. Both architectures bake the identical snapshot — chain state is an
+Anvil state file plus Pebble databases, the same bytes on either — so a given tag
+means one chain regardless of which manifest you get.
 
-1. **Publish.** A tag push, or a manual run with `registries: ghcr`, builds and pushes
-   to GHCR only. A manual run can select `ghcr,dockerhub` to publish to both at once,
-   which skips the gate below; that needs the `DOCKERHUB_USERNAME` and
-   `DOCKERHUB_TOKEN` repository secrets, and refuses to replace a Docker Hub tag that
-   already exists unless the run sets `overwrite`.
-2. **Verify.** `Verify Published Image` boots the published `l2` and `l3-eth` images
-   through the action, authenticating against GHCR, and checks that each image's
-   bundle labels match the tag it was pulled as.
-3. **Promote.** `Mirror Images to Docker Hub` copies the version's tags across with
-   `crane`, preserving digests rather than rebuilding, so `repo@sha256:...` stays valid
-   against either registry. It refuses to change a Docker Hub tag whose digest already
-   differs unless the run sets `overwrite`.
+After publishing, run `Verify Published Image` on the version. It boots the published
+`l2` and `l3-eth` images through the action and checks that each image's bundle labels
+match the tag it was pulled as. `l3-eth` is booted on both an amd64 and an arm64
+runner, so the arm64 manifest is proven to run rather than merely to exist. This is
+distinct from `Test Action`, which builds an image from the working tree — only this
+workflow pulls what a release actually pushed.
 
 After every variant succeeds, a tag-triggered release also updates the corresponding
-`latest-<variant>` aliases in the registries it published to. Promotion carries an
-alias across only when the source alias still names a version being mirrored, so the
-public alias never points at a version Docker Hub does not have. These canonical
-aliases deliberately omit a contracts version: consumers follow the composed bundle,
-while its exact Nitro and Token Bridge refs and commits remain recorded as OCI labels.
+`latest-<variant>` aliases. Aliases are copied with `crane`, which preserves the
+digest, so an alias and the version tag it names are the same image and the published
+multi-arch index carries across rather than being rebuilt. These canonical aliases
+deliberately omit a contracts version: consumers follow the composed bundle, while its
+exact Nitro and Token Bridge refs and commits remain recorded as OCI labels.
 
 Releases up to `v0.2.10` live in a separate GHCR package,
 `ghcr.io/<owner>/arbitrum-testnode-ci`, which still serves those tags. Resolving one
 needs `image-repository` plus a token, since that package is private. That package is
 also the last one to carry `nc2.1` tags: `nitro-contracts-version: v2.1` resolves a
-tag that exists only for versions up to `v0.2.10`.
+tag that exists only for versions up to `v0.2.10`. Images in that package are
+`linux/amd64` only.
 
 Publish the default testnode image automatically:
 
@@ -483,8 +480,8 @@ Derived from the official nitro-testnode mnemonic. All accounts are pre-funded o
 | `image-ref` | No | — | Full image reference that bypasses catalog tag resolution |
 | `nitro-image` | No | — | Nitro image to rebase the testnode image onto before booting |
 | `l3-enabled` | No | `false` | Boot the L3-enabled testnode |
-| `github-token` | No | — | Token for private GHCR images; unused for the public Docker Hub default |
-| `image-repository` | No | `offchainlabs/arbitrum-litro` | Container image repository |
+| `github-token` | No | — | Token for a private image repository; unused for the public default |
+| `image-repository` | No | `ghcr.io/offchainlabs/arbitrum-litro` | Container image repository |
 | `fee-token-decimals` | No | — | Custom fee token decimals (6, 16, 18, or 20) |
 | `nitro-contracts-version` | No | `v3.2` | Nitro contracts version tag component |
 | `output-dir` | No | — | Directory where exported config files should be written |

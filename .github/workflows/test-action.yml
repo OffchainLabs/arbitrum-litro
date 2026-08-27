@@ -10,16 +10,20 @@ on:
         default: "v0.1.6"
         type: string
 
-# testnode.Dockerfile takes the Token Bridge workspace from a named context whose
-# default is `scratch`, so a build that omits it produces an empty /workspace and
-# fails at the git commit. Defined once here because every job that builds the
-# image needs the same pin.
-env:
-  TOKEN_BRIDGE_CONTEXT: https://github.com/OffchainLabs/token-bridge-contracts.git#5975d8f7360816341be7f94fd333ef240f4aec23
-
 jobs:
+  # Both architectures the release publishes: an arm64 regression would
+  # otherwise surface only when a developer pulls the bundle on Apple Silicon.
   test-l3-eth-action:
-    runs-on: ubuntu-latest
+    name: test-l3-eth-action (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -35,6 +39,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # The Dockerfile's `tokenbridge` context defaults to `scratch`, so a build
+      # that omits it fails; the pin comes from external-pins.ts, as a release's
+      # does.
+      - name: Resolve external contracts pins
+        run: pnpm exec tsx scripts/ci/resolve-external-pins.ts
+
       - name: Install snapshot
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -47,12 +57,28 @@ jobs:
       - name: Build local testnode image
         run: >-
           docker build
-          --build-context tokenbridge=${{ env.TOKEN_BRIDGE_CONTEXT }}
+          --build-context tokenbridge=${{ env.TOKEN_BRIDGE_DOCKER_CONTEXT }}
           --build-arg BUNDLE_VERSION=${{ github.sha }}
           --build-arg BUNDLE_VARIANT=l3-eth
+          --build-arg NITRO_CONTRACTS_REF=${{ env.NITRO_CONTRACTS_REF }}
+          --build-arg NITRO_CONTRACTS_COMMIT=${{ env.NITRO_CONTRACTS_COMMIT }}
+          --build-arg TOKENBRIDGE_REF=${{ env.TOKEN_BRIDGE_REF }}
+          --build-arg TOKENBRIDGE_COMMIT=${{ env.TOKEN_BRIDGE_COMMIT }}
           -f docker/testnode.Dockerfile
           -t local/arbitrum-testnode:${{ github.sha }}-nc3.2-l3-eth
           .
+
+      # A runner with binfmt registered runs an amd64 image fine, so without this
+      # the arm64 row could pass while proving nothing.
+      - name: Image is native to this runner
+        env:
+          EXPECTED: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          actual="$(docker image inspect --format '{{.Architecture}}' \
+            "local/arbitrum-testnode:${{ github.sha }}-nc3.2-l3-eth")"
+          echo "image architecture: $actual"
+          test "$actual" = "$EXPECTED"
 
       - name: Run action
         id: action
@@ -108,6 +134,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # The Dockerfile's `tokenbridge` context defaults to `scratch`, so a build
+      # that omits it fails; the pin comes from external-pins.ts, as a release's
+      # does.
+      - name: Resolve external contracts pins
+        run: pnpm exec tsx scripts/ci/resolve-external-pins.ts
+
       - name: Install snapshot
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -120,14 +152,18 @@ jobs:
       - name: Build local testnode image
         run: >-
           docker build
-          --build-context tokenbridge=${{ env.TOKEN_BRIDGE_CONTEXT }}
+          --build-context tokenbridge=${{ env.TOKEN_BRIDGE_DOCKER_CONTEXT }}
+          --build-arg NITRO_CONTRACTS_REF=${{ env.NITRO_CONTRACTS_REF }}
+          --build-arg NITRO_CONTRACTS_COMMIT=${{ env.NITRO_CONTRACTS_COMMIT }}
+          --build-arg TOKENBRIDGE_REF=${{ env.TOKEN_BRIDGE_REF }}
+          --build-arg TOKENBRIDGE_COMMIT=${{ env.TOKEN_BRIDGE_COMMIT }}
           -f docker/testnode.Dockerfile
           -t local/arbitrum-testnode:${{ github.sha }}-nc3.2-l3-eth
           .
 
-      # Read the pin from the Dockerfile the image above was built with (its ARG
-      # default, since the build passes no --build-arg) so this job cannot drift
-      # from it.
+      # Read the pin from the Dockerfile the image above was built with. The
+      # build overrides no NITRO_IMAGE, so its ARG default is what that image
+      # actually carries and this job cannot drift from it.
       - name: Resolve the pinned Nitro image
         id: nitro
         run: |

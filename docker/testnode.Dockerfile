@@ -3,10 +3,14 @@ ARG FOUNDRY_IMAGE=ghcr.io/foundry-rs/foundry:v1.3.5
 ARG NITRO_IMAGE=offchainlabs/nitro-node:v3.9.5-66e42c4
 ARG BUNDLE_VERSION=dev
 ARG BUNDLE_VARIANT=unknown
-ARG NITRO_CONTRACTS_REF=v3.2.0
-ARG NITRO_CONTRACTS_COMMIT=2695e7b3e3f460531e2b77fed48a60561c54d90e
-ARG TOKENBRIDGE_REF=5975d8f7360816341be7f94fd333ef240f4aec23
-ARG TOKENBRIDGE_COMMIT=5975d8f7360816341be7f94fd333ef240f4aec23
+
+# No defaults on purpose: the contracts arrive through the `tokenbridge` build
+# context, which a default cannot follow, so it would eventually label an image
+# with a commit it does not contain. Callers pass them from external-pins.ts.
+ARG NITRO_CONTRACTS_REF
+ARG NITRO_CONTRACTS_COMMIT
+ARG TOKENBRIDGE_REF
+ARG TOKENBRIDGE_COMMIT
 
 FROM scratch AS tokenbridge
 
@@ -41,9 +45,8 @@ ARG TOKENBRIDGE_REF
 ARG TOKENBRIDGE_COMMIT
 ARG IMAGE_SOURCE="https://github.com/OffchainLabs/arbitrum-litro"
 
-# GHCR links a package to a repository through image.source, which is what grants
-# the repository's own workflows access to a private package. Without it a
-# published package starts orphaned and has to be linked by hand.
+# GHCR links a package to a repository through image.source; without it the
+# package starts orphaned and this repository's workflows lose access.
 LABEL org.opencontainers.image.source="${IMAGE_SOURCE}" \
 	io.arbitrum.testnode.bundle.version="${BUNDLE_VERSION}" \
 	io.arbitrum.testnode.bundle.variant="${BUNDLE_VARIANT}" \

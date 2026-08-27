@@ -1,10 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 import { execOrThrow } from "./exec.js";
+import { DEFAULT_TOKEN_BRIDGE_COMMIT, TOKEN_BRIDGE_REPOSITORY } from "./external-pins.js";
 
-export const DEFAULT_TOKEN_BRIDGE_COMMIT = "5975d8f7360816341be7f94fd333ef240f4aec23";
-
-const TOKEN_BRIDGE_REPOSITORY = "https://github.com/OffchainLabs/token-bridge-contracts.git";
+export { DEFAULT_TOKEN_BRIDGE_COMMIT };
 const TOKEN_BRIDGE_PACKAGE = "@arbitrum/token-bridge-contracts";
 const TOKEN_BRIDGE_CREATOR_SCRIPT = "scripts/deployment/deployTokenBridgeCreator.ts";
 const TOKEN_BRIDGE_TS_NODE = "node_modules/ts-node/dist/bin.js";
