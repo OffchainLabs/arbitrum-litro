@@ -142,9 +142,12 @@ describe("published bundle metadata", () => {
 	});
 
 	it("publishes latest aliases only after every release image succeeds", () => {
-		expect(workflow).toContain("publish-latest-bundle:");
-		expect(workflow).toContain("needs: [resolve-publish-matrix, publish-testnode-image]");
-		expect(workflow).toContain("node scripts/ci/publish-latest-aliases.mjs");
+		// Scoped to the job: the arm64 job carries a `needs:` line this would
+		// otherwise match, so an unscoped assertion passes even with the alias job
+		// depending on nothing.
+		const job = workflow.slice(workflow.indexOf("  publish-latest-bundle:"));
+		expect(job).toContain("needs: [resolve-publish-matrix, publish-testnode-image");
+		expect(job).toContain("node scripts/ci/publish-latest-aliases.mjs");
 	});
 
 	it("aliases with crane so the alias and its version tag share a digest", () => {
