@@ -39,6 +39,12 @@ jobs:
             l3-enabled: "false"
             arch: amd64
             runner: ubuntu-latest
+          # The published image booted with the Fast Feed and PGA rounds on.
+          - variant: l2
+            l3-enabled: "false"
+            arch: amd64
+            runner: ubuntu-latest
+            fast-feed: "true"
           - variant: l3-eth
             l3-enabled: "true"
             arch: amd64
@@ -47,7 +53,7 @@ jobs:
             l3-enabled: "true"
             arch: arm64
             runner: ubuntu-24.04-arm
-    name: verify (${{ matrix.variant }}, ${{ matrix.arch }})
+    name: verify (${{ matrix.variant }}, ${{ matrix.arch }}${{ matrix.fast-feed == 'true' && ', fast feed' || '' }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     permissions:
@@ -77,6 +83,9 @@ jobs:
           l3-enabled: ${{ matrix.l3-enabled }}
           nitro-contracts-version: ${{ inputs.nitro-contracts-version }}
           version: ${{ inputs.version }}
+          fast-feed-enabled: ${{ matrix.fast-feed || 'false' }}
+          pga-rounds-per-block: ${{ matrix.fast-feed == 'true' && '2' || '' }}
+          l2-max-block-speed: ${{ matrix.fast-feed == 'true' && '250ms' || '' }}
 
       - name: Validate chains respond
         env:
@@ -120,3 +129,12 @@ jobs:
             "${{ steps.action.outputs.image-ref }}")"
           echo "image architecture: $actual"
           test "$actual" = "$EXPECTED"
+
+      - name: Validate Fast Feed
+        if: ${{ matrix.fast-feed == 'true' }}
+        env:
+          FAST_FEED_URL: ${{ steps.action.outputs.fast-feed-url }}
+          SEQUENCER_FEED_URL: ${{ steps.action.outputs.sequencer-feed-url }}
+          L2_RPC_URL: ${{ steps.action.outputs.l2-rpc-url }}
+          FAST_FEED_EXPECT_PGA: "true"
+        run: pnpm exec vitest run -c vitest.integration.config.ts packages/core/test/integration/fast-feed.test.ts

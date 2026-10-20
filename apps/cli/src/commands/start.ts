@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import {
 	type ContainerDiagnostics,
+	type SequencerOptions,
 	bootTestnode,
 	buildStartTestnodeState,
 	collectContainerDiagnostics,
@@ -15,7 +16,45 @@ import { DEFAULT_START_IMAGE_VERSION } from "../package-metadata.js";
 const DEFAULT_CONFIG_BASENAME = "testnode.start.json";
 export { DEFAULT_START_IMAGE_VERSION };
 
+// Optional sequencer features. One definition serves as CLI flags, start-file keys and the type
+// handed to the testnode state; a flag wins over the file.
+const sequencerFlags = z.object({
+	fastFeedApiKey: z
+		.string()
+		.optional()
+		.describe('API key the Fast Feed accepts as "Authorization: Bearer <key>" (default: dev key)'),
+	fastFeedAuth: z
+		.boolean()
+		.optional()
+		.describe("Require the Fast Feed API key (default: true; --no-fast-feed-auth turns it off)"),
+	fastFeedDelayMs: z
+		.number()
+		.optional()
+		.describe("Hold each Fast Feed frame back by this many milliseconds"),
+	fastFeedEnabled: z
+		.boolean()
+		.optional()
+		.describe("Serve the Fast Feed on ws://127.0.0.1:9646/ and the sequencer feed on 9642"),
+	l2MaxBlockSpeed: z
+		.string()
+		.optional()
+		.describe("L2 sequencer max-block-speed as a Go duration, e.g. 250ms"),
+	pgaRoundsPerBlock: z
+		.number()
+		.optional()
+		.describe("Enable priority gas auction ordering with this many rounds per L2 block"),
+});
+type SequencerFlags = z.infer<typeof sequencerFlags>;
+const SEQUENCER_FLAG_NAMES = Object.keys(sequencerFlags.shape) as Array<keyof SequencerFlags>;
+
+function mergeSequencerFlags(options: SequencerFlags, file: SequencerFlags): SequencerOptions {
+	return Object.fromEntries(
+		SEQUENCER_FLAG_NAMES.map((name) => [name, options[name] ?? file[name]]),
+	) as SequencerOptions;
+}
+
 const startFileSchema = z.object({
+	...sequencerFlags.shape,
 	containerName: z.string().optional(),
 	feeTokenDecimals: z.number().optional(),
 	imageRef: z.string().optional(),
@@ -44,6 +83,7 @@ interface StartResolvedInput {
 	nitroContractsVersion: string | undefined;
 	nitroImage: string | undefined;
 	outputDir: string | undefined;
+	sequencer: SequencerOptions;
 	startupTimeoutSeconds: number;
 	timeboostEnabled: boolean;
 	version: string;
@@ -77,6 +117,7 @@ type StartResult =
 			l3RpcUrl: string;
 			localNetworkPath: string;
 			networkConfigPaths: string[];
+			sequencer: ReturnType<typeof buildStartTestnodeState>["sequencer"];
 			timeboostEnabled: boolean;
 			variant: string;
 	  };
@@ -153,7 +194,7 @@ function resolveMergedNetworkConfigPaths(params: {
 }
 
 export function resolveStartInput(
-	options: {
+	options: SequencerFlags & {
 		config?: string | undefined;
 		containerName?: string | undefined;
 		feeTokenDecimals?: number | undefined;
@@ -195,6 +236,7 @@ export function resolveStartInput(
 			fileValue: fileConfig.outputDir,
 			optionValue: options.outputDir,
 		}),
+		sequencer: mergeSequencerFlags(options, fileConfig),
 		startupTimeoutSeconds: options.startupTimeoutSeconds ?? fileConfig.startupTimeoutSeconds ?? 120,
 		timeboostEnabled: options.timeboostEnabled ?? fileConfig.timeboostEnabled ?? false,
 		version: resolveStartVersion(options.imageVersion, fileConfig.version),
@@ -246,6 +288,7 @@ export function runStart(
 		l3Enabled: input.l3Enabled,
 		nitroImage: input.nitroImage,
 		outputDir: input.outputDir,
+		sequencer: input.sequencer,
 		timeboostEnabled: input.timeboostEnabled,
 		version: input.version,
 	});
@@ -282,6 +325,7 @@ export function runStart(
 		l3RpcUrl: state.rpcUrls.l3,
 		localNetworkPath: state.paths.localNetwork,
 		networkConfigPaths: input.networkConfigPaths,
+		sequencer: state.sequencer,
 		timeboostEnabled: input.timeboostEnabled,
 		variant: state.variant,
 		...(input.configPath ? { configPath: input.configPath } : {}),
@@ -291,6 +335,7 @@ export function runStart(
 export const startCli = Cli.create("start", {
 	description: "Boot the published testnode image from config with one command",
 	options: z.object({
+		...sequencerFlags.shape,
 		config: z.string().optional().describe("Path to a start JSON config file"),
 		containerName: z.string().optional().describe("Optional Docker container name override"),
 		feeTokenDecimals: z

@@ -1,6 +1,7 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import {
+	actionStateOptionsFromEnv,
 	bootTestnode,
 	buildActionTestnodeState,
 	collectContainerDiagnostics,
@@ -24,22 +25,13 @@ function writeEnv(key, value) {
 	appendFileSync(envFile, `${key}=${value}\n`);
 }
 
-const state = buildActionTestnodeState({
-	containerName: process.env["INPUT_CONTAINER_NAME"],
-	contractsVersion: process.env["INPUT_NITRO_CONTRACTS_VERSION"],
-	feeTokenDecimals: process.env["INPUT_FEE_TOKEN_DECIMALS"],
-	imageRef: process.env["INPUT_IMAGE_REF"],
-	imageRepository: process.env["INPUT_IMAGE_REPOSITORY"],
-	l3Enabled: process.env["INPUT_L3_ENABLED"],
-	nitroImage: process.env["INPUT_NITRO_IMAGE"],
-	outputDir: process.env["INPUT_OUTPUT_DIR"],
-	runnerTemp: process.env["RUNNER_TEMP"],
-	timeboostEnabled: process.env["INPUT_TIMEBOOST_ENABLED"],
-	version: process.env["INPUT_VERSION"],
-	workspace: process.env["GITHUB_WORKSPACE"],
-});
+const state = buildActionTestnodeState(actionStateOptionsFromEnv(process.env));
 log(`variant=${state.variant} image=${state.imageRef}`);
 log(`outputDir=${state.outputDir} configDir=${state.configDir}`);
+// A caller's own key may be a secret; the dev key is public.
+if (process.env["INPUT_FAST_FEED_API_KEY"]) {
+	console.log(`::add-mask::${process.env["INPUT_FAST_FEED_API_KEY"]}`);
+}
 
 const timeoutSeconds = Number(process.env["INPUT_STARTUP_TIMEOUT_SECONDS"] || "120");
 if (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0) {
@@ -80,6 +72,12 @@ writeEnv("ARBITRUM_TESTNODE_LOCAL_NETWORK_PATH", state.paths.localNetwork);
 writeEnv("ARBITRUM_TESTNODE_NITRO_CONTRACTS_VERSION", state.contractsVersion);
 writeEnv("ARBITRUM_TESTNODE_VARIANT", state.variant);
 writeEnv("ARBITRUM_TESTNODE_CONTAINER_NAME", state.containerName);
+const { fastFeed } = state.sequencer;
+if (fastFeed) {
+	writeEnv("ARBITRUM_TESTNODE_FAST_FEED_URL", fastFeed.url);
+	writeEnv("ARBITRUM_TESTNODE_FAST_FEED_API_KEY", fastFeed.apiKey);
+	writeEnv("ARBITRUM_TESTNODE_SEQUENCER_FEED_URL", fastFeed.sequencerFeedUrl);
+}
 writeEnv("INTEGRATION_TEST_NITRO_CONTRACTS_BRANCH", state.contractsVersion);
 
 const networkConfigPaths = (process.env["INPUT_NETWORK_CONFIG_PATH"] || "")

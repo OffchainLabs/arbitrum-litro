@@ -4,7 +4,19 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
+import { toBoolean } from "./inputs.mjs";
+import {
+	needsHealthyContainer,
+	resolveSequencerOptions,
+	sequencerDockerArgs,
+} from "./sequencer.mjs";
+
+export {
+	DEFAULT_FAST_FEED_API_KEY,
+	FAST_FEED_HOST_PORT,
+	SEQUENCER_FEED_HOST_PORT,
+} from "./sequencer.mjs";
 
 /**
  * @typedef {import("./types.js").ActionStateOptions} ActionStateOptions
@@ -55,6 +67,8 @@ const START_CONTAINER_ENDPOINTS = {
 	8545: { name: "l1", url: (/** @type {string} */ host) => `http://${host}` },
 	8547: { name: "l2", url: (/** @type {string} */ host) => `http://${host}` },
 	8549: { name: "l3", url: (/** @type {string} */ host) => `http://${host}` },
+	9646: { name: "fastFeed", url: (/** @type {string} */ host) => `ws://${host}/` },
+	9642: { name: "sequencerFeed", url: (/** @type {string} */ host) => `ws://${host}/feed` },
 };
 
 /** Paths that together identify the repo root. Both are committed. */
@@ -196,17 +210,6 @@ export const VARIANTS = {
 		},
 	},
 };
-
-/**
- * @param {ScalarInput} value
- * @param {boolean} [defaultValue]
- */
-function toBoolean(value, defaultValue = false) {
-	if (value === undefined || value === "") {
-		return defaultValue;
-	}
-	return value === true || value === "true";
-}
 
 /** @param {number | string | undefined} value */
 function normalizeFeeTokenDecimals(value) {
@@ -587,6 +590,7 @@ function buildTestnodeState({
 	l3Enabled,
 	nitroImage,
 	outputDir,
+	sequencer,
 	timeboostEnabled,
 	version,
 	defaultOutputDir,
@@ -632,6 +636,7 @@ function buildTestnodeState({
 		outputDir: resolvedOutputDir,
 		paths: buildStatePaths(configDir, definition.l3Enabled),
 		rpcUrls,
+		sequencer: resolveSequencerOptions(sequencer),
 		snapshotId: definition.snapshotId,
 		timeboostEnabled: resolvedTimeboostEnabled,
 		variant,
@@ -640,71 +645,21 @@ function buildTestnodeState({
 }
 
 /** @param {ActionStateOptions} options */
-export function buildActionTestnodeState({
-	containerName,
-	contractsVersion,
-	feeTokenDecimals,
-	imageRef,
-	imageRepository,
-	l3Enabled,
-	nitroImage,
-	outputDir,
-	runnerTemp,
-	timeboostEnabled,
-	version,
-	workspace,
-}) {
+export function buildActionTestnodeState({ outputDir, runnerTemp, workspace, ...options }) {
 	return buildTestnodeState({
-		containerName,
-		contractsVersion,
-		feeTokenDecimals,
-		imageRef,
-		imageRepository,
-		l3Enabled,
-		nitroImage,
-		outputDir: outputDir
-			? isAbsolute(outputDir)
-				? outputDir
-				: resolve(workspace || process.cwd(), outputDir)
-			: undefined,
-		timeboostEnabled,
-		version,
-		defaultOutputDir: ({ variant, version: nextVersion }) =>
-			defaultActionOutputDir({ runnerTemp, variant, version: nextVersion }),
+		...options,
+		outputDir: outputDir ? resolve(workspace || process.cwd(), outputDir) : undefined,
+		defaultOutputDir: ({ variant, version }) =>
+			defaultActionOutputDir({ runnerTemp, variant, version }),
 	});
 }
 
 /** @param {StartStateOptions} options */
-export function buildStartTestnodeState({
-	containerName,
-	contractsVersion,
-	cwd,
-	feeTokenDecimals,
-	imageRef,
-	imageRepository,
-	l3Enabled,
-	nitroImage,
-	outputDir,
-	timeboostEnabled,
-	version,
-}) {
+export function buildStartTestnodeState({ cwd, outputDir, ...options }) {
 	return buildTestnodeState({
-		containerName,
-		contractsVersion,
-		feeTokenDecimals,
-		imageRef,
-		imageRepository,
-		l3Enabled,
-		nitroImage,
-		outputDir: outputDir
-			? isAbsolute(outputDir)
-				? outputDir
-				: resolve(cwd, outputDir)
-			: undefined,
-		timeboostEnabled,
-		version,
-		defaultOutputDir: ({ variant, version: nextVersion }) =>
-			defaultStartOutputDir({ cwd, variant, version: nextVersion }),
+		...options,
+		outputDir: outputDir ? resolve(cwd, outputDir) : undefined,
+		defaultOutputDir: ({ variant, version }) => defaultStartOutputDir({ cwd, variant, version }),
 	});
 }
 
@@ -741,6 +696,7 @@ export function testnodeDockerRunArgs(state) {
 		args.push("-e", "TESTNODE_TIMEBOOST_REDIS_URL");
 		args.push("-e", "TESTNODE_TIMEBOOST_AUCTION_CONTRACT_ADDRESS");
 	}
+	args.push(...sequencerDockerArgs(state.sequencer));
 	args.push(state.imageRef);
 	return args;
 }
@@ -761,26 +717,83 @@ export function runDocker(args, options = {}) {
 }
 
 /**
+ * Call `check` once a second until it returns true or `timeoutMs` passes. An error thrown by
+ * `check` ends the wait at once.
+ *
+ * @param {() => boolean} check
+ * @param {number} timeoutMs
+ * @param {string} failure
+ */
+function pollUntil(check, timeoutMs, failure) {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		if (check()) {
+			return;
+		}
+		execFileSync("sleep", ["1"], { stdio: "ignore" });
+	}
+	throw new Error(failure);
+}
+
+/** @param {string} url */
+function rpcAnswers(url) {
+	const body = JSON.stringify({ id: 1, jsonrpc: "2.0", method: "eth_chainId", params: [] });
+	try {
+		execFileSync(
+			"curl",
+			["-sf", "-X", "POST", "-H", "Content-Type: application/json", "-d", body, url],
+			{ stdio: ["ignore", "pipe", "pipe"], timeout: 5000 },
+		);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/**
  * @param {string} url
  * @param {number} timeoutMs
  */
 export function waitForRpc(url, timeoutMs) {
-	const deadline = Date.now() + timeoutMs;
-	const body = JSON.stringify({ id: 1, jsonrpc: "2.0", method: "eth_chainId", params: [] });
-	while (Date.now() < deadline) {
-		try {
-			execFileSync(
-				"curl",
-				["-sf", "-X", "POST", "-H", "Content-Type: application/json", "-d", body, url],
-				{ stdio: ["ignore", "pipe", "pipe"], timeout: 5000 },
-			);
-			return;
-		} catch {
-			// retry until deadline
-		}
-		execFileSync("sleep", ["1"], { stdio: "ignore" });
-	}
-	throw new Error(`RPC at ${url} not ready after ${timeoutMs}ms`);
+	pollUntil(() => rpcAnswers(url), timeoutMs, `RPC at ${url} not ready after ${timeoutMs}ms`);
+}
+
+/** @param {string} containerName */
+function inspectContainer(containerName) {
+	const [running, health] = runDocker([
+		"inspect",
+		"--format",
+		"{{.State.Running}} {{if .State.Health}}{{.State.Health.Status}}{{end}}",
+		containerName,
+	])
+		.trim()
+		.split(" ");
+	return { running: running === "true", health };
+}
+
+/**
+ * Poll `ready` while the container runs. A stopped container can never become ready, so it
+ * fails the wait at once instead of at the timeout.
+ *
+ * @param {string} containerName
+ * @param {() => boolean} ready
+ * @param {number} timeoutMs
+ * @param {string} what what is being waited for, for the error message
+ */
+function waitForContainer(containerName, ready, timeoutMs, what) {
+	pollUntil(
+		() => {
+			if (ready()) {
+				return true;
+			}
+			if (!inspectContainer(containerName).running) {
+				throw new Error(`container ${containerName} stopped while waiting for ${what}`);
+			}
+			return false;
+		},
+		timeoutMs,
+		`${what} not ready after ${timeoutMs}ms`,
+	);
 }
 
 /** @param {string} containerName */
@@ -816,10 +829,20 @@ export function bootTestnode(state, timeoutMs) {
 	rmSync(state.outputDir, { force: true, recursive: true });
 	mkdirSync(state.outputDir, { recursive: true });
 	runDocker(testnodeDockerRunArgs(state));
-	waitForRpc(state.rpcUrls.l1, timeoutMs);
-	waitForRpc(state.rpcUrls.l2, timeoutMs);
+	const rpcs = [state.rpcUrls.l1, state.rpcUrls.l2];
 	if (state.variantDefinition.l3Enabled) {
-		waitForRpc(state.rpcUrls.l3, timeoutMs);
+		rpcs.push(state.rpcUrls.l3);
+	}
+	for (const url of rpcs) {
+		waitForContainer(state.containerName, () => rpcAnswers(url), timeoutMs, `RPC at ${url}`);
+	}
+	if (needsHealthyContainer(state.sequencer)) {
+		waitForContainer(
+			state.containerName,
+			() => inspectContainer(state.containerName).health === "healthy",
+			timeoutMs,
+			"the container healthcheck",
+		);
 	}
 	return exportTestnodeConfig(state);
 }

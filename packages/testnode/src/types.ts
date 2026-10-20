@@ -19,6 +19,63 @@ export interface VariantDefinition {
 	supportedContractsVersions?: string[];
 }
 
+/** Optional L2 sequencer features, as callers supply them (flags, env vars, config files). */
+export interface SequencerOptions {
+	/** API key the Fast Feed relay accepts; empty or unset uses the dev key. */
+	fastFeedApiKey?: string | undefined;
+	/** Whether the relay requires `Authorization: Bearer <key>` (default true). */
+	fastFeedAuth?: boolean | string | undefined;
+	fastFeedDelayMs?: number | string | undefined;
+	fastFeedEnabled?: boolean | string | undefined;
+	/** Go duration overriding the L2 sequencer's max-block-speed, e.g. `250ms`. */
+	l2MaxBlockSpeed?: string | undefined;
+	/** PGA rounds per L2 block; the chain is upgraded to ArbOS 60 and collects tips. */
+	pgaRoundsPerBlock?: number | string | undefined;
+}
+
+export interface FastFeedState {
+	/** Key to send as `Authorization: Bearer <key>`. */
+	apiKey: string;
+	/** Whether the relay checks the key. */
+	auth: boolean;
+	/** Delay the relay adds to every frame, in milliseconds. */
+	delayMs: number;
+	/** Host URL of the Fast Feed relay. */
+	url: string;
+	/** Host URL of the sequencer feed, which carries the block hashes Fast Feed frames lack. */
+	sequencerFeedUrl: string;
+}
+
+/** Resolved sequencer features; every field is unset when its feature is off. */
+export interface SequencerState {
+	fastFeed: FastFeedState | undefined;
+	l2MaxBlockSpeed: string | undefined;
+	pgaRoundsPerBlock: number | undefined;
+}
+
+/** One Fast Feed message, as the public "Use the Fast Feed" guide documents it. */
+export interface FastFeedMessage {
+	version: number;
+	timestamp_ms: number;
+	pga_round?: number;
+	transaction: {
+		block_number: number;
+		tx_index: number;
+		raw_tx: string;
+		tx_hash: string;
+		receipt: {
+			status: number;
+			gas_used: number;
+			gas_used_for_l1: number;
+			cumulative_gas_used: number;
+			effective_gas_price: string;
+			base_fee: string;
+			contract_address?: string;
+			logs: Array<{ address: string; topics: string[]; data: string }>;
+		};
+	};
+}
+
 export interface TestnodeState {
 	/**
 	 * The image to pull and authenticate against. Equals `imageRef` unless
@@ -41,6 +98,7 @@ export interface TestnodeState {
 		localNetwork: string;
 	};
 	rpcUrls: { l1: string; l2: string; l3: string };
+	sequencer: SequencerState;
 	snapshotId: string;
 	timeboostEnabled: boolean;
 	variant: string;
@@ -64,6 +122,7 @@ export interface BaseStateOptions {
 	 */
 	nitroImage?: string | undefined;
 	outputDir?: string | undefined;
+	sequencer?: SequencerOptions | undefined;
 	timeboostEnabled?: boolean | string | undefined;
 	version?: string | undefined;
 }
@@ -91,7 +150,7 @@ export interface StartContainer {
 	state: string;
 	/** healthy, unhealthy or "health: starting"; empty before a healthcheck reports */
 	health: string;
-	/** Published RPC endpoints by chain (l1, l2, l3) */
+	/** Published endpoints by name (l1, l2, l3, fastFeed, sequencerFeed) */
 	endpoints: Record<string, string>;
 }
 

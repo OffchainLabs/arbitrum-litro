@@ -1,6 +1,9 @@
-ARG NODE_IMAGE=node:20-bullseye-slim
+# Debian bullseye's security archive lists package versions it no longer hosts, so installing
+# the toolchain with apt in node:20-bullseye-slim fails with 404s. node:20-bullseye bundles that
+# toolchain already. It is used for this build stage alone; the published image is unaffected.
+ARG NODE_IMAGE=node:20-bullseye
 ARG FOUNDRY_IMAGE=ghcr.io/foundry-rs/foundry:v1.3.5
-ARG NITRO_IMAGE=offchainlabs/nitro-node:v3.9.5-66e42c4
+ARG NITRO_IMAGE=offchainlabs/nitro-node:v3.12.1-70fa99a
 ARG BUNDLE_VERSION=dev
 ARG BUNDLE_VARIANT=unknown
 
@@ -15,10 +18,6 @@ ARG TOKENBRIDGE_COMMIT
 FROM scratch AS tokenbridge
 
 FROM ${NODE_IMAGE} AS token-bridge-contracts
-
-RUN apt-get update \
-	&& apt-get install -y --no-install-recommends build-essential ca-certificates git python3 \
-	&& rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace
 
@@ -63,6 +62,13 @@ COPY --chmod=755 docker/testnode-entrypoint.sh /usr/local/bin/arbitrum-testnode
 COPY docker/configure-parent-chain-poll-interval.mjs /usr/local/bin/configure-parent-chain-poll-interval.mjs
 COPY --chmod=755 docker/testnode-healthcheck.sh /usr/local/bin/healthcheck.sh
 COPY docker/testnode-server.py /usr/local/bin/config-server.py
+# Sequencer feature helpers (Timeboost, Fast Feed, PGA) live under /opt/arbitrum-testnode, which
+# testnode-rebase.Dockerfile copies whole, so an image rebased onto another Nitro keeps them.
+COPY --from=foundry /usr/local/bin/cast /opt/arbitrum-testnode/bin/cast
+COPY docker/fast-feed-relay.mjs /opt/arbitrum-testnode/bin/fast-feed-relay.mjs
+COPY --chmod=755 docker/configure-pga.sh /opt/arbitrum-testnode/bin/configure-pga.sh
+COPY docker/configure-sequencer.mjs /opt/arbitrum-testnode/bin/configure-sequencer.mjs
+COPY docker/sequencer-features.sh /opt/arbitrum-testnode/bin/sequencer-features.sh
 COPY .testnode-context/export-config /opt/arbitrum-testnode/export-config
 COPY .testnode-context/metadata.json /opt/arbitrum-testnode/metadata.json
 COPY .testnode-context/runtime /opt/arbitrum-testnode/runtime
@@ -76,7 +82,7 @@ RUN chown -R user:user /opt/arbitrum-testnode/runtime /opt/arbitrum-testnode/run
 RUN mkdir -p /tokenbridge-data && chown user:user /tokenbridge-data
 USER user
 
-EXPOSE 8545 8547 8548 8549 8550 8080
+EXPOSE 8545 8547 8548 8549 8550 8080 9642 9646
 
 HEALTHCHECK --interval=3s --timeout=3s --start-period=30s --retries=10 \
 	CMD /usr/local/bin/healthcheck.sh

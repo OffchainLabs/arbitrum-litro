@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { Cli } from "incur";
 import { bakeCli } from "./commands/bake.js";
 import { cleanCli } from "./commands/clean.js";
+import { feedCli } from "./commands/feed.js";
 import { initCli } from "./commands/init.js";
 import { logsCli } from "./commands/logs.js";
 import { snapshotCli } from "./commands/snapshot.js";
@@ -27,6 +28,7 @@ export function createCli() {
 	})
 		.command(startCli)
 		.command(bakeCli)
+		.command(feedCli)
 		.command(initCli)
 		.command(logsCli)
 		.command(snapshotCli)

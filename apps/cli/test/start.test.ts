@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { DEFAULT_TESTNODE_IMAGE_REPOSITORY } from "@arbitrum/testnode";
+import { DEFAULT_FAST_FEED_API_KEY, DEFAULT_TESTNODE_IMAGE_REPOSITORY } from "@arbitrum/testnode";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_START_IMAGE_VERSION, resolveStartInput, runStart } from "../src/commands/start.js";
 
@@ -173,6 +173,7 @@ describe("runStart", () => {
 				nitroContractsVersion: undefined,
 				nitroImage: undefined,
 				outputDir: undefined,
+				sequencer: {},
 				startupTimeoutSeconds: 120,
 				timeboostEnabled: true,
 				version: "v1.2.3",
@@ -236,6 +237,7 @@ describe("runStart", () => {
 				nitroContractsVersion: undefined,
 				nitroImage: "nitro-node-dev:latest",
 				outputDir: undefined,
+				sequencer: {},
 				startupTimeoutSeconds: 120,
 				timeboostEnabled: false,
 				version: "v1.2.3",
@@ -286,6 +288,7 @@ describe("runStart", () => {
 				nitroContractsVersion: undefined,
 				nitroImage: "nitro-node-dev:latest",
 				outputDir: undefined,
+				sequencer: {},
 				startupTimeoutSeconds: 120,
 				timeboostEnabled: false,
 				version: "v1.2.3",
@@ -325,6 +328,7 @@ describe("runStart", () => {
 				nitroContractsVersion: undefined,
 				nitroImage: undefined,
 				outputDir: undefined,
+				sequencer: {},
 				startupTimeoutSeconds: 120,
 				timeboostEnabled: false,
 				version: "v1.2.3",
@@ -347,6 +351,67 @@ describe("runStart", () => {
 		});
 	});
 
+	it("boots with the Fast Feed and reports its URLs and key", () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "start-fast-feed-"));
+		const bootTestnode = vi.fn(() => ["localNetwork.json"]);
+
+		const result = runStart(
+			{
+				...resolveStartInput(
+					{ fastFeedEnabled: true, l3Enabled: false, pgaRoundsPerBlock: 2 },
+					cwd,
+				),
+				version: "v1.2.3",
+			},
+			{
+				bootTestnode,
+				collectContainerDiagnostics: vi.fn(),
+				copyNetworkConfigPaths: vi.fn(),
+				pruneStaleRebasedImages: vi.fn(),
+				rebaseTestnodeImage: vi.fn(),
+			},
+		);
+
+		const sequencer = {
+			fastFeed: {
+				apiKey: DEFAULT_FAST_FEED_API_KEY,
+				auth: true,
+				delayMs: 0,
+				url: "ws://127.0.0.1:9646/",
+				sequencerFeedUrl: "ws://127.0.0.1:9642/feed",
+			},
+			l2MaxBlockSpeed: undefined,
+			pgaRoundsPerBlock: 2,
+		};
+		expect(bootTestnode).toHaveBeenCalledWith(expect.objectContaining({ sequencer }), 120_000);
+		expect(result).toEqual(expect.objectContaining({ sequencer, success: true }));
+	});
+
+	it("loads Fast Feed settings from the config file", () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "start-fast-feed-config-"));
+		fs.writeFileSync(
+			path.join(cwd, "testnode.start.json"),
+			JSON.stringify({
+				fastFeedEnabled: true,
+				fastFeedApiKey: "team-key",
+				fastFeedAuth: false,
+				fastFeedDelayMs: 12,
+				l2MaxBlockSpeed: "250ms",
+				pgaRoundsPerBlock: 2,
+			}),
+		);
+
+		expect(resolveStartInput({}, cwd).sequencer).toEqual({
+			fastFeedApiKey: "team-key",
+			fastFeedAuth: false,
+			fastFeedDelayMs: 12,
+			fastFeedEnabled: true,
+			l2MaxBlockSpeed: "250ms",
+			pgaRoundsPerBlock: 2,
+		});
+		expect(resolveStartInput({ pgaRoundsPerBlock: 4 }, cwd).sequencer.pgaRoundsPerBlock).toBe(4);
+	});
+
 	it("rejects non-positive startup timeouts", () => {
 		expect(() =>
 			runStart({
@@ -361,6 +426,7 @@ describe("runStart", () => {
 				nitroContractsVersion: undefined,
 				nitroImage: undefined,
 				outputDir: undefined,
+				sequencer: {},
 				startupTimeoutSeconds: 0,
 				timeboostEnabled: false,
 				version: "v1.2.3",
