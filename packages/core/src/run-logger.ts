@@ -179,7 +179,7 @@ export function isPidRunning(pid?: number): boolean {
 }
 
 export function startInlineRunLogging(configDir: string, args: string[]): RunRecord {
-	const run = activateRun(createRunRecord(configDir, "testnode", args));
+	const run = activateRun(createRunRecord(configDir, "litro", args));
 	run.status = "running";
 	run.pid = process.pid;
 	saveRunRecord(configDir, run);
@@ -291,7 +291,7 @@ export function startDetachedInitRun(
 	extraArgs: string[] = [],
 ): RunRecord {
 	const runArgs = ["init", "--foreground", ...extraArgs];
-	const run = createRunRecord(configDir, "testnode", runArgs);
+	const run = createRunRecord(configDir, "litro", runArgs);
 	const entry = getScriptEntry(projectRoot);
 	const useTsx = entry.endsWith(".ts");
 	const command = useTsx ? "npx" : process.execPath;

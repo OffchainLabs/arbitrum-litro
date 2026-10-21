@@ -4,6 +4,27 @@ A snapshot-backed Arbitrum testnode that boots L1 + L2 + L3 with token bridges i
 
 ## Quick Start
 
+### Install the CLI
+
+Every release attaches the `litro` CLI to its [GitHub Release](https://github.com/OffchainLabs/arbitrum-litro/releases) until it is published to npm. It needs Node 20+ and Docker.
+
+```bash
+npm i -g https://github.com/OffchainLabs/arbitrum-litro/releases/latest/download/arbitrum-litro.tgz
+litro start
+litro status            # Running start containers and their RPC URLs
+litro logs              # The container's recent logs
+litro stop              # Remove them
+```
+
+Give your coding agent the CLI too. Each command becomes a skill, and `--mcp` serves them as MCP tools:
+
+```bash
+litro skills add        # SKILL.md per command in ~/.agents/skills (linked into ~/.claude/skills)
+litro mcp add           # Registers `litro --mcp` with Claude Code
+```
+
+Pin a release with `.../releases/download/v<version>/arbitrum-litro-<version>.tgz`, or run without installing: `npx --package <tarball URL> litro start`. In a checkout, `pnpm dev <command>` runs the same CLI from source; the examples below use that form. `init`, `snapshot` and `clean` work only in a checkout.
+
 ### One-Command Local L3
 
 Use `start` when you want a disposable local `L1 + L2 + L3` stack from a published testnode image instead of rebuilding the full testnode locally. This is a local development path only; it does not deploy to Arbitrum Sepolia.
@@ -216,9 +237,9 @@ pnpm install
 pnpm dev start           # Boot the published testnode image
 pnpm dev init           # First run: deploys everything from scratch (~12 min)
 pnpm dev init           # Subsequent runs: restores from snapshot (~10 sec)
-pnpm dev stop           # Stop all services
+pnpm dev stop           # Remove start containers and stop the init stack
 pnpm dev clean          # Remove containers and saved data
-pnpm dev status         # Show service and init state
+pnpm dev status         # Show start containers, services and init state
 ```
 
 ## Custom snapshots
@@ -245,7 +266,7 @@ A non-zero exit from the setup command aborts the bake with a clear error.
 
 ### One-shot local bake
 
-`testnode bake` boots the latest published bundle, runs the setup command, stops the
+`litro bake` boots the latest published bundle, runs the setup command, stops the
 stack cleanly so Anvil and Nitro flush their state, and commits the container as the
 custom image:
 
@@ -331,7 +352,7 @@ In CI:
 
 ```
 apps/
-└── cli/                  # `testnode` CLI entry point and command parsing
+└── cli/                  # `litro` CLI entry point and command parsing
 
 packages/
 ├── core/                 # Chain, Docker, snapshot, bridge, state, and init helpers

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { Cli } from "incur";
 import { bakeCli } from "./commands/bake.js";
 import { cleanCli } from "./commands/clean.js";
@@ -16,11 +17,13 @@ const { version } = JSON.parse(
 ) as { version: string };
 
 export function createCli() {
-	return Cli.create("testnode", {
-		description: "Arbitrum testnode (L1 + L2 + L3)",
+	return Cli.create("litro", {
+		description: "Local Arbitrum chains (L1 + L2 + L3) for testing",
 		version,
 		sync: { suggestions: ["boot a testnode with start", "capture a snapshot"] },
-		mcp: { agents: ["claude-code"] },
+		// incur's default is `npx litro --mcp`, which resolves an npm package named
+		// litro that this project does not own. Run the installed bin instead.
+		mcp: { agents: ["claude-code"], command: "litro --mcp" },
 	})
 		.command(startCli)
 		.command(bakeCli)
@@ -32,7 +35,8 @@ export function createCli() {
 		.command(cleanCli);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// An installed bin is a symlink to this file, so compare resolved paths.
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
 	// Must be awaited: an un-awaited serve() runs the command detached, so the
 	// process can exit mid-run when the event loop briefly empties between async
 	// steps (observed as init exiting 0 at wait-l1 before capturing).

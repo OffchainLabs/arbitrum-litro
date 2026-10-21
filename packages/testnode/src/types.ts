@@ -82,6 +82,19 @@ export interface ImageRefOptions {
 	version: string;
 }
 
+/** A container `start` ran, as `stop`, `status` and `logs` find it. */
+export interface StartContainer {
+	name: string;
+	variant: string;
+	image: string;
+	/** docker's state: running, exited, created, … */
+	state: string;
+	/** healthy, unhealthy or "health: starting"; empty before a healthcheck reports */
+	health: string;
+	/** Published RPC endpoints by chain (l1, l2, l3) */
+	endpoints: Record<string, string>;
+}
+
 export interface ContainerDiagnostics {
 	inspect?: string;
 	logs?: string;
