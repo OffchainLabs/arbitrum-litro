@@ -1,8 +1,10 @@
 FROM scratch AS tokenbridge
 
-FROM node:20-trixie-slim
+FROM node:26-trixie-slim
 
 RUN apt-get update && apt-get install -y git docker.io python3 make gcc g++ curl jq
+# Node 26 images no longer bundle Yarn.
+RUN npm install -g yarn@1.22.22
 
 WORKDIR /workspace
 
