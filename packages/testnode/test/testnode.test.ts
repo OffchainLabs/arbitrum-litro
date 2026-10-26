@@ -1,11 +1,14 @@
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
 	DEFAULT_TESTNODE_IMAGE_REPOSITORY,
+	START_CONTAINER_LABEL,
 	buildStartTestnodeState,
 	findRebaseDockerfile,
 	hasVariantSnapshot,
+	parseStartContainers,
 	pruneStaleRebasedImages,
 	rebaseTestnodeImage,
 	rebasedTestnodeImageRef,
@@ -114,6 +117,7 @@ describe("buildStartTestnodeState", () => {
 		const args = testnodeDockerRunArgs(state);
 		expect(args).toEqual(expect.arrayContaining(["TESTNODE_VARIANT=l2"]));
 		expect(args).toContain("ghcr.io/acme/testnode:custom");
+		expect(args).toEqual(expect.arrayContaining(["--label", `${START_CONTAINER_LABEL}=l2`]));
 	});
 
 	it("uses the existing l3-enabled option with an image-ref", () => {
@@ -307,10 +311,78 @@ describe("nitro image rebase", () => {
 		expect(existsSync(findRebaseDockerfile())).toBe(true);
 	});
 
+	it("prefers a Dockerfile beside the module, as the CLI bundle ships it", () => {
+		const dir = mkdtempSync(join(tmpdir(), "litro-bundle-"));
+		writeFileSync(join(dir, "testnode-rebase.Dockerfile"), "FROM scratch\n");
+		expect(findRebaseDockerfile(dir)).toBe(join(dir, "testnode-rebase.Dockerfile"));
+	});
+
 	it("fails loudly when no repo root is above the start directory", () => {
 		// The resolver used to prove the Dockerfile existed by searching for it;
 		// resolving it from the repo root instead has to keep that guarantee.
 		expect(() => findRebaseDockerfile(tmpdir())).toThrow(/project root/);
+	});
+});
+
+describe("parseStartContainers", () => {
+	const row = (fields: Record<string, string>) =>
+		JSON.stringify({
+			Image: "img",
+			State: "running",
+			Status: "Up 1 minute",
+			Labels: "",
+			Ports: "",
+			...fields,
+		});
+
+	it("reads labeled containers with their variant, health and endpoints", () => {
+		const output = row({
+			Names: "my-node",
+			Labels: `a=b,${START_CONTAINER_LABEL}=l2`,
+			Status: "Up 2 minutes (healthy)",
+			Ports:
+				"127.0.0.1:8080->8080/tcp, 127.0.0.1:8545->8545/tcp, 127.0.0.1:8547-8548->8547-8548/tcp, 8549-8550/tcp",
+		});
+		expect(parseStartContainers(output)).toEqual([
+			{
+				name: "my-node",
+				variant: "l2",
+				image: "img",
+				state: "running",
+				health: "healthy",
+				endpoints: {
+					l1: "http://127.0.0.1:8545",
+					l2: "http://127.0.0.1:8547",
+				},
+			},
+		]);
+	});
+
+	it("counts unlabeled containers only when the default name ends in a variant", () => {
+		const output = [
+			row({ Names: "arbitrum-testnode-l3-eth", State: "exited", Status: "Exited (0) 2 days ago" }),
+			row({ Names: "arbitrum-testnode-sequencer-1" }),
+			row({ Names: "unrelated" }),
+		].join("\n");
+		expect(parseStartContainers(output).map((c) => [c.name, c.variant, c.health])).toEqual([
+			["arbitrum-testnode-l3-eth", "l3-eth", ""],
+		]);
+	});
+
+	it("parses a pathological Ports value in linear time", () => {
+		const started = performance.now();
+		const output = row({
+			Names: "n",
+			Labels: `${START_CONTAINER_LABEL}=l2`,
+			Ports: `${"1.".repeat(50_000)}:`,
+		});
+		expect(parseStartContainers(output)[0]?.endpoints).toEqual({});
+		expect(performance.now() - started).toBeLessThan(1000);
+	});
+
+	it("lists a container both docker filters return once", () => {
+		const labeled = row({ Names: "arbitrum-testnode-l2", Labels: `${START_CONTAINER_LABEL}=l2` });
+		expect(parseStartContainers(`${labeled}\n\n${labeled}\n`)).toHaveLength(1);
 	});
 });
 

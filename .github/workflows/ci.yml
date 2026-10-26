@@ -5,6 +5,9 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   validate:
     name: Lint, build, typecheck, test
@@ -101,3 +104,30 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm build
           node apps/cli/dist/index.js --version
+
+  # The release tarball inlines the workspace libraries, so prove the packed
+  # CLI runs where users run it: installed from the .tgz, outside a checkout.
+  cli-tarball:
+    name: Packed CLI installs and runs outside a checkout
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # The bundle inlines the libraries' built dist/, which their exports name.
+      - name: Bundle and pack
+        run: |
+          pnpm build
+          pnpm --filter @arbitrum/litro bundle
+          pnpm --filter @arbitrum/litro pack --pack-destination "$RUNNER_TEMP"
+
+      - name: Smoke-test the tarball
+        run: node scripts/ci/smoke-cli-tarball.mjs "$RUNNER_TEMP"/arbitrum-litro-*.tgz

@@ -1,12 +1,12 @@
 {
-	"name": "arbitrum-testnode-workspace",
+	"name": "arbitrum-litro-workspace",
 	"version": "0.3.0",
 	"private": true,
 	"type": "module",
 	"packageManager": "pnpm@10.24.0",
 	"scripts": {
 		"build": "pnpm -r --if-present build",
-		"dev": "pnpm --filter arbitrum-testnode... build && pnpm --filter arbitrum-testnode dev",
+		"dev": "pnpm --filter @arbitrum/litro... build && pnpm --filter @arbitrum/litro dev",
 		"test": "vitest",
 		"test:run": "vitest run",
 		"lint": "biome check .",

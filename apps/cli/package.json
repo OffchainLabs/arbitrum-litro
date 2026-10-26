@@ -1,21 +1,27 @@
 {
-	"name": "arbitrum-testnode",
+	"name": "@arbitrum/litro",
 	"version": "0.3.0",
 	"private": true,
 	"type": "module",
 	"bin": {
-		"testnode": "./dist/index.js"
+		"litro": "./dist/index.js"
 	},
+	"files": ["dist"],
 	"scripts": {
 		"build": "tsc -p tsconfig.json",
 		"dev": "tsx src/index.ts",
-		"typecheck": "tsc -p tsconfig.json --noEmit"
+		"typecheck": "tsc -p tsconfig.json --noEmit",
+		"bundle": "tsup"
 	},
 	"dependencies": {
-		"@arbitrum/testnode-core": "workspace:*",
-		"@arbitrum/testnode": "workspace:*",
+		"@arbitrum/chain-sdk": "0.26.0",
 		"incur": "^0.2.2",
 		"viem": "^2.47.5",
 		"zod": "^3.24.0"
+	},
+	"devDependencies": {
+		"@arbitrum/testnode": "workspace:*",
+		"@arbitrum/testnode-core": "workspace:*",
+		"tsup": "^8.5.1"
 	}
 }

@@ -3,6 +3,10 @@ import { describe, expect, it } from "vitest";
 import { createCli } from "../src/index.js";
 
 describe("root cli", () => {
+	it("is named litro", () => {
+		expect(createCli().name).toBe("litro");
+	});
+
 	it("registers every top-level command", () => {
 		const commands = Cli.toCommands.get(createCli());
 		const names = [...(commands?.keys() ?? [])].sort();

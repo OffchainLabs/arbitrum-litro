@@ -476,3 +476,45 @@ jobs:
         run: >-
           node scripts/ci/publish-latest-aliases.mjs
           --owner "${{ github.repository_owner }}"
+
+  # Attaches the CLI to the GitHub Release until it is published to npm. The
+  # version-free copy keeps `releases/latest/download/arbitrum-litro.tgz` stable.
+  # Runs last, so the release only appears once its images exist.
+  publish-cli-tarball:
+    if: ${{ github.ref_type == 'tag' }}
+    needs: [publish-latest-bundle]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Bundle and pack
+        run: |
+          pnpm build
+          pnpm --filter @arbitrum/litro bundle
+          pnpm --filter @arbitrum/litro pack --pack-destination "$RUNNER_TEMP/cli"
+
+      - name: Smoke-test the tarball
+        run: node scripts/ci/smoke-cli-tarball.mjs "$RUNNER_TEMP"/cli/arbitrum-litro-*.tgz
+
+      - name: Upload to the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          cp "$RUNNER_TEMP"/cli/arbitrum-litro-*.tgz "$RUNNER_TEMP/cli/arbitrum-litro.tgz"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --verify-tag --generate-notes --latest
+          fi
+          gh release upload "$TAG" "$RUNNER_TEMP"/cli/*.tgz --clobber
