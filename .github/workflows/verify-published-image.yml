@@ -137,4 +137,7 @@ jobs:
           SEQUENCER_FEED_URL: ${{ steps.action.outputs.sequencer-feed-url }}
           L2_RPC_URL: ${{ steps.action.outputs.l2-rpc-url }}
           FAST_FEED_EXPECT_PGA: "true"
-        run: pnpm exec vitest run -c vitest.integration.config.ts packages/core/test/integration/fast-feed.test.ts
+        # The test imports @arbitrum/testnode, whose entry is its built dist/.
+        run: |
+          pnpm --filter @arbitrum/testnode build
+          pnpm exec vitest run -c vitest.integration.config.ts packages/core/test/integration/fast-feed.test.ts
