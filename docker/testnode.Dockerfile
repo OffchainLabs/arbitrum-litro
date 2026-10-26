@@ -1,4 +1,4 @@
-ARG NODE_IMAGE=node:20-bullseye-slim
+ARG NODE_IMAGE=node:26-bookworm-slim
 ARG FOUNDRY_IMAGE=ghcr.io/foundry-rs/foundry:v1.3.5
 ARG NITRO_IMAGE=offchainlabs/nitro-node:v3.9.5-66e42c4
 ARG BUNDLE_VERSION=dev
@@ -19,6 +19,10 @@ FROM ${NODE_IMAGE} AS token-bridge-contracts
 RUN apt-get update \
 	&& apt-get install -y --no-install-recommends build-essential ca-certificates git python3 \
 	&& rm -rf /var/lib/apt/lists/*
+
+# Node 26 images no longer bundle Yarn; the runtime stage copies this prefix.
+RUN npm install -g --prefix /opt/yarn-v1.22.22 yarn@1.22.22 \
+	&& ln -s /opt/yarn-v1.22.22/bin/yarn /usr/local/bin/yarn
 
 WORKDIR /workspace
 
@@ -69,7 +73,7 @@ COPY .testnode-context/runtime /opt/arbitrum-testnode/runtime
 COPY .testnode-context/runtime-config /opt/arbitrum-testnode/runtime-config
 USER root
 RUN apt-get update \
-	&& apt-get install -y --no-install-recommends libstdc++6 \
+	&& apt-get install -y --no-install-recommends libatomic1 libstdc++6 \
 	&& rm -rf /var/lib/apt/lists/*
 RUN ln -s /opt/yarn-v1.22.22/bin/yarn /usr/local/bin/yarn
 RUN chown -R user:user /opt/arbitrum-testnode/runtime /opt/arbitrum-testnode/runtime-config
