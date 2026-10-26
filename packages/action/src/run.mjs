@@ -28,10 +28,6 @@ function writeEnv(key, value) {
 const state = buildActionTestnodeState(actionStateOptionsFromEnv(process.env));
 log(`variant=${state.variant} image=${state.imageRef}`);
 log(`outputDir=${state.outputDir} configDir=${state.configDir}`);
-// A caller's own key may be a secret; the dev key is public.
-if (process.env["INPUT_FAST_FEED_API_KEY"]) {
-	console.log(`::add-mask::${process.env["INPUT_FAST_FEED_API_KEY"]}`);
-}
 
 const timeoutSeconds = Number(process.env["INPUT_STARTUP_TIMEOUT_SECONDS"] || "120");
 if (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0) {

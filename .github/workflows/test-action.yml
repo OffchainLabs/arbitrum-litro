@@ -116,6 +116,8 @@ jobs:
   # a client written against the public Fast Feed docs does.
   test-fast-feed-action:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4

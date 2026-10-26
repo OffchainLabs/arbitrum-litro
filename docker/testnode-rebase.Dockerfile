@@ -28,11 +28,15 @@ COPY --from=testnode /opt/yarn-v1.22.22 /opt/yarn-v1.22.22
 COPY --from=testnode --chown=user:user /workspace /workspace
 COPY --from=testnode --chown=user:user /opt/arbitrum-testnode /opt/arbitrum-testnode
 
-# The copied node binary needs libstdc++6. Debian-based Nitro images already
-# carry it, so only reach for the network when it is genuinely missing.
-RUN if ! ldconfig -p | grep -q 'libstdc++\.so\.6'; then \
+# The copied node binary needs libstdc++6 and, since Node 26, libatomic1.
+# Debian-based Nitro images carry libstdc++6 but not libatomic1, so only reach
+# for the network for what is genuinely missing.
+RUN missing=""; \
+	ldconfig -p | grep -q 'libstdc++\.so\.6' || missing="$missing libstdc++6"; \
+	ldconfig -p | grep -q 'libatomic\.so\.1' || missing="$missing libatomic1"; \
+	if [ -n "$missing" ]; then \
 	apt-get update \
-	&& apt-get install -y --no-install-recommends libstdc++6 \
+	&& apt-get install -y --no-install-recommends $missing \
 	&& rm -rf /var/lib/apt/lists/*; \
 	fi
 
