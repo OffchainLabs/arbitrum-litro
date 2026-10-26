@@ -950,7 +950,7 @@ function parseEndpoints(ports) {
 	/** @type {Record<string, string>} */
 	const endpoints = {};
 	for (const [, ip, hostFirst, hostLast, containerFirst] of ports.matchAll(
-		/([\d.]+):(\d+)(?:-(\d+))?->(\d+)(?:-\d+)?\/tcp/g,
+		/(\d{1,3}(?:\.\d{1,3}){3}):(\d{1,5})(?:-(\d{1,5}))?->(\d{1,5})(?:-\d{1,5})?\/tcp/g,
 	)) {
 		const span = Number(hostLast ?? hostFirst) - Number(hostFirst);
 		for (let offset = 0; offset <= span; offset++) {

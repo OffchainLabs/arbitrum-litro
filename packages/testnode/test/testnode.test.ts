@@ -369,6 +369,17 @@ describe("parseStartContainers", () => {
 		]);
 	});
 
+	it("parses a pathological Ports value in linear time", () => {
+		const started = performance.now();
+		const output = row({
+			Names: "n",
+			Labels: `${START_CONTAINER_LABEL}=l2`,
+			Ports: `${"1.".repeat(50_000)}:`,
+		});
+		expect(parseStartContainers(output)[0]?.endpoints).toEqual({});
+		expect(performance.now() - started).toBeLessThan(1000);
+	});
+
 	it("lists a container both docker filters return once", () => {
 		const labeled = row({ Names: "arbitrum-testnode-l2", Labels: `${START_CONTAINER_LABEL}=l2` });
 		expect(parseStartContainers(`${labeled}\n\n${labeled}\n`)).toHaveLength(1);
