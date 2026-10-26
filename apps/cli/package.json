@@ -17,7 +17,7 @@
 		"@arbitrum/chain-sdk": "0.26.0",
 		"incur": "^0.2.2",
 		"viem": "^2.47.5",
-		"zod": "^3.24.0"
+		"zod": "^4.6.6"
 	},
 	"devDependencies": {
 		"@arbitrum/testnode": "workspace:*",
