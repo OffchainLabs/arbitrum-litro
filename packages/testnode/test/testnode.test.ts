@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
+	DEFAULT_FAST_FEED_API_KEY,
 	DEFAULT_TESTNODE_IMAGE_REPOSITORY,
 	START_CONTAINER_LABEL,
 	buildStartTestnodeState,
@@ -159,6 +160,44 @@ describe("buildStartTestnodeState", () => {
 		);
 		expect(args).not.toContain("redis://timeboost-redis:6379");
 		expect(args).not.toContain("redis:7-alpine");
+	});
+
+	it("leaves the sequencer features off by default", () => {
+		const state = buildStartTestnodeState({ cwd: "/workspace/project", version: "v1.2.3" });
+
+		expect(state.sequencer).toEqual({
+			fastFeed: undefined,
+			l2MaxBlockSpeed: undefined,
+			pgaRoundsPerBlock: undefined,
+		});
+		const args = testnodeDockerRunArgs(state).join(" ");
+		expect(args).not.toContain("9646");
+		expect(args).not.toContain("TESTNODE_FAST_FEED");
+		expect(args).not.toContain("TESTNODE_PGA");
+	});
+
+	it("carries the sequencer features into the container's settings", () => {
+		const state = buildStartTestnodeState({
+			cwd: "/workspace/project",
+			l3Enabled: false,
+			sequencer: { fastFeedEnabled: true, pgaRoundsPerBlock: 2, l2MaxBlockSpeed: "250ms" },
+			version: "v1.2.3",
+		});
+
+		expect(state.variant).toBe("l2");
+		expect(state.sequencer.fastFeed?.url).toBe("ws://127.0.0.1:9646/");
+		const args = testnodeDockerRunArgs(state);
+		expect(args).toEqual(
+			expect.arrayContaining([
+				"127.0.0.1:9646:9646",
+				"127.0.0.1:9642:9642",
+				"TESTNODE_FAST_FEED=true",
+				`TESTNODE_FAST_FEED_API_KEYS=${DEFAULT_FAST_FEED_API_KEY}`,
+				"TESTNODE_PGA_ROUNDS_PER_BLOCK=2",
+				"TESTNODE_L2_MAX_BLOCK_SPEED=250ms",
+			]),
+		);
+		expect(args.at(-1)).toBe(state.imageRef);
 	});
 });
 
@@ -341,7 +380,7 @@ describe("parseStartContainers", () => {
 			Labels: `a=b,${START_CONTAINER_LABEL}=l2`,
 			Status: "Up 2 minutes (healthy)",
 			Ports:
-				"127.0.0.1:8080->8080/tcp, 127.0.0.1:8545->8545/tcp, 127.0.0.1:8547-8548->8547-8548/tcp, 8549-8550/tcp",
+				"127.0.0.1:8080->8080/tcp, 127.0.0.1:8545->8545/tcp, 127.0.0.1:8547-8548->8547-8548/tcp, 127.0.0.1:9642->9642/tcp, 127.0.0.1:9646->9646/tcp, 8549-8550/tcp",
 		});
 		expect(parseStartContainers(output)).toEqual([
 			{
@@ -353,6 +392,8 @@ describe("parseStartContainers", () => {
 				endpoints: {
 					l1: "http://127.0.0.1:8545",
 					l2: "http://127.0.0.1:8547",
+					fastFeed: "ws://127.0.0.1:9646/",
+					sequencerFeed: "ws://127.0.0.1:9642/feed",
 				},
 			},
 		]);

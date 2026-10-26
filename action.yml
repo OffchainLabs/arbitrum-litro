@@ -28,6 +28,30 @@ inputs:
     required: false
     default: "false"
     description: "Whether to enable Timeboost sequencer args and auctioneer/timeboost HTTP APIs"
+  fast-feed-enabled:
+    required: false
+    default: "false"
+    description: "Serve the Fast Feed (Nitro's transaction feed behind Bearer auth) on ws://127.0.0.1:9646/ and the sequencer feed on 9642"
+  fast-feed-api-key:
+    required: false
+    default: ""
+    description: "API key the Fast Feed accepts as 'Authorization: Bearer <key>'; empty uses the dev key"
+  fast-feed-auth:
+    required: false
+    default: "true"
+    description: "Whether the Fast Feed requires the API key"
+  fast-feed-delay-ms:
+    required: false
+    default: "0"
+    description: "One-way delay added to every Fast Feed frame, in milliseconds"
+  pga-rounds-per-block:
+    required: false
+    default: ""
+    description: "Enable priority gas auction ordering on L2 with this many rounds per block"
+  l2-max-block-speed:
+    required: false
+    default: ""
+    description: "L2 sequencer max-block-speed as a Go duration, e.g. 250ms"
   fee-token-decimals:
     required: false
     default: ""
@@ -89,6 +113,12 @@ outputs:
   l3-rpc-url:
     description: "Host RPC URL for the L3"
     value: ${{ steps.resolve.outputs.l3-rpc-url }}
+  fast-feed-url:
+    description: "Host URL of the Fast Feed when fast-feed-enabled is true"
+    value: ${{ steps.resolve.outputs.fast-feed-url }}
+  sequencer-feed-url:
+    description: "Host URL of the sequencer feed when fast-feed-enabled is true"
+    value: ${{ steps.resolve.outputs.sequencer-feed-url }}
   variant:
     description: "Resolved variant name"
     value: ${{ steps.resolve.outputs.variant }}
@@ -111,13 +141,19 @@ runs:
       shell: bash
       env:
         INPUT_CONTAINER_NAME: ${{ inputs.container-name }}
+        INPUT_FAST_FEED_API_KEY: ${{ inputs.fast-feed-api-key }}
+        INPUT_FAST_FEED_AUTH: ${{ inputs.fast-feed-auth }}
+        INPUT_FAST_FEED_DELAY_MS: ${{ inputs.fast-feed-delay-ms }}
+        INPUT_FAST_FEED_ENABLED: ${{ inputs.fast-feed-enabled }}
         INPUT_FEE_TOKEN_DECIMALS: ${{ inputs.fee-token-decimals }}
         INPUT_IMAGE_REF: ${{ inputs.image-ref }}
         INPUT_IMAGE_REPOSITORY: ${{ inputs.image-repository }}
+        INPUT_L2_MAX_BLOCK_SPEED: ${{ inputs.l2-max-block-speed }}
         INPUT_L3_ENABLED: ${{ inputs.l3-enabled }}
         INPUT_NITRO_CONTRACTS_VERSION: ${{ inputs.nitro-contracts-version }}
         INPUT_NITRO_IMAGE: ${{ inputs.nitro-image }}
         INPUT_OUTPUT_DIR: ${{ inputs.output-dir }}
+        INPUT_PGA_ROUNDS_PER_BLOCK: ${{ inputs.pga-rounds-per-block }}
         INPUT_TIMEBOOST_ENABLED: ${{ inputs.timeboost-enabled }}
         INPUT_VERSION: ${{ inputs.version }}
         GITHUB_WORKSPACE: ${{ github.workspace }}
@@ -168,13 +204,19 @@ runs:
       shell: bash
       env:
         INPUT_CONTAINER_NAME: ${{ inputs.container-name }}
+        INPUT_FAST_FEED_API_KEY: ${{ inputs.fast-feed-api-key }}
+        INPUT_FAST_FEED_AUTH: ${{ inputs.fast-feed-auth }}
+        INPUT_FAST_FEED_DELAY_MS: ${{ inputs.fast-feed-delay-ms }}
+        INPUT_FAST_FEED_ENABLED: ${{ inputs.fast-feed-enabled }}
         INPUT_FEE_TOKEN_DECIMALS: ${{ inputs.fee-token-decimals }}
         INPUT_IMAGE_REF: ${{ inputs.image-ref }}
         INPUT_IMAGE_REPOSITORY: ${{ inputs.image-repository }}
+        INPUT_L2_MAX_BLOCK_SPEED: ${{ inputs.l2-max-block-speed }}
         INPUT_L3_ENABLED: ${{ inputs.l3-enabled }}
         INPUT_NITRO_CONTRACTS_VERSION: ${{ inputs.nitro-contracts-version }}
         INPUT_NITRO_IMAGE: ${{ inputs.nitro-image }}
         INPUT_OUTPUT_DIR: ${{ inputs.output-dir }}
+        INPUT_PGA_ROUNDS_PER_BLOCK: ${{ inputs.pga-rounds-per-block }}
         INPUT_NETWORK_CONFIG_PATH: ${{ inputs.network-config-path }}
         INPUT_STARTUP_TIMEOUT_SECONDS: ${{ inputs.startup-timeout-seconds }}
         INPUT_TIMEBOOST_ENABLED: ${{ inputs.timeboost-enabled }}

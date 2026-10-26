@@ -102,9 +102,22 @@ describe("testnode-rebase.Dockerfile", () => {
 		expect(rebaseDockerfile).not.toMatch(/ARG TESTNODE_IMAGE=/);
 	});
 
-	it("only reaches for the network when libstdc++6 is genuinely absent", () => {
-		// Nitro images already carry it; an unconditional apt-get would add a
-		// network dependency to every rebase.
-		expect(rebaseDockerfile).toMatch(/if ! ldconfig -p \| grep -q .*libstdc\+\+/);
+	it("installs each runtime library the testnode image installs, only when missing", () => {
+		// The copied node binary links what testnode.Dockerfile apt-installs in its
+		// final stage. Nitro images carry some of it, so the rebase probes each one
+		// and reaches for the network only for what is absent.
+		const installed = finalStageLines(testnodeDockerfile)
+			.join("\n")
+			.match(/apt-get install -y --no-install-recommends ([^\\\n]+)/)?.[1]
+			?.trim()
+			.split(/\s+/);
+		expect(installed).toEqual(expect.arrayContaining(["libstdc++6", "libatomic1"]));
+		for (const pkg of installed ?? []) {
+			// libatomic1 provides libatomic.so.1, libstdc++6 provides libstdc++.so.6.
+			const library = pkg.replace(/\d+$/, "");
+			expect(rebaseDockerfile).toContain(`ldconfig -p | grep -q '${library}`);
+			expect(rebaseDockerfile).toContain(`missing="$missing ${pkg}"`);
+		}
+		expect(rebaseDockerfile).toContain('if [ -n "$missing" ]');
 	});
 });

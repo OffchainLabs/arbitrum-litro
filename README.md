@@ -10,8 +10,8 @@ Every release attaches the `litro` CLI to its [GitHub Release](https://github.co
 
 ```bash
 npm i -g https://github.com/OffchainLabs/arbitrum-litro/releases/latest/download/arbitrum-litro.tgz
-litro start
-litro status            # Running start containers and their RPC URLs
+litro start --fast-feed-enabled
+litro status            # Running start containers and their RPC / feed URLs
 litro logs              # The container's recent logs
 litro stop              # Remove them
 ```
@@ -69,6 +69,12 @@ Optional config fields:
 | `outputDir` | `./.arbitrum-testnode/<version>/<variant>` | Export directory for config files |
 | `startupTimeoutSeconds` | `120` | RPC readiness timeout |
 | `timeboostEnabled` | `false` | Use the L2 Timeboost image variant and enable Timeboost sequencer args plus the `timeboost,auctioneer` HTTP APIs |
+| `fastFeedEnabled` | `false` | Serve the [Fast Feed](#fast-feed) on `ws://127.0.0.1:9646/` and the sequencer feed on `ws://127.0.0.1:9642/feed` |
+| `fastFeedApiKey` | `litro-fast-feed-dev-key` | API key the Fast Feed accepts as `Authorization: Bearer <key>` |
+| `fastFeedAuth` | `true` | Require the API key; `false` (or `--no-fast-feed-auth`) accepts any client |
+| `fastFeedDelayMs` | `0` | One-way delay added to every Fast Feed frame |
+| `pgaRoundsPerBlock` | — | Enable priority gas auction ordering on L2 with this many rounds per block |
+| `l2MaxBlockSpeed` | `100ms` (baked) | L2 sequencer `max-block-speed` as a Go duration |
 | `networkConfigPath` | — | One path or an array of paths to overwrite with `localNetwork.json` |
 | `nitroImage` | — | Nitro image to rebase the testnode image onto before booting (see [Booting your own Nitro build](#booting-your-own-nitro-build)) |
 
@@ -97,6 +103,69 @@ The value is applied to `node.parent-chain-reader.poll-interval`,
 L2-only and L2+L3 images are supported. Values such as `100ms`, `1s`, and `2.5s` are accepted;
 Nitro validates the value when it starts. When the variable is unset, the bundled runtime configs
 and existing polling behavior are unchanged.
+
+### Fast Feed
+
+The [Fast Feed](https://docs.arbitrum.io/how-arbitrum-works/priority-gas-auction/fast-feed) streams
+each transaction with its receipt as soon as the sequencer executes it, before its block reaches the
+sequencer feed. On Arbitrum One it is a paid, authenticated endpoint
+(`wss://arb1-txfeed.arbitrum.io/`). The testnode serves the same feed locally so a client written
+against production runs unchanged:
+
+```bash
+pnpm dev start --fast-feed-enabled
+pnpm dev feed --count 3   # prints the next 3 transactions
+```
+
+It is Nitro's transaction feed (`--execution.transaction-feed.*`) behind a relay that reproduces
+the production endpoint's contract:
+
+| Production behaviour | Testnode |
+|---|---|
+| `Authorization: Bearer <api-key>` on the upgrade request | Same; the default key is `litro-fast-feed-dev-key` |
+| HTTP 401 / 429 / 426 | Missing or unknown key / more connections than the key's tickets (1) / not an upgrade |
+| One binary frame per transaction, `version: 1`, receipt without `block_hash` | Forwarded unchanged from Nitro |
+| Close 1013 "client lagged" (2048 messages behind), 1003 (client sent data), 1011 (shutdown) | Same |
+| Close 1008 "authentication expired" at the end of a ticket round | Set `TESTNODE_FAST_FEED_ROUND_SECONDS` to expire connections on that interval |
+| No history: messages sent while disconnected are lost | Same |
+
+Frames carry no block hash. Take it from the sequencer feed, published on
+`ws://127.0.0.1:9642/feed` when the Fast Feed is on, or from the L2 RPC once the block closes.
+Each block's first frame is Nitro's internal ArbOS start-block transaction (type `0x6a`), so
+filter it out if you only want user transactions.
+
+The [Fast Feed docs](https://docs.arbitrum.io/how-arbitrum-works/priority-gas-auction/fast-feed)
+describe Arbitrum One as running priority gas auction (PGA) rounds every 125 ms inside a 250 ms
+block. Two rounds per block at a 250 ms block speed reproduces that:
+
+```bash
+pnpm dev start --fast-feed-enabled --pga-rounds-per-block 2 --l2-max-block-speed 250ms
+```
+
+With PGA on, the image upgrades the L2 to ArbOS 60 and enables tip collection as the chain owner
+when it boots (about a second), then orders each round by priority tip. Frames gain a
+`pga_round` field. On the testnode, each transaction's frame arrives about one round (125 ms)
+before `eth_sendRawTransaction` returns. `--fast-feed-delay-ms` holds each frame back by the
+given number of milliseconds before sending it, which stands in for the network distance to a
+remote endpoint.
+
+`start` and the action return once the relay is listening and PGA is on: with either enabled
+they wait for the container's healthcheck, which passes only after both are ready. `start`
+reports the URLs and key under `sequencer.fastFeed`.
+
+The same settings are image environment variables for `docker run` users:
+`TESTNODE_FAST_FEED=true`, `TESTNODE_FAST_FEED_API_KEYS` (comma-separated),
+`TESTNODE_FAST_FEED_AUTH=none`, `TESTNODE_FAST_FEED_TICKETS_PER_KEY`,
+`TESTNODE_FAST_FEED_DELAY_MS`, `TESTNODE_FAST_FEED_ROUND_SECONDS`,
+`TESTNODE_PGA_ROUNDS_PER_BLOCK` and `TESTNODE_L2_MAX_BLOCK_SPEED`. Publish ports 9646 and 9642.
+
+The Fast Feed and PGA rounds need Nitro v3.12 or later; with `nitro-image` set to an older
+Nitro, the container exits with an error naming the missing flag instead of booting without them.
+
+The relay is an unofficial local emulation written from the public
+[Use the Fast Feed](https://docs.arbitrum.io/how-arbitrum-works/priority-gas-auction/use-fast-feed)
+guide; it is not the production endpoint's software. It checks keys against a static list and does
+not emulate the onchain `Tickets` contract.
 
 ### GitHub Action
 
@@ -131,6 +200,9 @@ The action starts a fully initialized testnode and exports environment variables
 | `ARBITRUM_TESTNODE_LOCAL_NETWORK_PATH` | Path to `localNetwork.json` with all deployed contract addresses |
 | `ARBITRUM_TESTNODE_CONFIG_DIR` | Directory with all exported config files |
 | `ARBITRUM_TESTNODE_VARIANT` | Resolved variant name, such as `l3-eth` |
+| `ARBITRUM_TESTNODE_FAST_FEED_URL` | Fast Feed URL (set when `fast-feed-enabled`) |
+| `ARBITRUM_TESTNODE_FAST_FEED_API_KEY` | Key to send as `Authorization: Bearer <key>` |
+| `ARBITRUM_TESTNODE_SEQUENCER_FEED_URL` | Sequencer feed URL, for block hashes |
 
 ### Booting your own Nitro build
 
@@ -166,8 +238,8 @@ pnpm dev start --nitro-image nitro-node-dev:latest
 
 How it works: `docker/testnode.Dockerfile` builds the published image as
 `FROM ${NITRO_IMAGE}` plus a fixed set of testnode artifacts (anvil, the
-token-bridge workspace, the entrypoint scripts, and the baked snapshot under
-`/opt/arbitrum-testnode`). Because Nitro is the *base* layer,
+token-bridge workspace, the entrypoint scripts, and the baked snapshot and Fast Feed helpers
+under `/opt/arbitrum-testnode`). Because Nitro is the *base* layer,
 `docker/testnode-rebase.Dockerfile` can graft exactly those artifacts onto a
 different Nitro image. Registry behavior keys off the base image — the resolved
 image is still pulled and authenticated as usual, and the rebased result is tagged
@@ -240,6 +312,7 @@ pnpm dev init           # Subsequent runs: restores from snapshot (~10 sec)
 pnpm dev stop           # Remove start containers and stop the init stack
 pnpm dev clean          # Remove containers and saved data
 pnpm dev status         # Show start containers, services and init state
+pnpm dev feed           # Read transactions from a running testnode's Fast Feed
 ```
 
 ## Custom snapshots
@@ -510,6 +583,12 @@ Derived from the official nitro-testnode mnemonic. All accounts are pre-funded o
 | `startup-timeout-seconds` | No | `120` | Max wait time for RPC readiness |
 | `timeboost-enabled` | No | `false` | Use the L2 Timeboost image variant and enable Timeboost sequencer args plus the `timeboost,auctioneer` HTTP APIs |
 | `network-config-path` | No | — | Comma-separated path(s) to overwrite with exported `localNetwork.json` |
+| `fast-feed-enabled` | No | `false` | Serve the [Fast Feed](#fast-feed) on `ws://127.0.0.1:9646/` and the sequencer feed on 9642 |
+| `fast-feed-api-key` | No | — | API key the Fast Feed accepts; empty uses `litro-fast-feed-dev-key` |
+| `fast-feed-auth` | No | `true` | Whether the Fast Feed requires the API key |
+| `fast-feed-delay-ms` | No | `0` | One-way delay added to every Fast Feed frame |
+| `pga-rounds-per-block` | No | — | Enable PGA ordering on L2 with this many rounds per block (see [Fast Feed](#fast-feed)) |
+| `l2-max-block-speed` | No | — | L2 sequencer `max-block-speed` as a Go duration, e.g. `250ms` |
 
 ## Action Outputs
 
@@ -527,6 +606,8 @@ Derived from the official nitro-testnode mnemonic. All accounts are pre-funded o
 | `l1-rpc-url` | Host RPC URL for L1 |
 | `l2-rpc-url` | Host RPC URL for L2 |
 | `l3-rpc-url` | Host RPC URL for L3 |
+| `fast-feed-url` | Host URL of the Fast Feed, when enabled |
+| `sequencer-feed-url` | Host URL of the sequencer feed, when the Fast Feed is enabled |
 | `variant` | Resolved variant name |
 | `nitro-contracts-version` | Resolved Nitro contracts version |
 

@@ -54,7 +54,7 @@ check(version.output.trim() === pkg.version, `litro --version is ${pkg.version}`
 
 const help = litro(["start", "--help"]);
 check(
-	help.status === 0 && help.output.includes("--nitro-image"),
+	help.status === 0 && help.output.includes("--fast-feed-enabled"),
 	"litro start --help",
 	help.output,
 );

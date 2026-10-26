@@ -1,5 +1,5 @@
 import { appendFileSync } from "node:fs";
-import { buildActionTestnodeState } from "./lib.mjs";
+import { actionStateOptionsFromEnv, buildActionTestnodeState } from "./lib.mjs";
 
 /**
  * @param {string} key
@@ -13,23 +13,11 @@ function writeOutput(key, value) {
 	appendFileSync(outputFile, `${key}=${value}\n`);
 }
 
-const state = buildActionTestnodeState({
-	containerName: process.env["INPUT_CONTAINER_NAME"],
-	contractsVersion: process.env["INPUT_NITRO_CONTRACTS_VERSION"],
-	feeTokenDecimals: process.env["INPUT_FEE_TOKEN_DECIMALS"],
-	imageRef: process.env["INPUT_IMAGE_REF"],
-	imageRepository: process.env["INPUT_IMAGE_REPOSITORY"],
-	l3Enabled: process.env["INPUT_L3_ENABLED"],
-	nitroImage: process.env["INPUT_NITRO_IMAGE"],
-	outputDir: process.env["INPUT_OUTPUT_DIR"],
-	runnerTemp: process.env["RUNNER_TEMP"],
-	timeboostEnabled: process.env["INPUT_TIMEBOOST_ENABLED"],
-	version: process.env["INPUT_VERSION"],
-	workspace: process.env["GITHUB_WORKSPACE"],
-});
+const state = buildActionTestnodeState(actionStateOptionsFromEnv(process.env));
 
 writeOutput("base-image-ref", state.baseImageRef);
 writeOutput("config-dir", state.configDir);
+writeOutput("fast-feed-url", state.sequencer.fastFeed?.url ?? "");
 writeOutput("container-name", state.containerName);
 writeOutput("image-ref", state.imageRef);
 writeOutput("nitro-image", state.nitroImage);
@@ -42,6 +30,7 @@ writeOutput("l2l3-network-path", state.paths.l2l3Network);
 writeOutput("l3-rpc-url", state.rpcUrls.l3);
 writeOutput("local-network-path", state.paths.localNetwork);
 writeOutput("output-dir", state.outputDir);
+writeOutput("sequencer-feed-url", state.sequencer.fastFeed?.sequencerFeedUrl ?? "");
 writeOutput("snapshot-id", state.snapshotId);
 writeOutput("nitro-contracts-version", state.contractsVersion);
 writeOutput("variant", state.variant);

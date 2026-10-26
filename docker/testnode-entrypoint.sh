@@ -7,7 +7,7 @@ VARIANT="${TESTNODE_VARIANT:-l2}"
 NITRO_WASM_ROOTS="/home/user/nitro-legacy/machines,/home/user/target/machines"
 PIDS=""
 SEQUENCER_HTTP_API="net,web3,eth,txpool,debug"
-SEQUENCER_TIMEBOOST_ARGS=""
+TESTNODE_BIN="/opt/arbitrum-testnode/bin"
 
 start_background() {
 	"$@" &
@@ -33,16 +33,6 @@ monitor_pids() {
 	done
 }
 
-read_timeboost_auction_contract_address() {
-	if [ -n "${TESTNODE_TIMEBOOST_AUCTION_CONTRACT_ADDRESS:-}" ]; then
-		printf "%s" "$TESTNODE_TIMEBOOST_AUCTION_CONTRACT_ADDRESS"
-		return
-	fi
-	if [ -f "$CONFIG_ROOT/timeboost-auction.json" ]; then
-		jq -r '.auctionContract // empty' "$CONFIG_ROOT/timeboost-auction.json"
-	fi
-}
-
 trap cleanup EXIT INT TERM
 
 echo "state file: $DATA_ROOT/anvil-state"
@@ -55,20 +45,17 @@ if [ "${TESTNODE_PARENT_CHAIN_POLL_INTERVAL+x}" = "x" ]; then
 		"$TESTNODE_PARENT_CHAIN_POLL_INTERVAL"
 fi
 
-if [ "${TESTNODE_TIMEBOOST:-}" = "true" ]; then
-	SEQUENCER_HTTP_API="$SEQUENCER_HTTP_API,timeboost,auctioneer"
-	TIMEBOOST_AUCTION_CONTRACT_ADDRESS="$(read_timeboost_auction_contract_address)"
-	: "${TIMEBOOST_AUCTION_CONTRACT_ADDRESS:?timeboost-auction.json or TESTNODE_TIMEBOOST_AUCTION_CONTRACT_ADDRESS is required when TESTNODE_TIMEBOOST=true}"
-	: "${TESTNODE_TIMEBOOST_REDIS_URL:?TESTNODE_TIMEBOOST_REDIS_URL is required when TESTNODE_TIMEBOOST=true}"
-	SEQUENCER_TIMEBOOST_ARGS="\
-		--execution.sequencer.timeboost.enable \
-		--execution.sequencer.timeboost.redis-url=$TESTNODE_TIMEBOOST_REDIS_URL \
-		--execution.sequencer.timeboost.auction-contract-address=$TIMEBOOST_AUCTION_CONTRACT_ADDRESS \
-		--execution.sequencer.timeboost.auctioneer-address=0x46225F4cee2b4A1d506C7f894bb3dAeB21BF1596"
-	echo "timeboost: enabled with auction $TIMEBOOST_AUCTION_CONTRACT_ADDRESS"
+. "$TESTNODE_BIN/sequencer-features.sh"
+# Probed once: the batch-size rename (see configure-sequencer.mjs) and each optional feature
+# depend on which flags this Nitro build has.
+NITRO_HELP="$(/usr/local/bin/nitro --help 2>&1 || true)"
+if nitro_supports "--node.batch-poster.max-calldata-batch-size"; then
+	RENAME_BATCH_MAX_SIZE=true
 else
-	echo "timeboost: disabled"
+	RENAME_BATCH_MAX_SIZE=false
 fi
+node "$TESTNODE_BIN/configure-sequencer.mjs" "$CONFIG_ROOT" "$RENAME_BATCH_MAX_SIZE" "${TESTNODE_L2_MAX_BLOCK_SPEED:-}"
+sequencer_feature_args
 
 start_background /usr/local/bin/anvil \
 	--host 0.0.0.0 \
@@ -80,14 +67,8 @@ start_background /usr/local/bin/anvil \
 	--state-interval 1
 
 echo "waiting for anvil on port 8545..."
-DEADLINE=$(($(date +%s) + 60))
-while ! grep -q ":2161 " /proc/net/tcp 2>/dev/null; do
-	if [ "$(date +%s)" -ge "$DEADLINE" ]; then
-		echo "anvil did not start within 60s" >&2
-		exit 1
-	fi
-	sleep 1
-done
+# 8545 = 0x2161
+wait_for_listen 2161 anvil
 echo "anvil ready"
 
 start_background env HOME="$DATA_ROOT/sequencer" /usr/local/bin/nitro \
@@ -105,7 +86,9 @@ start_background env HOME="$DATA_ROOT/sequencer" /usr/local/bin/nitro \
 	--ws.addr=0.0.0.0 \
 	--ws.port=8548 \
 	--auth.port=8551 \
-	$SEQUENCER_TIMEBOOST_ARGS
+	$SEQUENCER_FEATURE_ARGS
+
+start_sequencer_features
 
 start_background env HOME="$DATA_ROOT/validator" /usr/local/bin/nitro \
 	--validation.wasm.allowed-wasm-module-roots "$NITRO_WASM_ROOTS" \
