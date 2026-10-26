@@ -1,7 +1,4 @@
-# Debian bullseye's security archive lists package versions it no longer hosts, so installing
-# the toolchain with apt in node:20-bullseye-slim fails with 404s. node:20-bullseye bundles that
-# toolchain already. It is used for this build stage alone; the published image is unaffected.
-ARG NODE_IMAGE=node:20-bullseye
+ARG NODE_IMAGE=node:26-bookworm-slim
 ARG FOUNDRY_IMAGE=ghcr.io/foundry-rs/foundry:v1.3.5
 ARG NITRO_IMAGE=offchainlabs/nitro-node:v3.12.1-70fa99a
 ARG BUNDLE_VERSION=dev
@@ -18,6 +15,14 @@ ARG TOKENBRIDGE_COMMIT
 FROM scratch AS tokenbridge
 
 FROM ${NODE_IMAGE} AS token-bridge-contracts
+
+RUN apt-get update \
+	&& apt-get install -y --no-install-recommends build-essential ca-certificates git python3 \
+	&& rm -rf /var/lib/apt/lists/*
+
+# Node 26 images no longer bundle Yarn; the runtime stage copies this prefix.
+RUN npm install -g --prefix /opt/yarn-v1.22.22 yarn@1.22.22 \
+	&& ln -s /opt/yarn-v1.22.22/bin/yarn /usr/local/bin/yarn
 
 WORKDIR /workspace
 
@@ -75,7 +80,7 @@ COPY .testnode-context/runtime /opt/arbitrum-testnode/runtime
 COPY .testnode-context/runtime-config /opt/arbitrum-testnode/runtime-config
 USER root
 RUN apt-get update \
-	&& apt-get install -y --no-install-recommends libstdc++6 \
+	&& apt-get install -y --no-install-recommends libatomic1 libstdc++6 \
 	&& rm -rf /var/lib/apt/lists/*
 RUN ln -s /opt/yarn-v1.22.22/bin/yarn /usr/local/bin/yarn
 RUN chown -R user:user /opt/arbitrum-testnode/runtime /opt/arbitrum-testnode/runtime-config
