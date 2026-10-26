@@ -535,10 +535,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 	const options = relayOptionsFromEnv(process.env);
 	const log = (/** @type {string} */ message) => console.log(`fast-feed: ${message}`);
 	const relay = await startFastFeedRelay({ ...options, log });
-	// Never the keys themselves: a caller's key can be a real secret.
-	const keys = options.apiKeys.length ? `${options.apiKeys.length} key(s)` : "the dev key";
+	// Nothing derived from the keys: a caller's key can be a real secret.
 	log(
-		`listening on ws://0.0.0.0:${relay.port}/ (auth ${options.auth ? `bearer, ${keys}` : "none"}, delay ${options.delayMs}ms)`,
+		`listening on ws://0.0.0.0:${relay.port}/ (auth ${options.auth ? "bearer" : "none"}, delay ${options.delayMs}ms)`,
 	);
 	const shutdown = () => relay.close().then(() => process.exit(0));
 	process.on("SIGTERM", shutdown);
