@@ -1,10 +1,17 @@
 // @ts-check
 
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import {
+	START_CONTAINER_LABEL,
+	inspectContainer,
+	removeContainer,
+	runDocker,
+} from "./containers.mjs";
+import { endpointUrl } from "./endpoints.mjs";
 import { toBoolean } from "./inputs.mjs";
 import {
 	needsHealthyContainer,
@@ -21,10 +28,8 @@ export {
 /**
  * @typedef {import("./types.js").ActionStateOptions} ActionStateOptions
  * @typedef {import("./types.js").BaseStateOptions} BaseStateOptions
- * @typedef {import("./types.js").ContainerDiagnostics} ContainerDiagnostics
  * @typedef {import("./types.js").ImageRefOptions} ImageRefOptions
  * @typedef {import("./types.js").ScalarInput} ScalarInput
- * @typedef {import("./types.js").StartContainer} StartContainer
  * @typedef {import("./types.js").StartStateOptions} StartStateOptions
  * @typedef {import("./types.js").TestnodeState} TestnodeState
  * @typedef {import("./types.js").VariantDefinition} VariantDefinition
@@ -55,21 +60,6 @@ const REBASED_IMAGE_GC_MAX_AGE = "168h";
 /** Bounds on the two docker calls a rebase makes, so a wedged daemon cannot hang CI. */
 const REBASE_BUILD_TIMEOUT_MS = 900_000;
 const REBASED_IMAGE_GC_TIMEOUT_MS = 120_000;
-
-/** Set on every container `start` runs, so `stop` and `status` find them from any directory. */
-export const START_CONTAINER_LABEL = "org.offchainlabs.testnode.start";
-
-/** Default name prefix of start containers; matches those run before the label existed. */
-const START_CONTAINER_PREFIX = "arbitrum-testnode-";
-
-/** Container ports a start container publishes, by the endpoint each serves. */
-const START_CONTAINER_ENDPOINTS = {
-	8545: { name: "l1", url: (/** @type {string} */ host) => `http://${host}` },
-	8547: { name: "l2", url: (/** @type {string} */ host) => `http://${host}` },
-	8549: { name: "l3", url: (/** @type {string} */ host) => `http://${host}` },
-	9646: { name: "fastFeed", url: (/** @type {string} */ host) => `ws://${host}/` },
-	9642: { name: "sequencerFeed", url: (/** @type {string} */ host) => `ws://${host}/feed` },
-};
 
 /** Paths that together identify the repo root. Both are committed. */
 const REPO_ROOT_MARKERS = [join("docker", "docker-compose.yaml"), "config"];
@@ -612,9 +602,9 @@ function buildTestnodeState({
 	);
 	const configDir = join(resolvedOutputDir, "config");
 	const rpcUrls = {
-		l1: `http://127.0.0.1:${definition.hostPorts.l1}`,
-		l2: `http://127.0.0.1:${definition.hostPorts.l2}`,
-		l3: definition.l3Enabled ? `http://127.0.0.1:${definition.hostPorts.l3}` : "",
+		l1: endpointUrl(8545, definition.hostPorts.l1),
+		l2: endpointUrl(8547, definition.hostPorts.l2),
+		l3: definition.l3Enabled ? endpointUrl(8549, definition.hostPorts.l3 ?? "") : "",
 	};
 	const baseImageRef = resolvedImageRef
 		? resolvedImageRef
@@ -702,21 +692,6 @@ export function testnodeDockerRunArgs(state) {
 }
 
 /**
- * @param {string[]} args
- * @param {import("node:child_process").ExecFileSyncOptions} [options]
- * @returns {string}
- */
-export function runDocker(args, options = {}) {
-	return /** @type {string} */ (
-		execFileSync("docker", args, {
-			encoding: "utf-8",
-			stdio: ["ignore", "pipe", "pipe"],
-			...options,
-		})
-	);
-}
-
-/**
  * Call `check` once a second until it returns true or `timeoutMs` passes. An error thrown by
  * `check` ends the wait at once.
  *
@@ -758,19 +733,6 @@ export function waitForRpc(url, timeoutMs) {
 	pollUntil(() => rpcAnswers(url), timeoutMs, `RPC at ${url} not ready after ${timeoutMs}ms`);
 }
 
-/** @param {string} containerName */
-function inspectContainer(containerName) {
-	const [running, health] = runDocker([
-		"inspect",
-		"--format",
-		"{{.State.Running}} {{if .State.Health}}{{.State.Health.Status}}{{end}}",
-		containerName,
-	])
-		.trim()
-		.split(" ");
-	return { running: running === "true", health };
-}
-
 /**
  * Poll `ready` while the container runs. A stopped container can never become ready, so it
  * fails the wait at once instead of at the timeout.
@@ -794,15 +756,6 @@ function waitForContainer(containerName, ready, timeoutMs, what) {
 		timeoutMs,
 		`${what} not ready after ${timeoutMs}ms`,
 	);
-}
-
-/** @param {string} containerName */
-export function removeContainer(containerName) {
-	try {
-		runDocker(["rm", "-f", containerName]);
-	} catch {
-		// ignore missing container
-	}
 }
 
 /** @param {TestnodeState} state */
@@ -845,160 +798,6 @@ export function bootTestnode(state, timeoutMs) {
 		);
 	}
 	return exportTestnodeConfig(state);
-}
-
-/**
- * @param {string} containerName
- * @param {{ tailLines?: number }} [options]
- * @returns {ContainerDiagnostics}
- */
-export function collectContainerDiagnostics(containerName, options = {}) {
-	const diagnostics = /** @type {ContainerDiagnostics} */ ({ errors: [] });
-	try {
-		diagnostics.inspect = runDocker([
-			"inspect",
-			"--format",
-			"{{.State.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}}",
-			containerName,
-		]).trim();
-	} catch (error) {
-		diagnostics.errors.push(
-			`inspect failed: ${error instanceof Error ? error.message : String(error)}`,
-		);
-	}
-	try {
-		diagnostics.logs = readContainerLogs(containerName, options.tailLines ?? 100);
-	} catch (error) {
-		diagnostics.errors.push(
-			`log collection failed: ${error instanceof Error ? error.message : String(error)}`,
-		);
-	}
-	return diagnostics;
-}
-
-/**
- * The last `tailLines` log lines of a container, without Nitro's per-block lines.
- *
- * @param {string} containerName
- * @param {number} tailLines
- */
-export function readContainerLogs(containerName, tailLines) {
-	// `docker logs` replays the container's stdout and stderr separately, and Nitro writes to
-	// stderr, so keep both. Nitro also logs every block: read a window much larger than the tail
-	// kept, because filterContainerLogs drops the block lines first.
-	const result = spawnSync("docker", ["logs", "--tail", String(tailLines * 50), containerName], {
-		encoding: "utf-8",
-		maxBuffer: 64 * 1024 * 1024,
-	});
-	if (result.error || result.status !== 0) {
-		throw new Error(result.error?.message ?? result.stderr.trim());
-	}
-	return filterContainerLogs(`${result.stdout}${result.stderr}`, tailLines);
-}
-
-/**
- * Every container `start` ran, running or not.
- *
- * @returns {StartContainer[]}
- */
-export function listStartContainers() {
-	const format = ["--format", "{{json .}}"];
-	return parseStartContainers(
-		[
-			runDocker(["ps", "-a", "--filter", `label=${START_CONTAINER_LABEL}`, ...format]),
-			runDocker(["ps", "-a", "--filter", `name=^${START_CONTAINER_PREFIX}`, ...format]),
-		].join("\n"),
-	);
-}
-
-/**
- * Parse `docker ps --format '{{json .}}'` lines into start containers. A container found only by
- * its name counts when the rest of the name is a variant, which leaves out compose's
- * `arbitrum-testnode-<service>-1` containers.
- *
- * @param {string} output
- * @returns {StartContainer[]}
- */
-export function parseStartContainers(output) {
-	/** @type {Map<string, StartContainer>} */
-	const containers = new Map();
-	for (const line of output.split("\n")) {
-		if (!line.trim()) {
-			continue;
-		}
-		/** @type {DockerPsRow} */
-		const row = JSON.parse(line);
-		const variant = startContainerVariant(row);
-		if (variant === undefined || containers.has(row.Names)) {
-			continue;
-		}
-		containers.set(row.Names, {
-			name: row.Names,
-			variant,
-			image: row.Image,
-			state: row.State,
-			health: /\((healthy|unhealthy|health: starting)\)/.exec(row.Status)?.[1] ?? "",
-			endpoints: parseEndpoints(row.Ports),
-		});
-	}
-	return [...containers.values()];
-}
-
-/**
- * @typedef {{ Names: string; Image: string; State: string; Status: string; Labels: string; Ports: string }} DockerPsRow
- */
-
-/**
- * The variant a start container runs, or undefined for any other container.
- *
- * @param {DockerPsRow} row
- */
-function startContainerVariant(row) {
-	const label = row.Labels.split(",").find((entry) =>
-		entry.startsWith(`${START_CONTAINER_LABEL}=`),
-	);
-	if (label) {
-		return label.slice(START_CONTAINER_LABEL.length + 1);
-	}
-	const suffix = row.Names.slice(START_CONTAINER_PREFIX.length);
-	return row.Names.startsWith(START_CONTAINER_PREFIX) && suffix in VARIANTS ? suffix : undefined;
-}
-
-/**
- * @param {string} ports `docker ps` Ports, e.g. `127.0.0.1:8545->8545/tcp, 127.0.0.1:8547-8548->8547-8548/tcp`;
- *   docker collapses consecutive ports into a range
- * @returns {Record<string, string>}
- */
-function parseEndpoints(ports) {
-	/** @type {Record<string, string>} */
-	const endpoints = {};
-	for (const [, ip, hostFirst, hostLast, containerFirst] of ports.matchAll(
-		/(\d{1,3}(?:\.\d{1,3}){3}):(\d{1,5})(?:-(\d{1,5}))?->(\d{1,5})(?:-\d{1,5})?\/tcp/g,
-	)) {
-		const span = Number(hostLast ?? hostFirst) - Number(hostFirst);
-		for (let offset = 0; offset <= span; offset++) {
-			const endpoint =
-				START_CONTAINER_ENDPOINTS[
-					/** @type {keyof typeof START_CONTAINER_ENDPOINTS} */ (Number(containerFirst) + offset)
-				];
-			if (endpoint) {
-				endpoints[endpoint.name] = endpoint.url(`${ip}:${Number(hostFirst) + offset}`);
-			}
-		}
-	}
-	return endpoints;
-}
-
-/**
- * @param {string} logs
- * @param {number} tailLines
- */
-export function filterContainerLogs(logs, tailLines) {
-	return logs
-		.split(/\r?\n/)
-		.filter((line) => !/Block Number|Block Hash|Block Time/.test(line))
-		.slice(-tailLines)
-		.join("\n");
 }
 
 /**

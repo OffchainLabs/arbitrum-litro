@@ -1,40 +1,16 @@
-import { resolve } from "node:path";
-import { type StartContainer, listStartContainers, readContainerLogs } from "@arbitrum/testnode";
+import { listStartContainers, readContainerLogs, selectStartContainer } from "@arbitrum/testnode";
 import {
 	loadCurrentRun,
 	readEventLogTail,
 	readTextLogTail,
 } from "@arbitrum/testnode-core/run-logger.js";
 import { Cli, z } from "incur";
-import { tryProjectRoot } from "../project-root.js";
+import { findCheckout } from "../project-root.js";
 
-/** The named container, else the only running one, else the only one. */
-function pickContainer(containers: StartContainer[], name: string | undefined) {
-	if (name) {
-		return containers.find((container) => container.name === name);
-	}
-	const running = containers.filter((container) => container.state === "running");
-	const candidates = running.length > 0 ? running : containers;
-	return candidates.length === 1 ? candidates[0] : undefined;
-}
-
-function containerLogs(tail: number, name: string | undefined) {
-	const containers = listStartContainers();
-	const container = pickContainer(containers, name);
-	if (!container) {
-		return {
-			success: false,
-			error:
-				containers.length === 0
-					? "No init run or start container found"
-					: `Pick a container with --container: ${containers.map((c) => c.name).join(", ")}`,
-		};
-	}
-	return {
-		success: true,
-		container: container.name,
-		lines: readContainerLogs(container.name, tail),
-	};
+/** The checkout's latest init run, unless a container was asked for. */
+function initRun(container: string | undefined) {
+	const checkout = findCheckout();
+	return checkout && !container ? loadCurrentRun(checkout.configDir) : null;
 }
 
 export const logsCli = Cli.create("logs", {
@@ -45,19 +21,22 @@ export const logsCli = Cli.create("logs", {
 		container: z
 			.string()
 			.optional()
-			.describe("Start container to read, when more than one exists (reads it over an init run)"),
+			.describe("Read this start container's logs (default: the init run, else the running one)"),
 	}),
 	run(c) {
 		const tail = c.options.tail ? Number(c.options.tail) : 50;
 		if (!Number.isFinite(tail) || tail <= 0) {
-			return { success: false, error: "tail must be a positive number" };
+			throw new Error("tail must be a positive number");
 		}
 
-		const root = tryProjectRoot();
-		const run =
-			root === undefined || c.options.container ? null : loadCurrentRun(resolve(root, "config"));
+		const run = initRun(c.options.container);
 		if (!run) {
-			return containerLogs(tail, c.options.container);
+			const container = selectStartContainer(listStartContainers(), c.options.container);
+			return {
+				success: true,
+				container: container.name,
+				lines: readContainerLogs(container.name, tail),
+			};
 		}
 
 		if (c.options.raw) {

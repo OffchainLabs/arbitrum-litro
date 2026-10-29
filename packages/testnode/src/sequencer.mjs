@@ -4,6 +4,7 @@
 // block speed. The image owns their behavior (docker/sequencer-features.sh); this module turns
 // caller options into the container settings that switch them on.
 
+import { endpointUrl } from "./endpoints.mjs";
 import { toBoolean, toGoDuration, toNumber } from "./inputs.mjs";
 
 /**
@@ -41,8 +42,8 @@ function resolveFastFeed(options) {
 		apiKey,
 		auth: toBoolean(options.fastFeedAuth, true),
 		delayMs: toNumber(options.fastFeedDelayMs, "fast-feed-delay-ms", { min: 0 }) ?? 0,
-		url: `ws://127.0.0.1:${FAST_FEED_HOST_PORT}/`,
-		sequencerFeedUrl: `ws://127.0.0.1:${SEQUENCER_FEED_HOST_PORT}/feed`,
+		url: endpointUrl(9646, FAST_FEED_HOST_PORT),
+		sequencerFeedUrl: endpointUrl(9642, SEQUENCER_FEED_HOST_PORT),
 	};
 }
 
