@@ -122,12 +122,5 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # The bundle inlines the libraries' built dist/, which their exports name.
-      - name: Bundle and pack
-        run: |
-          pnpm build
-          pnpm --filter @arbitrum/litro bundle
-          pnpm --filter @arbitrum/litro pack --pack-destination "$RUNNER_TEMP"
-
-      - name: Smoke-test the tarball
-        run: node scripts/ci/smoke-cli-tarball.mjs "$RUNNER_TEMP"/arbitrum-litro-*.tgz
+      - name: Pack the CLI and smoke-test the tarball
+        run: pnpm pack:cli "$RUNNER_TEMP/cli"
