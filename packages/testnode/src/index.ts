@@ -5,7 +5,10 @@ export type {
 	FastFeedMessage,
 	FastFeedState,
 	ImageRefOptions,
+	ObservabilityOptions,
+	ObservabilityState,
 	ScalarInput,
+	ScrapeTarget,
 	SequencerOptions,
 	SequencerState,
 	StartContainer,
@@ -26,6 +29,7 @@ export {
 	defaultActionOutputDir,
 	defaultStartOutputDir,
 	FAST_FEED_HOST_PORT,
+	findAsset,
 	findRebaseDockerfile,
 	findRepoRoot,
 	hasVariantSnapshot,
@@ -58,3 +62,19 @@ export {
 } from "./containers.mjs";
 export { CONTAINER_ENDPOINTS, endpointUrl } from "./endpoints.mjs";
 export { decodeFastFeedMessage, openFastFeed } from "./fast-feed-client.mjs";
+export {
+	GRAFANA_IMAGE,
+	METRICS_FOR_LABEL,
+	findMetricsStack,
+	PROMETHEUS_IMAGE,
+	grafanaProvisioning,
+	prometheusConfig,
+	removeMetricsStack,
+	startMetricsStack,
+} from "./metrics-stack.mjs";
+export {
+	NITRO_NODES,
+	observabilityEndpoints,
+	resolveObservabilityOptions,
+	scrapeTargets,
+} from "./observability.mjs";

@@ -1,4 +1,4 @@
-import { copyFileSync } from "node:fs";
+import { cpSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "tsup";
 
@@ -14,10 +14,14 @@ export default defineConfig({
 	clean: true,
 	noExternal: [/^@arbitrum\/testnode/],
 	onSuccess: async () => {
-		// findRebaseDockerfile looks beside the bundle before looking for a checkout.
-		copyFileSync(
-			fileURLToPath(new URL("../../docker/testnode-rebase.Dockerfile", import.meta.url)),
-			fileURLToPath(new URL("bundle/testnode-rebase.Dockerfile", import.meta.url)),
-		);
+		// findAsset looks beside the bundle, under the same paths as in the repo, before looking for
+		// a checkout.
+		for (const asset of ["docker/testnode-rebase.Dockerfile", "metrics/dashboards"]) {
+			cpSync(
+				fileURLToPath(new URL(`../../${asset}`, import.meta.url)),
+				fileURLToPath(new URL(`bundle/${asset}`, import.meta.url)),
+				{ recursive: true },
+			);
+		}
 	},
 });

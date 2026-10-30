@@ -11,7 +11,7 @@ Every release attaches the `litro` CLI to its [GitHub Release](https://github.co
 ```bash
 npm i -g https://github.com/OffchainLabs/arbitrum-litro/releases/latest/download/arbitrum-litro.tgz
 litro start --fast-feed-enabled
-litro status            # Running start containers and their RPC / feed URLs
+litro status            # Running start containers and their RPC / feed / Grafana URLs
 litro logs              # The container's recent logs
 litro stop              # Remove them
 ```
@@ -166,6 +166,41 @@ The relay is an unofficial local emulation written from the public
 [Use the Fast Feed](https://docs.arbitrum.io/how-arbitrum-works/priority-gas-auction/use-fast-feed)
 guide; it is not the production endpoint's software. It checks keys against a static list and does
 not emulate the onchain `Tickets` contract.
+
+### Metrics
+
+`--metrics` turns on every metric the testnode can report and opens Grafana with dashboards for
+them:
+
+```bash
+pnpm dev start --metrics            # add --fast-feed-enabled for the relay, --pprof for profiles
+open http://127.0.0.1:3000          # Grafana, no login; Prometheus is on 9090
+pnpm dev stop                       # removes the testnode, Prometheus and Grafana
+```
+
+| Source | Endpoint | What it covers |
+|---|---|---|
+| L2 sequencer, L2 validator, L3 node | `:6070`, `:6072`, `:6074` `/debug/metrics/prometheus` | Everything Nitro reports: sequencing, batch posting, the data poster, BoLD assertions, feeds, ArbOS, the chain database, process CPU and memory |
+| Chain exporter | `:6080/metrics` | Every chain from L1 up, over JSON-RPC (Anvil has no metrics of its own): blocks, transactions, gas, base fee, txpool; and per rollup the batches posted, delayed-inbox backlog, assertions and ArbOS version |
+| Fast Feed relay | `:9646/metrics` | Clients, frames relayed, connections refused by status, clients closed by code |
+| pprof (`--pprof`) | `:6071`, `:6073`, `:6075` `/debug/pprof/` | `go tool pprof http://127.0.0.1:6071/debug/pprof/profile?seconds=10` |
+
+The dashboards, each panel captioned with what it tells you:
+
+- **Litro chains** (home): is every chain producing blocks, how much load it carries, and whether
+  the rollup pipeline is moving: time since the last batch, deposits waiting in the delayed inbox,
+  and assertions created and confirmed.
+- **Nitro nodes**: whether each node keeps up with the sequencer, why blocks close, dropped
+  transactions, the batch poster's backlog and wallet, assertions posted, feed clients, CPU, memory.
+- **Fast Feed relay**: connected clients, frame rate, and why clients were refused or closed.
+- **Nitro: every metric**: one panel per metric any node exports, filtered by regex, so nothing
+  Nitro reports is out of reach.
+
+The raw endpoints are published on `127.0.0.1` too, for your own Prometheus. `--grafana-port` and
+`--prometheus-port` move the UIs. Prometheus and Grafana run as containers beside the testnode
+(pinned `prom/prometheus:v3.15.0` and `grafana/grafana:13.2.3`), configured with `docker cp`
+rather than bind mounts, so they work on Docker Desktop, Colima and remote daemons. Metrics need
+an image from litro v0.5.0 or later.
 
 ### GitHub Action
 

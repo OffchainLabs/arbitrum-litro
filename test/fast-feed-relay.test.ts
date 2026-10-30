@@ -154,6 +154,36 @@ describe("fast feed relay", () => {
 		expect(status).toBe(426);
 	});
 
+	it("serves its counters at GET /metrics, without key material", async () => {
+		const { relay, upstream, url } = await startRelay({ apiKeys: ["secret-key"], delayMs: 5 });
+		expect(await upgradeStatus(url, {})).toBe(401);
+		const client = await subscribe(url, "secret-key");
+		expect(await upgradeStatus(url, { Authorization: "Bearer secret-key" })).toBe(429);
+		upstream.push("abcd");
+		await waitFor(() => client.messages.length === 1);
+		client.send(1, Buffer.from("not allowed"));
+		await waitFor(() => client.closes.length === 1);
+
+		const text = await (await fetch(`http://127.0.0.1:${relay.port}/metrics`)).text();
+		expect(text).not.toContain("secret-key");
+		const value = (series: string) =>
+			Number(
+				text
+					.split("\n")
+					.find((line) => line.startsWith(`${series} `))
+					?.split(" ")[1],
+			);
+		expect(value("litro_fast_feed_connections_total")).toBe(1);
+		expect(value("litro_fast_feed_frames_total")).toBe(1);
+		expect(value("litro_fast_feed_bytes_total")).toBe(4);
+		expect(value('litro_fast_feed_rejected_total{status="401"}')).toBe(1);
+		expect(value('litro_fast_feed_rejected_total{status="429"}')).toBe(1);
+		expect(value('litro_fast_feed_closed_total{code="1003"}')).toBe(1);
+		expect(value("litro_fast_feed_clients")).toBe(0);
+		expect(value("litro_fast_feed_upstream_connected")).toBe(1);
+		expect(value("litro_fast_feed_delay_ms")).toBe(5);
+	});
+
 	it("closes a client that sends a data frame with 1003", async () => {
 		const { url } = await startRelay();
 		const client = await subscribe(url);

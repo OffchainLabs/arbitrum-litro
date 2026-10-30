@@ -1,0 +1,407 @@
+{
+	"uid": "litro-fast-feed",
+	"title": "Fast Feed relay",
+	"description": "The local Fast Feed relay: who is connected, what it relays, and why it turned clients away.",
+	"tags": [
+		"litro",
+		"fast-feed"
+	],
+	"timezone": "browser",
+	"editable": true,
+	"graphTooltip": 1,
+	"refresh": "5s",
+	"time": {
+		"from": "now-15m",
+		"to": "now"
+	},
+	"schemaVersion": 39,
+	"version": 1,
+	"templating": {
+		"list": []
+	},
+	"annotations": {
+		"list": []
+	},
+	"panels": [
+		{
+			"id": 1,
+			"type": "stat",
+			"title": "Clients connected",
+			"description": "Clients holding a Fast Feed connection now.",
+			"datasource": {
+				"type": "prometheus",
+				"uid": "prometheus"
+			},
+			"gridPos": {
+				"x": 0,
+				"y": 0,
+				"w": 6,
+				"h": 4
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "prometheus"
+					},
+					"refId": "A",
+					"expr": "litro_fast_feed_clients",
+					"legendFormat": "clients"
+				}
+			],
+			"fieldConfig": {
+				"defaults": {
+					"unit": "short"
+				},
+				"overrides": []
+			},
+			"options": {
+				"reduceOptions": {
+					"calcs": [
+						"lastNotNull"
+					],
+					"values": false
+				},
+				"textMode": "value_and_name",
+				"colorMode": "none",
+				"graphMode": "none"
+			}
+		},
+		{
+			"id": 2,
+			"type": "stat",
+			"title": "Upstream connected",
+			"description": "Whether the relay is connected to Nitro's transaction feed (1 = connected).",
+			"datasource": {
+				"type": "prometheus",
+				"uid": "prometheus"
+			},
+			"gridPos": {
+				"x": 6,
+				"y": 0,
+				"w": 6,
+				"h": 4
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "prometheus"
+					},
+					"refId": "A",
+					"expr": "litro_fast_feed_upstream_connected",
+					"legendFormat": "upstream"
+				}
+			],
+			"fieldConfig": {
+				"defaults": {
+					"unit": "short"
+				},
+				"overrides": []
+			},
+			"options": {
+				"reduceOptions": {
+					"calcs": [
+						"lastNotNull"
+					],
+					"values": false
+				},
+				"textMode": "value_and_name",
+				"colorMode": "none",
+				"graphMode": "none"
+			}
+		},
+		{
+			"id": 3,
+			"type": "stat",
+			"title": "Added delay",
+			"description": "Delay the relay adds to every frame (fast-feed-delay-ms).",
+			"datasource": {
+				"type": "prometheus",
+				"uid": "prometheus"
+			},
+			"gridPos": {
+				"x": 12,
+				"y": 0,
+				"w": 6,
+				"h": 4
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "prometheus"
+					},
+					"refId": "A",
+					"expr": "litro_fast_feed_delay_ms",
+					"legendFormat": "per frame"
+				}
+			],
+			"fieldConfig": {
+				"defaults": {
+					"unit": "ms"
+				},
+				"overrides": []
+			},
+			"options": {
+				"reduceOptions": {
+					"calcs": [
+						"lastNotNull"
+					],
+					"values": false
+				},
+				"textMode": "value_and_name",
+				"colorMode": "none",
+				"graphMode": "none"
+			}
+		},
+		{
+			"id": 4,
+			"type": "stat",
+			"title": "Upstream reconnects",
+			"description": "Times the relay reconnected to Nitro's feed.",
+			"datasource": {
+				"type": "prometheus",
+				"uid": "prometheus"
+			},
+			"gridPos": {
+				"x": 18,
+				"y": 0,
+				"w": 6,
+				"h": 4
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "prometheus"
+					},
+					"refId": "A",
+					"expr": "litro_fast_feed_upstream_reconnects_total",
+					"legendFormat": "reconnects"
+				}
+			],
+			"fieldConfig": {
+				"defaults": {
+					"unit": "short"
+				},
+				"overrides": []
+			},
+			"options": {
+				"reduceOptions": {
+					"calcs": [
+						"lastNotNull"
+					],
+					"values": false
+				},
+				"textMode": "value_and_name",
+				"colorMode": "none",
+				"graphMode": "none"
+			}
+		},
+		{
+			"id": 5,
+			"type": "timeseries",
+			"title": "Frames per second",
+			"description": "Transactions relayed from Nitro to clients.",
+			"datasource": {
+				"type": "prometheus",
+				"uid": "prometheus"
+			},
+			"gridPos": {
+				"x": 0,
+				"y": 4,
+				"w": 12,
+				"h": 8
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "prometheus"
+					},
+					"refId": "A",
+					"expr": "rate(litro_fast_feed_frames_total[30s])",
+					"legendFormat": "frames/s"
+				}
+			],
+			"fieldConfig": {
+				"defaults": {
+					"unit": "short",
+					"custom": {
+						"lineWidth": 2,
+						"fillOpacity": 10,
+						"stacking": {
+							"mode": "none"
+						},
+						"showPoints": "never"
+					}
+				},
+				"overrides": []
+			},
+			"options": {
+				"legend": {
+					"displayMode": "list",
+					"placement": "bottom"
+				},
+				"tooltip": {
+					"mode": "multi",
+					"sort": "desc"
+				}
+			}
+		},
+		{
+			"id": 6,
+			"type": "timeseries",
+			"title": "Bytes per second",
+			"description": "Payload relayed from Nitro to clients.",
+			"datasource": {
+				"type": "prometheus",
+				"uid": "prometheus"
+			},
+			"gridPos": {
+				"x": 12,
+				"y": 4,
+				"w": 12,
+				"h": 8
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "prometheus"
+					},
+					"refId": "A",
+					"expr": "rate(litro_fast_feed_bytes_total[30s])",
+					"legendFormat": "bytes/s"
+				}
+			],
+			"fieldConfig": {
+				"defaults": {
+					"unit": "Bps",
+					"custom": {
+						"lineWidth": 2,
+						"fillOpacity": 10,
+						"stacking": {
+							"mode": "none"
+						},
+						"showPoints": "never"
+					}
+				},
+				"overrides": []
+			},
+			"options": {
+				"legend": {
+					"displayMode": "list",
+					"placement": "bottom"
+				},
+				"tooltip": {
+					"mode": "multi",
+					"sort": "desc"
+				}
+			}
+		},
+		{
+			"id": 7,
+			"type": "timeseries",
+			"title": "Rejected connections",
+			"description": "Upgrade requests refused, by HTTP status: 401 wrong or missing key, 429 key already connected, 426 not a WebSocket upgrade.",
+			"datasource": {
+				"type": "prometheus",
+				"uid": "prometheus"
+			},
+			"gridPos": {
+				"x": 0,
+				"y": 12,
+				"w": 12,
+				"h": 8
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "prometheus"
+					},
+					"refId": "A",
+					"expr": "increase(litro_fast_feed_rejected_total[1m])",
+					"legendFormat": "HTTP {{status}}"
+				}
+			],
+			"fieldConfig": {
+				"defaults": {
+					"unit": "short",
+					"custom": {
+						"lineWidth": 2,
+						"fillOpacity": 30,
+						"stacking": {
+							"mode": "normal"
+						},
+						"showPoints": "never"
+					}
+				},
+				"overrides": []
+			},
+			"options": {
+				"legend": {
+					"displayMode": "list",
+					"placement": "bottom"
+				},
+				"tooltip": {
+					"mode": "multi",
+					"sort": "desc"
+				}
+			}
+		},
+		{
+			"id": 8,
+			"type": "timeseries",
+			"title": "Clients closed by the relay",
+			"description": "Connections the relay closed, by close code: 1013 client fell behind, 1003 client sent data, 1008 round ended, 1011 relay shutting down.",
+			"datasource": {
+				"type": "prometheus",
+				"uid": "prometheus"
+			},
+			"gridPos": {
+				"x": 12,
+				"y": 12,
+				"w": 12,
+				"h": 8
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "prometheus"
+					},
+					"refId": "A",
+					"expr": "increase(litro_fast_feed_closed_total[1m])",
+					"legendFormat": "close {{code}}"
+				}
+			],
+			"fieldConfig": {
+				"defaults": {
+					"unit": "short",
+					"custom": {
+						"lineWidth": 2,
+						"fillOpacity": 30,
+						"stacking": {
+							"mode": "normal"
+						},
+						"showPoints": "never"
+					}
+				},
+				"overrides": []
+			},
+			"options": {
+				"legend": {
+					"displayMode": "list",
+					"placement": "bottom"
+				},
+				"tooltip": {
+					"mode": "multi",
+					"sort": "desc"
+				}
+			}
+		}
+	]
+}
