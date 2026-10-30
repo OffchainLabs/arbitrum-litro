@@ -52,6 +52,9 @@ export const SELECTORS = {
 const ARBSYS = "0x0000000000000000000000000000000000000064";
 const ARBOS_VERSION_OFFSET = 55;
 
+/** Type of the transaction ArbOS puts first in every Nitro block; not something a user sent. */
+const ARBITRUM_INTERNAL_TX_TYPE = 0x6a;
+
 /** Most blocks folded into the counters per poll, and the widest eth_getLogs range asked for. */
 const MAX_BLOCKS_PER_POLL = 200;
 const MAX_LOG_RANGE = 5000;
@@ -70,7 +73,8 @@ const MAX_LOG_RANGE = 5000;
  * @typedef {{
  *   up: boolean; chainId?: number; head?: BlockInfo; gasPriceWei?: number;
  *   txpool?: { pending: number; queued: number }; arbosVersion?: number;
- *   counted?: number; blocks: number; transactions: number; gasUsed: number; rollup?: RollupState;
+ *   counted?: number; blocks: number; transactions: number; failedTransactions: number;
+ *   gasUsed: number; lastUserTransaction?: number; rollup?: RollupState;
  *   noTxpool?: boolean;
  * }} ChainState
  */
@@ -166,11 +170,36 @@ async function countBlocks(chain, state, head) {
 	const to = Math.min(head.number, from + MAX_BLOCKS_PER_POLL - 1);
 	for (let number = from; number <= to; number++) {
 		const block = number === head.number ? head : await getBlock(chain.rpc, number);
+		const { user, failed } = await userTransactions(chain.rpc, number, block.transactions);
 		state.blocks += 1;
-		state.transactions += block.transactions;
+		state.transactions += user;
+		state.failedTransactions += failed;
 		state.gasUsed += block.gasUsed;
+		if (user > 0) {
+			state.lastUserTransaction = block.timestamp;
+		}
 	}
 	state.counted = Math.max(state.counted ?? head.number, to);
+}
+
+/**
+ * A block's transactions as a user sees them: without the internal transaction ArbOS starts
+ * every Nitro block with, and how many of them reverted.
+ *
+ * @param {string} url
+ * @param {number} number
+ * @param {number} count the block's transaction count, used when receipts are unavailable
+ */
+async function userTransactions(url, number, count) {
+	/** @type {Array<{ type: string; status: string }> | null} */
+	const receipts = await rpc(url, "eth_getBlockReceipts", [`0x${number.toString(16)}`]).catch(
+		() => null,
+	);
+	if (!receipts) {
+		return { user: count, failed: 0 };
+	}
+	const user = receipts.filter((receipt) => toNumber(receipt.type) !== ARBITRUM_INTERNAL_TX_TYPE);
+	return { user: user.length, failed: user.filter((receipt) => receipt.status === "0x0").length };
 }
 
 /** @param {ChainSpec} chain @param {ChainState} state */
@@ -465,9 +494,21 @@ function executionFamilies(chains) {
 		),
 		family(
 			"litro_transactions_total",
-			"Transactions in blocks produced since the exporter started",
+			"User transactions in blocks produced since the exporter started (not ArbOS's internal ones)",
 			"counter",
 			per((s) => s.transactions),
+		),
+		family(
+			"litro_failed_transactions_total",
+			"User transactions that reverted, since the exporter started",
+			"counter",
+			per((s) => s.failedTransactions),
+		),
+		family(
+			"litro_last_user_transaction_timestamp_seconds",
+			"Timestamp of the latest block with a user transaction",
+			"gauge",
+			per((s) => s.lastUserTransaction),
 		),
 		family(
 			"litro_gas_used_total",
@@ -585,7 +626,7 @@ export async function startChainExporter({ chains, port, intervalMs }) {
 	/** @type {Array<[ChainSpec, ChainState]>} */
 	const states = chains.map((chain) => [
 		chain,
-		{ up: false, blocks: 0, transactions: 0, gasUsed: 0 },
+		{ up: false, blocks: 0, transactions: 0, failedTransactions: 0, gasUsed: 0 },
 	]);
 	let stopped = false;
 	const loop = (async () => {

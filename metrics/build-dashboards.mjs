@@ -19,7 +19,7 @@ const DATASOURCE = { type: "prometheus", uid: "prometheus" };
  *   kind?: "timeseries" | "stat"; unit?: string; width?: number; height?: number;
  *   stack?: boolean; decimals?: number;
  * }} PanelSpec
- * @typedef {{ row: string } | PanelSpec} Item
+ * @typedef {{ row: string; collapsed?: boolean } | PanelSpec} Item
  * @typedef {{ name: string; label?: string; query: string; multi?: boolean; textbox?: string }} VariableSpec
  * @typedef {{ uid: string; title: string; description: string; tags: string[]; variables: VariableSpec[]; items: Item[]; repeat?: { variable: string; panel: PanelSpec } }} DashboardSpec
  * @typedef {{
@@ -33,6 +33,8 @@ const DATASOURCE = { type: "prometheus", uid: "prometheus" };
 function fieldDefaults(spec) {
 	return {
 		unit: spec.unit ?? "short",
+		// Every metric here is a count, rate, size or duration, so axes start at zero.
+		...((spec.kind ?? "timeseries") === "timeseries" ? { min: 0 } : {}),
 		...(spec.decimals === undefined ? {} : { decimals: spec.decimals }),
 		...((spec.kind ?? "timeseries") === "timeseries"
 			? {
@@ -88,10 +90,17 @@ function panel(spec, at, id) {
 	};
 }
 
-/** Lay items out left to right in a 24-column grid, wrapping rows. @param {Item[]} items */
+/**
+ * Lay items out left to right in a 24-column grid, wrapping rows. Panels after a collapsed row are
+ * nested inside it, as Grafana stores them, so they stay hidden until the row is opened.
+ *
+ * @param {Item[]} items
+ */
 function layout(items) {
 	/** @type {GrafanaPanel[]} */
 	const panels = [];
+	/** @type {GrafanaPanel[]} */
+	let target = panels;
 	let x = 0;
 	let y = 0;
 	let rowHeight = 0;
@@ -101,14 +110,17 @@ function layout(items) {
 			y += rowHeight;
 			x = 0;
 			rowHeight = 0;
+			/** @type {GrafanaPanel[]} */
+			const nested = [];
 			panels.push({
 				id: id++,
 				type: "row",
 				title: item.row,
-				collapsed: false,
+				collapsed: item.collapsed ?? false,
 				gridPos: { x: 0, y, w: 24, h: 1 },
-				panels: [],
+				panels: nested,
 			});
+			target = item.collapsed ? nested : panels;
 			y += 1;
 			continue;
 		}
@@ -119,7 +131,7 @@ function layout(items) {
 			rowHeight = 0;
 		}
 		const built = panel(item, { x, y }, id++);
-		panels.push(built);
+		target.push(built);
 		x += width;
 		rowHeight = Math.max(rowHeight, built.gridPos.h);
 	}
@@ -184,13 +196,17 @@ export function dashboard(spec) {
 }
 
 const CHAIN = '{chain=~"$chain"}';
+const NODE = '{node=~"$node"}';
+
+/** Only the series that moved, so a stacked panel's legend lists what actually happened. */
+const moved = (/** @type {string} */ expr) => `(${expr}) > 0`;
 
 /** @type {DashboardSpec} */
 export const LITRO_CHAINS = {
 	uid: "litro-chains",
 	title: "Litro chains",
 	description:
-		"Every chain the testnode runs, L1 to L3: block production, load, fees, and the rollup pipeline between each chain and its parent.",
+		"Every chain the testnode runs, L1 to L3: is it running, how much load it carries, and whether deposits, batches and assertions are moving between each chain and its parent.",
 	tags: ["chains"],
 	variables: [{ name: "chain", query: "label_values(eth_exe_block_most_recent_number, chain)" }],
 	items: [
@@ -210,95 +226,79 @@ export const LITRO_CHAINS = {
 			queries: [{ expr: `eth_exe_block_most_recent_number${CHAIN}`, legend: "{{chain}}" }],
 		},
 		{
-			title: "Head block age",
+			title: "L1 head block age",
 			description:
-				"Seconds since each chain's head block was produced. L1 mines a block every second, so a climbing L1 value means it has stopped. Nitro chains produce blocks only when there are transactions, so their age climbs whenever the chain is idle.",
+				"Seconds since the L1 (Anvil) mined a block. It mines one a second, so anything above a few seconds means the L1 has stopped.",
 			kind: "stat",
-			width: 6,
+			width: 4,
 			unit: "s",
-			decimals: 1,
-			queries: [{ expr: `time() - litro_block_timestamp_seconds${CHAIN}`, legend: "{{chain}}" }],
+			decimals: 0,
+			queries: [{ expr: 'time() - litro_block_timestamp_seconds{chain="l1"}', legend: "l1" }],
 		},
 		{
-			title: "ArbOS version",
-			description: "ArbOS version each Arbitrum chain runs.",
+			title: "Last transaction",
+			description:
+				"Seconds since each Arbitrum chain included a user transaction. Nitro produces blocks only when there is something to sequence, so this is how long the chain has been idle.",
 			kind: "stat",
-			width: 6,
-			queries: [{ expr: `litro_arbos_version${CHAIN}`, legend: "{{chain}}" }],
-		},
-		{ row: "Load" },
-		{
-			title: "Blocks per second",
-			description:
-				"Block production rate. L1 (Anvil) mines one block a second; Nitro chains produce a block whenever there is something to sequence.",
-			unit: "short",
-			queries: [{ expr: `rate(litro_blocks_total${CHAIN}[30s])`, legend: "{{chain}}" }],
-		},
-		{
-			title: "Transactions per second",
-			description: "Transactions included in blocks, per chain.",
-			unit: "short",
-			queries: [{ expr: `rate(litro_transactions_total${CHAIN}[30s])`, legend: "{{chain}}" }],
-		},
-		{
-			title: "Gas per second",
-			description: "Gas used by included transactions, per chain.",
-			unit: "short",
-			queries: [{ expr: `rate(litro_gas_used_total${CHAIN}[30s])`, legend: "{{chain}}" }],
-		},
-		{
-			title: "Base fee",
-			description:
-				"Base fee of each chain's head block. Nitro raises it when blocks fill beyond the speed limit.",
-			unit: "gwei",
-			decimals: 4,
-			queries: [{ expr: `eth_exe_block_head_base_fee_per_gas${CHAIN} / 1e9`, legend: "{{chain}}" }],
-		},
-		{
-			title: "Txpool",
-			description:
-				"Transactions waiting in each chain's pool. On Nitro, queued transactions usually mean a nonce gap.",
-			stack: true,
-			queries: [{ expr: `eth_exe_txpool_transactions${CHAIN}`, legend: "{{chain}} {{status}}" }],
-		},
-		{
-			title: "Head block gas used",
-			description: "Gas used by the head block, against its limit.",
-			queries: [{ expr: `eth_exe_block_head_gas_used${CHAIN}`, legend: "{{chain}} used" }],
-		},
-		{ row: "Rollup pipeline (child → parent)" },
-		{
-			title: "Time since last batch",
-			description:
-				"Seconds since the batch poster last posted this chain's transactions to its parent chain. While transactions are being sent, a value that keeps climbing means batches are not reaching the parent.",
+			width: 4,
 			unit: "s",
 			decimals: 0,
 			queries: [
 				{
-					expr: "time() - litro_rollup_last_batch_timestamp_seconds",
-					legend: "{{chain}} → {{parent}}",
+					expr: `time() - litro_last_user_transaction_timestamp_seconds{chain=~"$chain", chain!="l1"}`,
+					legend: "{{chain}}",
 				},
 			],
 		},
 		{
-			title: "Batches posted",
+			title: "ArbOS version",
 			description:
-				"Batches in each sequencer inbox (batchCount) and how many were posted per minute.",
+				"ArbOS version each Arbitrum chain runs; 60 once --pga-rounds-per-block has upgraded it.",
+			kind: "stat",
+			width: 4,
+			queries: [{ expr: `litro_arbos_version${CHAIN}`, legend: "{{chain}}" }],
+		},
+		{ row: "Load" },
+		{
+			title: "Transactions per second",
+			description:
+				"User transactions included per second, per chain. ArbOS's own start-of-block transaction is not counted.",
+			queries: [{ expr: `rate(litro_transactions_total${CHAIN}[30s])`, legend: "{{chain}}" }],
+		},
+		{
+			title: "Failed transactions per second",
+			description:
+				"User transactions that were included but reverted. A reverting contract call shows here, not as an RPC error.",
 			queries: [
-				{ expr: "litro_rollup_batches", legend: "{{chain}} → {{parent}} total" },
-				{ expr: "increase(litro_rollup_batches[1m])", legend: "{{chain}} → {{parent}} per minute" },
+				{ expr: `rate(litro_failed_transactions_total${CHAIN}[30s])`, legend: "{{chain}}" },
 			],
 		},
 		{
-			title: "Deposits waiting for the sequencer",
+			title: "Gas per second",
 			description:
-				"Deposits, retryables and force-included transactions in the delayed inbox that no posted batch has read yet. Batch posting reports, which Nitro appends with every batch, are left out. A message should be read by the next batch, seconds after it arrives.",
+				"Gas used per second, per chain. On the L1 this is mostly the batch poster and validator paying to post the rollups' data.",
+			queries: [{ expr: `rate(litro_gas_used_total${CHAIN}[30s])`, legend: "{{chain}}" }],
+		},
+		{
+			title: "Batches per minute",
+			description:
+				"Batches each batch poster posted to its parent chain in the last minute. It follows transaction load; zero while the chain is idle.",
+			queries: [{ expr: "increase(litro_rollup_batches[1m])", legend: "{{chain}} → {{parent}}" }],
+		},
+		{ row: "Deposits, batches and withdrawals (child → parent)" },
+		{
+			title: "Deposits waiting",
+			description:
+				"Deposits, retryables and force-included transactions in the delayed inbox that no posted batch has read yet. Batch posting reports are left out.",
+			kind: "stat",
+			width: 6,
 			queries: [{ expr: "litro_rollup_delayed_waiting", legend: "{{chain}}" }],
 		},
 		{
 			title: "Oldest waiting deposit",
 			description:
-				"How long the oldest of those messages has waited. Empty when nothing is waiting; a value that keeps climbing means deposits are not reaching the chain.",
+				"How long the oldest of those messages has waited. Empty when nothing waits; a value that keeps climbing means deposits are not reaching the chain.",
+			width: 18,
 			unit: "s",
 			decimals: 0,
 			queries: [
@@ -309,23 +309,37 @@ export const LITRO_CHAINS = {
 			],
 		},
 		{
-			title: "Deposits and retryables per minute",
+			title: "Time since last batch",
 			description:
-				"User messages delivered to each delayed inbox, by kind: eth_deposit, retryable, l2_message (force-included). Batch posting reports, one per batch, are left out.",
-			stack: true,
+				"Seconds since each chain's transactions were last posted to its parent. While transactions are being sent, a value that keeps climbing means batches are not reaching the parent; it climbs whenever the chain is idle.",
+			unit: "s",
+			decimals: 0,
 			queries: [
 				{
-					expr: 'increase(litro_rollup_delayed_messages_total{kind!~"batch_posting_report|initialize"}[1m])',
+					expr: "time() - litro_rollup_last_batch_timestamp_seconds",
+					legend: "{{chain}} → {{parent}}",
+				},
+			],
+		},
+		{
+			title: "Deposits and retryables per minute",
+			description:
+				"User messages delivered to each delayed inbox in the last minute, by kind: eth_deposit, retryable, l2_message (force-included). Only kinds that occurred are shown.",
+			queries: [
+				{
+					expr: moved(
+						'increase(litro_rollup_delayed_messages_total{kind!~"batch_posting_report|initialize"}[1m])',
+					),
 					legend: "{{chain}} {{kind}}",
 				},
 			],
 		},
 		{
 			title: "Time since last assertion",
-			kind: "stat",
-			width: 12,
 			description:
-				"Seconds since the validator last created, and last confirmed, an assertion of this chain's state on the parent chain. Withdrawals finalize only once their assertion is confirmed.",
+				"Seconds since the validator last created, and last confirmed, an assertion of this chain's state on the parent chain. A withdrawal can be claimed once an assertion covering it is confirmed.",
+			kind: "stat",
+			width: 24,
 			unit: "s",
 			decimals: 0,
 			queries: [
@@ -339,14 +353,6 @@ export const LITRO_CHAINS = {
 				},
 			],
 		},
-		{
-			title: "Assertions",
-			description: "Assertions created and confirmed on each rollup since it was deployed.",
-			queries: [
-				{ expr: "litro_rollup_assertions_created_total", legend: "{{chain}} created" },
-				{ expr: "litro_rollup_assertions_confirmed_total", legend: "{{chain}} confirmed" },
-			],
-		},
 	],
 };
 
@@ -355,7 +361,7 @@ export const FAST_FEED_RELAY = {
 	uid: "litro-fast-feed",
 	title: "Fast Feed relay",
 	description:
-		"The local Fast Feed relay: who is connected, what it relays, and why it turned clients away.",
+		"The local Fast Feed relay: who is connected, how fast transactions reach them, and why clients were turned away or dropped.",
 	tags: ["fast-feed"],
 	variables: [],
 	items: [
@@ -363,57 +369,70 @@ export const FAST_FEED_RELAY = {
 			title: "Clients connected",
 			description: "Clients holding a Fast Feed connection now.",
 			kind: "stat",
-			width: 6,
+			width: 8,
 			queries: [{ expr: "litro_fast_feed_clients", legend: "clients" }],
 		},
 		{
 			title: "Upstream connected",
-			description: "Whether the relay is connected to Nitro's transaction feed (1 = connected).",
+			description:
+				"Whether the relay is connected to Nitro's transaction feed (1 = connected). At 0, clients stay connected but receive nothing.",
 			kind: "stat",
-			width: 6,
+			width: 8,
 			queries: [{ expr: "litro_fast_feed_upstream_connected", legend: "upstream" }],
 		},
 		{
-			title: "Added delay",
-			description: "Delay the relay adds to every frame (fast-feed-delay-ms).",
-			kind: "stat",
-			width: 6,
-			unit: "ms",
-			queries: [{ expr: "litro_fast_feed_delay_ms", legend: "per frame" }],
-		},
-		{
 			title: "Upstream reconnects",
-			description: "Times the relay reconnected to Nitro's feed.",
+			description: "Times the relay had to reconnect to Nitro's transaction feed.",
 			kind: "stat",
-			width: 6,
+			width: 8,
 			queries: [{ expr: "litro_fast_feed_upstream_reconnects_total", legend: "reconnects" }],
 		},
 		{
-			title: "Frames per second",
-			description: "Transactions relayed from Nitro to clients.",
-			queries: [{ expr: "rate(litro_fast_feed_frames_total[30s])", legend: "frames/s" }],
+			title: "Delivery latency",
+			description:
+				"Age of each transaction as the relay sends it, from the moment the sequencer sequenced it (timestamp_ms): median and 99th percentile. Includes any --fast-feed-delay-ms.",
+			unit: "ms",
+			queries: [
+				{
+					expr: "histogram_quantile(0.5, sum by (le) (rate(litro_fast_feed_delivery_latency_ms_bucket[1m])))",
+					legend: "p50",
+				},
+				{
+					expr: "histogram_quantile(0.99, sum by (le) (rate(litro_fast_feed_delivery_latency_ms_bucket[1m])))",
+					legend: "p99",
+				},
+			],
 		},
 		{
-			title: "Bytes per second",
-			description: "Payload relayed from Nitro to clients.",
-			unit: "Bps",
-			queries: [{ expr: "rate(litro_fast_feed_bytes_total[30s])", legend: "bytes/s" }],
+			title: "Transactions per second",
+			description:
+				"Transactions relayed to clients per second. User transactions should match the L2 on the Litro chains dashboard; all frames also include the ArbOS transaction Nitro sequences at the start of every block.",
+			queries: [
+				{ expr: "rate(litro_fast_feed_user_frames_total[30s])", legend: "user transactions" },
+				{ expr: "rate(litro_fast_feed_frames_total[30s])", legend: "all frames" },
+			],
 		},
 		{
 			title: "Rejected connections",
 			description:
-				"Upgrade requests refused, by HTTP status: 401 wrong or missing key, 429 key already connected, 426 not a WebSocket upgrade.",
-			stack: true,
+				"Upgrade requests refused in the last minute, by HTTP status: 401 wrong or missing API key, 429 the key is already connected, 426 not a WebSocket upgrade.",
 			queries: [
-				{ expr: "increase(litro_fast_feed_rejected_total[1m])", legend: "HTTP {{status}}" },
+				{
+					expr: 'sum by (status) (increase(litro_fast_feed_rejected_total[1m])) or label_replace(vector(0), "status", "none", "", "")',
+					legend: "HTTP {{status}}",
+				},
 			],
 		},
 		{
 			title: "Clients closed by the relay",
 			description:
-				"Connections the relay closed, by close code: 1013 client fell behind, 1003 client sent data, 1008 round ended, 1011 relay shutting down.",
-			stack: true,
-			queries: [{ expr: "increase(litro_fast_feed_closed_total[1m])", legend: "close {{code}}" }],
+				"Connections the relay closed in the last minute, by close code: 1013 client fell behind, 1003 client sent data, 1008 round ended, 1011 relay shutting down.",
+			queries: [
+				{
+					expr: 'sum by (code) (increase(litro_fast_feed_closed_total[1m])) or label_replace(vector(0), "code", "none", "", "")',
+					legend: "close {{code}}",
+				},
+			],
 		},
 	],
 };
@@ -427,7 +446,7 @@ export const NITRO_EVERY_METRIC = {
 	tags: ["nitro"],
 	variables: [
 		{ name: "node", label: "Node", query: 'label_values(up{job="nitro"}, node)', multi: false },
-		{ name: "filter", label: "Metric regex", query: "", textbox: "arb_.*" },
+		{ name: "filter", label: "Metric regex", query: "", textbox: "arb_sequencer_.*" },
 		{
 			name: "metric",
 			label: "Metric",
@@ -445,10 +464,8 @@ export const NITRO_EVERY_METRIC = {
 	},
 };
 
-const NODE = '{node=~"$node"}';
-
 /**
- * Curated from the metrics Nitro v3.12.1 and its geth register (names as geth's Prometheus exporter
+ * Curated from the metrics Nitro v3.12.1 and its geth export (names as geth's Prometheus exporter
  * writes them: `/` becomes `_`, histograms become summaries with `quantile` labels).
  *
  * @type {DashboardSpec}
@@ -457,23 +474,16 @@ export const NITRO_NODES = {
 	uid: "litro-nitro-nodes",
 	title: "Nitro nodes",
 	description:
-		"What each Nitro node is doing: keeping up, sequencing, posting batches, asserting, serving feeds, and the resources it uses.",
+		"What each Nitro node is doing: keeping up with the sequencer, sequencing, posting batches, and the resources it uses. Panels that only matter when something breaks are in Diagnostics.",
 	tags: ["nitro"],
 	variables: [{ name: "node", label: "Node", query: 'label_values(up{job="nitro"}, node)' }],
 	items: [
 		{ row: "Is each node keeping up?" },
 		{
-			title: "Head block",
-			description: "Latest block each node has processed.",
-			kind: "stat",
-			width: 8,
-			queries: [{ expr: `chain_head_block${NODE}`, legend: "{{node}}" }],
-		},
-		{
 			title: "Blocks behind the sequencer",
 			description:
-				"How far each node trails the newest block any node of the same chain has. A validator that keeps falling behind cannot assert recent state.",
-			width: 16,
+				"How far each node trails the newest block of its chain. Under load the validator falls behind and catches up; one that keeps falling behind delays assertions, and so withdrawals.",
+			width: 24,
 			queries: [
 				{
 					expr: `max by (chain) (chain_head_block) - on (chain) group_right chain_head_block${NODE}`,
@@ -483,17 +493,9 @@ export const NITRO_NODES = {
 		},
 		{ row: "Sequencer" },
 		{
-			title: "Sequencer queue",
-			description:
-				"Transactions waiting to be sequenced, and the sequencer's backlog. Growing queues mean transactions arrive faster than blocks are built.",
-			queries: [
-				{ expr: `arb_sequencer_queue_length${NODE}`, legend: "{{node}} queue" },
-				{ expr: `arb_sequencer_backlog${NODE}`, legend: "{{node}} backlog" },
-			],
-		},
-		{
 			title: "Block build time",
-			description: "Time the sequencer takes to build a block, median and 99th percentile.",
+			description:
+				"Time the sequencer takes to build a block, median and 99th percentile. The number to watch when booting your own Nitro build with --nitro-image.",
 			unit: "ns",
 			queries: [
 				{
@@ -509,130 +511,100 @@ export const NITRO_NODES = {
 		{
 			title: "Why blocks closed",
 			description:
-				"Blocks per second, by what ended them: the queue ran dry (tx exhausted), or the block hit its gas, data or time limit. Limited blocks under load mean you are hitting the chain's capacity.",
+				"Blocks per second by what ended them. Queue empty means the sequencer kept up; gas, data or time limits mean load reached the chain's capacity. Only reasons that occurred are shown.",
 			stack: true,
 			queries: [
 				{
-					expr: `rate(arb_sequencer_block_txexhausted${NODE}[30s])`,
+					expr: moved(`rate(arb_sequencer_block_txexhausted${NODE}[30s])`),
 					legend: "{{node}} queue empty",
 				},
-				{ expr: `rate(arb_sequencer_block_gaslimited${NODE}[30s])`, legend: "{{node}} gas limit" },
 				{
-					expr: `rate(arb_sequencer_block_datalimited${NODE}[30s])`,
+					expr: moved(`rate(arb_sequencer_block_gaslimited${NODE}[30s])`),
+					legend: "{{node}} gas limit",
+				},
+				{
+					expr: moved(`rate(arb_sequencer_block_datalimited${NODE}[30s])`),
 					legend: "{{node}} data limit",
 				},
 				{
-					expr: `rate(arb_sequencer_block_timelimited${NODE}[30s])`,
+					expr: moved(`rate(arb_sequencer_block_timelimited${NODE}[30s])`),
 					legend: "{{node}} time limit",
-				},
-			],
-		},
-		{
-			title: "Dropped transactions",
-			description:
-				"Transactions the sequencer dropped because they waited too long in its queue or the sender canceled them.",
-			stack: true,
-			queries: [
-				{
-					expr: `rate(arb_sequencer_transactions_dropped_queuetimeout${NODE}[1m])`,
-					legend: "{{node}} queue timeout",
-				},
-				{
-					expr: `rate(arb_sequencer_transactions_dropped_canceled${NODE}[1m])`,
-					legend: "{{node}} canceled",
 				},
 			],
 		},
 		{
 			title: "Transaction ordering",
 			description:
-				"Transactions ordered first-come-first-served versus by priority gas auction (PGA rounds).",
+				"Transactions ordered first-come-first-served versus by priority gas auction. PGA appears only with --pga-rounds-per-block.",
 			stack: true,
 			queries: [
-				{ expr: `rate(arb_sequencer_ordering_fifo${NODE}[30s])`, legend: "{{node}} FIFO" },
-				{ expr: `rate(arb_sequencer_ordering_pga${NODE}[30s])`, legend: "{{node}} PGA" },
+				{ expr: moved(`rate(arb_sequencer_ordering_fifo${NODE}[30s])`), legend: "{{node}} FIFO" },
+				{ expr: moved(`rate(arb_sequencer_ordering_pga${NODE}[30s])`), legend: "{{node}} PGA" },
 			],
 		},
 		{
-			title: "L1 gas price the sequencer charges for",
+			title: "Most transactions queued",
 			description:
-				"The parent-chain gas price the sequencer uses to price each transaction's data.",
-			unit: "wei",
-			queries: [{ expr: `arb_sequencer_l1gasprice${NODE}`, legend: "{{node}}" }],
+				"The longest the sequencer's queue got in the time range. Above a handful means transactions arrive faster than blocks are built.",
+			kind: "stat",
+			width: 6,
+			queries: [
+				{
+					expr: `max_over_time(arb_sequencer_queue_length{node=~"$node"}[$__range])`,
+					legend: "{{node}}",
+				},
+			],
+		},
+		{
+			title: "Dropped transactions",
+			description:
+				"Transactions the sequencer dropped in the time range because they waited too long in its queue or were canceled.",
+			kind: "stat",
+			width: 6,
+			queries: [
+				{
+					expr: `sum by (node) (increase(arb_sequencer_transactions_dropped_queuetimeout${NODE}[$__range]) + increase(arb_sequencer_transactions_dropped_canceled${NODE}[$__range]))`,
+					legend: "{{node}}",
+				},
+			],
 		},
 		{ row: "Batch poster" },
 		{
-			title: "Batches waiting to post",
-			description:
-				"Batches the poster estimates it still has to post. It should return to zero after each post.",
-			queries: [{ expr: `arb_batchposter_estimated_batch_backlog${NODE}`, legend: "{{node}}" }],
-		},
-		{
 			title: "Batch poster wallet",
 			description:
-				"ETH the batch poster has left to pay for posting on the parent chain. At zero, batches stop. The L3 poster pays in L2 ETH and starts with far less than the L2 poster.",
+				"ETH each batch poster has left to pay for posting on its parent chain. At zero, batches stop. The L3 poster pays in L2 ETH and starts with far less than the L2 poster.",
 			kind: "stat",
+			width: 8,
 			decimals: 4,
-			unit: "short",
-			queries: [{ expr: `arb_batchposter_wallet_eth${NODE}`, legend: "{{node}}" }],
+			queries: [
+				{
+					expr: `arb_batchposter_wallet_eth{node=~"$node", node!~".*validator"}`,
+					legend: "{{node}}",
+				},
+			],
 		},
 		{
 			title: "Posting failures",
-			description: "Failed batch-posting attempts per minute.",
+			description: "Failed batch-posting attempts in the time range.",
+			kind: "stat",
+			width: 4,
 			queries: [
-				{ expr: `rate(arb_batchPoster_action_failure${NODE}[1m]) * 60`, legend: "{{node}}" },
+				{
+					expr: `increase(arb_batchPoster_action_failure{node=~"$node", node!~".*validator"}[$__range])`,
+					legend: "{{node}}",
+				},
 			],
 		},
 		{
 			title: "Parent-chain transactions pending",
 			description:
-				"Transactions the data poster (batches, assertions) has sent to the parent chain that are not mined yet, and its send queue. Should hover near zero.",
+				"Transactions the data poster (batches, assertions) has sent to the parent chain that are not mined yet. It rises under load and should drain back to zero.",
 			queries: [
 				{
-					expr: `arb_dataposter_nonce_unconfirmed${NODE} - arb_dataposter_nonce_softconfirmed${NODE}`,
-					legend: "{{node}} pending",
-				},
-				{ expr: `arb_dataposter_queue_length${NODE}`, legend: "{{node}} queued" },
-			],
-		},
-		{ row: "Validator (BoLD)" },
-		{
-			title: "Assertion posting errors",
-			description:
-				"Failed attempts to post an assertion, per minute, beside assertions actually created on the parent chain. Under load, litro's fast validator retries assertions it has just posted (item not found on-chain, EXPECTED_ASSERTION_SEEN); errors only matter when assertions stop being created.",
-			queries: [
-				{
-					expr: `rate(arb_validator_poster_error_posting_assertion${NODE}[1m]) * 60`,
-					legend: "{{node}} errors",
-				},
-				{
-					expr: "increase(litro_rollup_assertions_created_total[1m])",
-					legend: "{{chain}} assertions created",
-				},
-			],
-		},
-		{
-			title: "Latest confirmed assertion",
-			description:
-				"Block number of the latest confirmed assertion this node has seen. Withdrawals wait on confirmation.",
-			queries: [
-				{
-					expr: `arb_validator_scanner_latest_confirmed_assertion_block_number${NODE}`,
+					expr: `clamp_min(arb_dataposter_nonce_unconfirmed${NODE} - arb_dataposter_nonce_softconfirmed${NODE}, 0)`,
 					legend: "{{node}}",
 				},
 			],
-		},
-		{ row: "Feeds" },
-		{
-			title: "Sequencer feed clients",
-			description:
-				"Clients of the sequencer feed (port 9642), such as other nodes following the chain.",
-			queries: [{ expr: `arb_feed_clients_current${NODE}`, legend: "{{node}}" }],
-		},
-		{
-			title: "Transaction feed clients",
-			description: "Clients of Nitro's transaction feed, which the Fast Feed relay connects to.",
-			queries: [{ expr: `arb_transactionfeed_clients_current${NODE}`, legend: "{{node}}" }],
 		},
 		{ row: "Resources" },
 		{
@@ -660,6 +632,25 @@ export const NITRO_NODES = {
 				{ expr: `rate(system_disk_readbytes${NODE}[30s])`, legend: "{{node}} read" },
 				{ expr: `rate(system_disk_writebytes${NODE}[30s])`, legend: "{{node}} write" },
 			],
+		},
+		{ row: "Diagnostics", collapsed: true },
+		{
+			title: "Assertion posting errors",
+			description:
+				"Failed attempts to post an assertion, per minute. Under load litro's fast validator retries assertions it has just posted (item not found on-chain, EXPECTED_ASSERTION_SEEN); it matters only if Time since last assertion on the Litro chains dashboard keeps climbing.",
+			queries: [
+				{
+					expr: `rate(arb_validator_poster_error_posting_assertion${NODE}[1m]) * 60`,
+					legend: "{{node}}",
+				},
+			],
+		},
+		{
+			title: "L1 gas price the sequencer charges for",
+			description:
+				"The parent-chain gas price the sequencer uses to price each transaction's data. Static on litro unless you change the parent chain's base fee.",
+			unit: "wei",
+			queries: [{ expr: `arb_sequencer_l1gasprice${NODE}`, legend: "{{node}}" }],
 		},
 	],
 };

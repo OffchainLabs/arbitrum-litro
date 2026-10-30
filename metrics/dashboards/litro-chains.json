@@ -1,7 +1,7 @@
 {
 	"uid": "litro-chains",
 	"title": "Litro chains",
-	"description": "Every chain the testnode runs, L1 to L3: block production, load, fees, and the rollup pipeline between each chain and its parent.",
+	"description": "Every chain the testnode runs, L1 to L3: is it running, how much load it carries, and whether deposits, batches and assertions are moving between each chain and its parent.",
 	"tags": [
 		"litro",
 		"chains"
@@ -150,8 +150,8 @@
 		{
 			"id": 4,
 			"type": "stat",
-			"title": "Head block age",
-			"description": "Seconds since each chain's head block was produced. L1 mines a block every second, so a climbing L1 value means it has stopped. Nitro chains produce blocks only when there are transactions, so their age climbs whenever the chain is idle.",
+			"title": "L1 head block age",
+			"description": "Seconds since the L1 (Anvil) mined a block. It mines one a second, so anything above a few seconds means the L1 has stopped.",
 			"datasource": {
 				"type": "prometheus",
 				"uid": "prometheus"
@@ -159,7 +159,7 @@
 			"gridPos": {
 				"x": 12,
 				"y": 1,
-				"w": 6,
+				"w": 4,
 				"h": 4
 			},
 			"targets": [
@@ -169,14 +169,14 @@
 						"uid": "prometheus"
 					},
 					"refId": "A",
-					"expr": "time() - litro_block_timestamp_seconds{chain=~\"$chain\"}",
-					"legendFormat": "{{chain}}"
+					"expr": "time() - litro_block_timestamp_seconds{chain=\"l1\"}",
+					"legendFormat": "l1"
 				}
 			],
 			"fieldConfig": {
 				"defaults": {
 					"unit": "s",
-					"decimals": 1
+					"decimals": 0
 				},
 				"overrides": []
 			},
@@ -195,16 +195,61 @@
 		{
 			"id": 5,
 			"type": "stat",
-			"title": "ArbOS version",
-			"description": "ArbOS version each Arbitrum chain runs.",
+			"title": "Last transaction",
+			"description": "Seconds since each Arbitrum chain included a user transaction. Nitro produces blocks only when there is something to sequence, so this is how long the chain has been idle.",
 			"datasource": {
 				"type": "prometheus",
 				"uid": "prometheus"
 			},
 			"gridPos": {
-				"x": 18,
+				"x": 16,
 				"y": 1,
-				"w": 6,
+				"w": 4,
+				"h": 4
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "prometheus"
+					},
+					"refId": "A",
+					"expr": "time() - litro_last_user_transaction_timestamp_seconds{chain=~\"$chain\", chain!=\"l1\"}",
+					"legendFormat": "{{chain}}"
+				}
+			],
+			"fieldConfig": {
+				"defaults": {
+					"unit": "s",
+					"decimals": 0
+				},
+				"overrides": []
+			},
+			"options": {
+				"reduceOptions": {
+					"calcs": [
+						"lastNotNull"
+					],
+					"values": false
+				},
+				"textMode": "value_and_name",
+				"colorMode": "none",
+				"graphMode": "none"
+			}
+		},
+		{
+			"id": 6,
+			"type": "stat",
+			"title": "ArbOS version",
+			"description": "ArbOS version each Arbitrum chain runs; 60 once --pga-rounds-per-block has upgraded it.",
+			"datasource": {
+				"type": "prometheus",
+				"uid": "prometheus"
+			},
+			"gridPos": {
+				"x": 20,
+				"y": 1,
+				"w": 4,
 				"h": 4
 			},
 			"targets": [
@@ -237,7 +282,7 @@
 			}
 		},
 		{
-			"id": 6,
+			"id": 7,
 			"type": "row",
 			"title": "Load",
 			"collapsed": false,
@@ -250,67 +295,16 @@
 			"panels": []
 		},
 		{
-			"id": 7,
+			"id": 8,
 			"type": "timeseries",
-			"title": "Blocks per second",
-			"description": "Block production rate. L1 (Anvil) mines one block a second; Nitro chains produce a block whenever there is something to sequence.",
+			"title": "Transactions per second",
+			"description": "User transactions included per second, per chain. ArbOS's own start-of-block transaction is not counted.",
 			"datasource": {
 				"type": "prometheus",
 				"uid": "prometheus"
 			},
 			"gridPos": {
 				"x": 0,
-				"y": 6,
-				"w": 12,
-				"h": 8
-			},
-			"targets": [
-				{
-					"datasource": {
-						"type": "prometheus",
-						"uid": "prometheus"
-					},
-					"refId": "A",
-					"expr": "rate(litro_blocks_total{chain=~\"$chain\"}[30s])",
-					"legendFormat": "{{chain}}"
-				}
-			],
-			"fieldConfig": {
-				"defaults": {
-					"unit": "short",
-					"custom": {
-						"lineWidth": 2,
-						"fillOpacity": 10,
-						"stacking": {
-							"mode": "none"
-						},
-						"showPoints": "never"
-					}
-				},
-				"overrides": []
-			},
-			"options": {
-				"legend": {
-					"displayMode": "list",
-					"placement": "bottom"
-				},
-				"tooltip": {
-					"mode": "multi",
-					"sort": "desc"
-				}
-			}
-		},
-		{
-			"id": 8,
-			"type": "timeseries",
-			"title": "Transactions per second",
-			"description": "Transactions included in blocks, per chain.",
-			"datasource": {
-				"type": "prometheus",
-				"uid": "prometheus"
-			},
-			"gridPos": {
-				"x": 12,
 				"y": 6,
 				"w": 12,
 				"h": 8
@@ -329,6 +323,7 @@
 			"fieldConfig": {
 				"defaults": {
 					"unit": "short",
+					"min": 0,
 					"custom": {
 						"lineWidth": 2,
 						"fillOpacity": 10,
@@ -354,15 +349,15 @@
 		{
 			"id": 9,
 			"type": "timeseries",
-			"title": "Gas per second",
-			"description": "Gas used by included transactions, per chain.",
+			"title": "Failed transactions per second",
+			"description": "User transactions that were included but reverted. A reverting contract call shows here, not as an RPC error.",
 			"datasource": {
 				"type": "prometheus",
 				"uid": "prometheus"
 			},
 			"gridPos": {
-				"x": 0,
-				"y": 14,
+				"x": 12,
+				"y": 6,
 				"w": 12,
 				"h": 8
 			},
@@ -373,13 +368,14 @@
 						"uid": "prometheus"
 					},
 					"refId": "A",
-					"expr": "rate(litro_gas_used_total{chain=~\"$chain\"}[30s])",
+					"expr": "rate(litro_failed_transactions_total{chain=~\"$chain\"}[30s])",
 					"legendFormat": "{{chain}}"
 				}
 			],
 			"fieldConfig": {
 				"defaults": {
 					"unit": "short",
+					"min": 0,
 					"custom": {
 						"lineWidth": 2,
 						"fillOpacity": 10,
@@ -405,14 +401,14 @@
 		{
 			"id": 10,
 			"type": "timeseries",
-			"title": "Base fee",
-			"description": "Base fee of each chain's head block. Nitro raises it when blocks fill beyond the speed limit.",
+			"title": "Gas per second",
+			"description": "Gas used per second, per chain. On the L1 this is mostly the batch poster and validator paying to post the rollups' data.",
 			"datasource": {
 				"type": "prometheus",
 				"uid": "prometheus"
 			},
 			"gridPos": {
-				"x": 12,
+				"x": 0,
 				"y": 14,
 				"w": 12,
 				"h": 8
@@ -424,14 +420,14 @@
 						"uid": "prometheus"
 					},
 					"refId": "A",
-					"expr": "eth_exe_block_head_base_fee_per_gas{chain=~\"$chain\"} / 1e9",
+					"expr": "rate(litro_gas_used_total{chain=~\"$chain\"}[30s])",
 					"legendFormat": "{{chain}}"
 				}
 			],
 			"fieldConfig": {
 				"defaults": {
-					"unit": "gwei",
-					"decimals": 4,
+					"unit": "short",
+					"min": 0,
 					"custom": {
 						"lineWidth": 2,
 						"fillOpacity": 10,
@@ -457,66 +453,15 @@
 		{
 			"id": 11,
 			"type": "timeseries",
-			"title": "Txpool",
-			"description": "Transactions waiting in each chain's pool. On Nitro, queued transactions usually mean a nonce gap.",
-			"datasource": {
-				"type": "prometheus",
-				"uid": "prometheus"
-			},
-			"gridPos": {
-				"x": 0,
-				"y": 22,
-				"w": 12,
-				"h": 8
-			},
-			"targets": [
-				{
-					"datasource": {
-						"type": "prometheus",
-						"uid": "prometheus"
-					},
-					"refId": "A",
-					"expr": "eth_exe_txpool_transactions{chain=~\"$chain\"}",
-					"legendFormat": "{{chain}} {{status}}"
-				}
-			],
-			"fieldConfig": {
-				"defaults": {
-					"unit": "short",
-					"custom": {
-						"lineWidth": 2,
-						"fillOpacity": 30,
-						"stacking": {
-							"mode": "normal"
-						},
-						"showPoints": "never"
-					}
-				},
-				"overrides": []
-			},
-			"options": {
-				"legend": {
-					"displayMode": "list",
-					"placement": "bottom"
-				},
-				"tooltip": {
-					"mode": "multi",
-					"sort": "desc"
-				}
-			}
-		},
-		{
-			"id": 12,
-			"type": "timeseries",
-			"title": "Head block gas used",
-			"description": "Gas used by the head block, against its limit.",
+			"title": "Batches per minute",
+			"description": "Batches each batch poster posted to its parent chain in the last minute. It follows transaction load; zero while the chain is idle.",
 			"datasource": {
 				"type": "prometheus",
 				"uid": "prometheus"
 			},
 			"gridPos": {
 				"x": 12,
-				"y": 22,
+				"y": 14,
 				"w": 12,
 				"h": 8
 			},
@@ -527,13 +472,14 @@
 						"uid": "prometheus"
 					},
 					"refId": "A",
-					"expr": "eth_exe_block_head_gas_used{chain=~\"$chain\"}",
-					"legendFormat": "{{chain}} used"
+					"expr": "increase(litro_rollup_batches[1m])",
+					"legendFormat": "{{chain}} → {{parent}}"
 				}
 			],
 			"fieldConfig": {
 				"defaults": {
 					"unit": "short",
+					"min": 0,
 					"custom": {
 						"lineWidth": 2,
 						"fillOpacity": 10,
@@ -557,31 +503,75 @@
 			}
 		},
 		{
-			"id": 13,
+			"id": 12,
 			"type": "row",
-			"title": "Rollup pipeline (child → parent)",
+			"title": "Deposits, batches and withdrawals (child → parent)",
 			"collapsed": false,
 			"gridPos": {
 				"x": 0,
-				"y": 30,
+				"y": 22,
 				"w": 24,
 				"h": 1
 			},
 			"panels": []
 		},
 		{
-			"id": 14,
-			"type": "timeseries",
-			"title": "Time since last batch",
-			"description": "Seconds since the batch poster last posted this chain's transactions to its parent chain. While transactions are being sent, a value that keeps climbing means batches are not reaching the parent.",
+			"id": 13,
+			"type": "stat",
+			"title": "Deposits waiting",
+			"description": "Deposits, retryables and force-included transactions in the delayed inbox that no posted batch has read yet. Batch posting reports are left out.",
 			"datasource": {
 				"type": "prometheus",
 				"uid": "prometheus"
 			},
 			"gridPos": {
 				"x": 0,
-				"y": 31,
-				"w": 12,
+				"y": 23,
+				"w": 6,
+				"h": 4
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "prometheus"
+					},
+					"refId": "A",
+					"expr": "litro_rollup_delayed_waiting",
+					"legendFormat": "{{chain}}"
+				}
+			],
+			"fieldConfig": {
+				"defaults": {
+					"unit": "short"
+				},
+				"overrides": []
+			},
+			"options": {
+				"reduceOptions": {
+					"calcs": [
+						"lastNotNull"
+					],
+					"values": false
+				},
+				"textMode": "value_and_name",
+				"colorMode": "none",
+				"graphMode": "none"
+			}
+		},
+		{
+			"id": 14,
+			"type": "timeseries",
+			"title": "Oldest waiting deposit",
+			"description": "How long the oldest of those messages has waited. Empty when nothing waits; a value that keeps climbing means deposits are not reaching the chain.",
+			"datasource": {
+				"type": "prometheus",
+				"uid": "prometheus"
+			},
+			"gridPos": {
+				"x": 6,
+				"y": 23,
+				"w": 18,
 				"h": 8
 			},
 			"targets": [
@@ -591,13 +581,14 @@
 						"uid": "prometheus"
 					},
 					"refId": "A",
-					"expr": "time() - litro_rollup_last_batch_timestamp_seconds",
-					"legendFormat": "{{chain}} → {{parent}}"
+					"expr": "time() - litro_rollup_oldest_delayed_waiting_timestamp_seconds",
+					"legendFormat": "{{chain}}"
 				}
 			],
 			"fieldConfig": {
 				"defaults": {
 					"unit": "s",
+					"min": 0,
 					"decimals": 0,
 					"custom": {
 						"lineWidth": 2,
@@ -624,14 +615,14 @@
 		{
 			"id": 15,
 			"type": "timeseries",
-			"title": "Batches posted",
-			"description": "Batches in each sequencer inbox (batchCount) and how many were posted per minute.",
+			"title": "Time since last batch",
+			"description": "Seconds since each chain's transactions were last posted to its parent. While transactions are being sent, a value that keeps climbing means batches are not reaching the parent; it climbs whenever the chain is idle.",
 			"datasource": {
 				"type": "prometheus",
 				"uid": "prometheus"
 			},
 			"gridPos": {
-				"x": 12,
+				"x": 0,
 				"y": 31,
 				"w": 12,
 				"h": 8
@@ -643,22 +634,15 @@
 						"uid": "prometheus"
 					},
 					"refId": "A",
-					"expr": "litro_rollup_batches",
-					"legendFormat": "{{chain}} → {{parent}} total"
-				},
-				{
-					"datasource": {
-						"type": "prometheus",
-						"uid": "prometheus"
-					},
-					"refId": "B",
-					"expr": "increase(litro_rollup_batches[1m])",
-					"legendFormat": "{{chain}} → {{parent}} per minute"
+					"expr": "time() - litro_rollup_last_batch_timestamp_seconds",
+					"legendFormat": "{{chain}} → {{parent}}"
 				}
 			],
 			"fieldConfig": {
 				"defaults": {
-					"unit": "short",
+					"unit": "s",
+					"min": 0,
+					"decimals": 0,
 					"custom": {
 						"lineWidth": 2,
 						"fillOpacity": 10,
@@ -684,15 +668,15 @@
 		{
 			"id": 16,
 			"type": "timeseries",
-			"title": "Deposits waiting for the sequencer",
-			"description": "Deposits, retryables and force-included transactions in the delayed inbox that no posted batch has read yet. Batch posting reports, which Nitro appends with every batch, are left out. A message should be read by the next batch, seconds after it arrives.",
+			"title": "Deposits and retryables per minute",
+			"description": "User messages delivered to each delayed inbox in the last minute, by kind: eth_deposit, retryable, l2_message (force-included). Only kinds that occurred are shown.",
 			"datasource": {
 				"type": "prometheus",
 				"uid": "prometheus"
 			},
 			"gridPos": {
-				"x": 0,
-				"y": 39,
+				"x": 12,
+				"y": 31,
 				"w": 12,
 				"h": 8
 			},
@@ -703,13 +687,14 @@
 						"uid": "prometheus"
 					},
 					"refId": "A",
-					"expr": "litro_rollup_delayed_waiting",
-					"legendFormat": "{{chain}}"
+					"expr": "(increase(litro_rollup_delayed_messages_total{kind!~\"batch_posting_report|initialize\"}[1m])) > 0",
+					"legendFormat": "{{chain}} {{kind}}"
 				}
 			],
 			"fieldConfig": {
 				"defaults": {
 					"unit": "short",
+					"min": 0,
 					"custom": {
 						"lineWidth": 2,
 						"fillOpacity": 10,
@@ -734,120 +719,17 @@
 		},
 		{
 			"id": 17,
-			"type": "timeseries",
-			"title": "Oldest waiting deposit",
-			"description": "How long the oldest of those messages has waited. Empty when nothing is waiting; a value that keeps climbing means deposits are not reaching the chain.",
-			"datasource": {
-				"type": "prometheus",
-				"uid": "prometheus"
-			},
-			"gridPos": {
-				"x": 12,
-				"y": 39,
-				"w": 12,
-				"h": 8
-			},
-			"targets": [
-				{
-					"datasource": {
-						"type": "prometheus",
-						"uid": "prometheus"
-					},
-					"refId": "A",
-					"expr": "time() - litro_rollup_oldest_delayed_waiting_timestamp_seconds",
-					"legendFormat": "{{chain}}"
-				}
-			],
-			"fieldConfig": {
-				"defaults": {
-					"unit": "s",
-					"decimals": 0,
-					"custom": {
-						"lineWidth": 2,
-						"fillOpacity": 10,
-						"stacking": {
-							"mode": "none"
-						},
-						"showPoints": "never"
-					}
-				},
-				"overrides": []
-			},
-			"options": {
-				"legend": {
-					"displayMode": "list",
-					"placement": "bottom"
-				},
-				"tooltip": {
-					"mode": "multi",
-					"sort": "desc"
-				}
-			}
-		},
-		{
-			"id": 18,
-			"type": "timeseries",
-			"title": "Deposits and retryables per minute",
-			"description": "User messages delivered to each delayed inbox, by kind: eth_deposit, retryable, l2_message (force-included). Batch posting reports, one per batch, are left out.",
+			"type": "stat",
+			"title": "Time since last assertion",
+			"description": "Seconds since the validator last created, and last confirmed, an assertion of this chain's state on the parent chain. A withdrawal can be claimed once an assertion covering it is confirmed.",
 			"datasource": {
 				"type": "prometheus",
 				"uid": "prometheus"
 			},
 			"gridPos": {
 				"x": 0,
-				"y": 47,
-				"w": 12,
-				"h": 8
-			},
-			"targets": [
-				{
-					"datasource": {
-						"type": "prometheus",
-						"uid": "prometheus"
-					},
-					"refId": "A",
-					"expr": "increase(litro_rollup_delayed_messages_total{kind!~\"batch_posting_report|initialize\"}[1m])",
-					"legendFormat": "{{chain}} {{kind}}"
-				}
-			],
-			"fieldConfig": {
-				"defaults": {
-					"unit": "short",
-					"custom": {
-						"lineWidth": 2,
-						"fillOpacity": 30,
-						"stacking": {
-							"mode": "normal"
-						},
-						"showPoints": "never"
-					}
-				},
-				"overrides": []
-			},
-			"options": {
-				"legend": {
-					"displayMode": "list",
-					"placement": "bottom"
-				},
-				"tooltip": {
-					"mode": "multi",
-					"sort": "desc"
-				}
-			}
-		},
-		{
-			"id": 19,
-			"type": "stat",
-			"title": "Time since last assertion",
-			"description": "Seconds since the validator last created, and last confirmed, an assertion of this chain's state on the parent chain. Withdrawals finalize only once their assertion is confirmed.",
-			"datasource": {
-				"type": "prometheus",
-				"uid": "prometheus"
-			},
-			"gridPos": {
-				"x": 12,
-				"y": 47,
-				"w": 12,
+				"y": 39,
+				"w": 24,
 				"h": 4
 			},
 			"targets": [
@@ -887,66 +769,6 @@
 				"textMode": "value_and_name",
 				"colorMode": "none",
 				"graphMode": "none"
-			}
-		},
-		{
-			"id": 20,
-			"type": "timeseries",
-			"title": "Assertions",
-			"description": "Assertions created and confirmed on each rollup since it was deployed.",
-			"datasource": {
-				"type": "prometheus",
-				"uid": "prometheus"
-			},
-			"gridPos": {
-				"x": 0,
-				"y": 55,
-				"w": 12,
-				"h": 8
-			},
-			"targets": [
-				{
-					"datasource": {
-						"type": "prometheus",
-						"uid": "prometheus"
-					},
-					"refId": "A",
-					"expr": "litro_rollup_assertions_created_total",
-					"legendFormat": "{{chain}} created"
-				},
-				{
-					"datasource": {
-						"type": "prometheus",
-						"uid": "prometheus"
-					},
-					"refId": "B",
-					"expr": "litro_rollup_assertions_confirmed_total",
-					"legendFormat": "{{chain}} confirmed"
-				}
-			],
-			"fieldConfig": {
-				"defaults": {
-					"unit": "short",
-					"custom": {
-						"lineWidth": 2,
-						"fillOpacity": 10,
-						"stacking": {
-							"mode": "none"
-						},
-						"showPoints": "never"
-					}
-				},
-				"overrides": []
-			},
-			"options": {
-				"legend": {
-					"displayMode": "list",
-					"placement": "bottom"
-				},
-				"tooltip": {
-					"mode": "multi",
-					"sort": "desc"
-				}
 			}
 		}
 	]

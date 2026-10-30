@@ -16,6 +16,12 @@ function knownMetrics() {
 		...nitro,
 		...families("docker/chain-exporter.mjs", /family\(\s*"([a-z_]+)"/g),
 		...families("docker/fast-feed-relay.mjs", /metric\(\s*"([a-z_]+)"/g),
+		// The relay's histogram, as Prometheus exposes it.
+		...families("docker/fast-feed-relay.mjs", /const name = "([a-z_]+)"/g).flatMap((name) => [
+			`${name}_bucket`,
+			`${name}_sum`,
+			`${name}_count`,
+		]),
 		// Prometheus's own series about each scrape.
 		"up",
 	]);
@@ -24,6 +30,7 @@ function knownMetrics() {
 /** Every metric name a PromQL expression selects, ignoring functions, labels and keywords. */
 function metricsIn(expr: string) {
 	const withoutLabels = expr
+		.replace(/"[^"]*"/g, "")
 		.replace(/\{[^}]*\}/g, "")
 		.replace(/\[[^\]]*\]/g, "")
 		.replace(/\b(by|on|without|ignoring|group_left|group_right)\s*\([^)]*\)/g, "");
@@ -38,10 +45,30 @@ function metricsIn(expr: string) {
 		"max",
 		"count",
 		"sum",
+		"histogram_quantile",
+		"clamp_min",
+		"max_over_time",
+		"vector",
+		"or",
+		"label_replace",
 	]);
 	return [...withoutLabels.matchAll(/\b([a-zA-Z_][a-zA-Z0-9_]*)\b/g)]
 		.map((match) => match[1] as string)
 		.filter((name) => !keywords.has(name) && !/^\d/.test(name));
+}
+
+type BuiltPanel = {
+	type: string;
+	title: string;
+	description?: string;
+	targets?: Array<{ expr: string }>;
+	panels?: BuiltPanel[];
+};
+
+/** Every panel of a dashboard, including those nested in collapsed rows. */
+function allPanels(spec: Parameters<typeof dashboard>[0]): BuiltPanel[] {
+	const built = dashboard(spec) as { panels: BuiltPanel[] };
+	return built.panels.flatMap((panel) => [panel, ...(panel.panels ?? [])]);
 }
 
 describe("metrics dashboards", () => {
@@ -56,12 +83,11 @@ describe("metrics dashboards", () => {
 
 	it("query only metrics that Nitro, the chain exporter or the relay actually export", () => {
 		const known = knownMetrics();
-		const queries = Object.entries(DASHBOARDS).flatMap(([file, spec]) => {
-			const built = dashboard(spec) as { panels: Array<{ targets?: Array<{ expr: string }> }> };
-			return built.panels
+		const queries = Object.entries(DASHBOARDS).flatMap(([file, spec]) =>
+			allPanels(spec)
 				.flatMap((panel) => panel.targets ?? [])
-				.map((target) => ({ file, expr: target.expr }));
-		});
+				.map((target) => ({ file, expr: target.expr })),
+		);
 		const unknown = queries.flatMap(({ file, expr }) =>
 			metricsIn(expr.replace(/\$[a-z]+/g, ""))
 				.filter((name) => !known.has(name))
@@ -72,10 +98,9 @@ describe("metrics dashboards", () => {
 
 	it("explain every panel, so the dashboard says what each graph is for", () => {
 		for (const [file, spec] of Object.entries(DASHBOARDS)) {
-			const built = dashboard(spec) as {
-				panels: Array<{ type: string; title: string; description?: string }>;
-			};
-			for (const panel of built.panels.filter((p) => p.type !== "row" && p.title !== "$metric")) {
+			for (const panel of allPanels(spec).filter(
+				(p) => p.type !== "row" && p.title !== "$metric",
+			)) {
 				expect(panel.description, `${file}: ${panel.title}`).toBeTruthy();
 			}
 		}

@@ -27,7 +27,12 @@ const deliveredData = (kind: number, timestamp: number) =>
 	`0x${[0, kind, 0, 0, 0, timestamp].map((value) => value.toString(16).padStart(64, "0")).join("")}`;
 
 /** A chain that grows a block per eth_getBlockByNumber("latest") call, with fixed contract state. */
-function fakeChain(options: { chainId: number; logs?: FakeLog[]; txpool?: boolean }) {
+function fakeChain(options: {
+	chainId: number;
+	logs?: FakeLog[];
+	txpool?: boolean;
+	receipts?: boolean;
+}) {
 	let head = 10;
 	let txpoolCalls = 0;
 	const block = (number: number) => ({
@@ -49,6 +54,16 @@ function fakeChain(options: { chainId: number; logs?: FakeLog[]; txpool?: boolea
 	type LogQuery = { address: string; topics: string[]; fromBlock: string; toBlock: string };
 	const handlers: Record<string, (params: unknown[]) => unknown> = {
 		eth_getBlockByNumber: ([tag]) => block(tag === "latest" ? ++head : Number(tag)),
+		// Like Nitro: ArbOS's internal transaction first, then a user transaction that reverted.
+		eth_getBlockReceipts: () => {
+			if (options.receipts === false) {
+				throw new Error("not supported");
+			}
+			return [
+				{ type: "0x6a", status: "0x1" },
+				{ type: "0x2", status: "0x0" },
+			];
+		},
 		eth_blockNumber: () => hex(head),
 		eth_chainId: () => hex(options.chainId),
 		eth_gasPrice: () => hex(2_000_000_000),
@@ -135,6 +150,8 @@ describe("chain-exporter", () => {
 		const l1 = await listen(
 			fakeChain({
 				chainId: 1337,
+				// Like Anvil without eth_getBlockReceipts: every transaction counts as a user's.
+				receipts: false,
 				logs: [
 					{ address: CONTRACTS.sequencerInbox, topic: TOPICS.sequencerBatchDelivered, block: 3 },
 					{ address: CONTRACTS.sequencerInbox, topic: TOPICS.sequencerBatchDelivered, block: 6 },
@@ -215,9 +232,18 @@ describe("chain-exporter", () => {
 		expect(metrics['eth_exe_gas_price_gwei{chain="l1"}']).toBe(2);
 		expect(metrics['eth_exe_txpool_transactions{chain="l1",status="pending"}']).toBe(4);
 		// Counted blocks carry two transactions and 42000 gas each.
+		// Each L2 block holds ArbOS's internal transaction, not counted, and one user transaction that
+		// reverted; the L1 has no receipts API, so both of its transactions count.
 		const blocks = metrics['litro_blocks_total{chain="l2"}'] ?? 0;
-		expect(metrics['litro_transactions_total{chain="l2"}']).toBe(blocks * 2);
+		expect(metrics['litro_transactions_total{chain="l2"}']).toBe(blocks);
+		expect(metrics['litro_failed_transactions_total{chain="l2"}']).toBe(blocks);
 		expect(metrics['litro_gas_used_total{chain="l2"}']).toBe(blocks * 42_000);
+		const l1Blocks = metrics['litro_blocks_total{chain="l1"}'] ?? 0;
+		expect(metrics['litro_transactions_total{chain="l1"}']).toBe(l1Blocks * 2);
+		expect(metrics['litro_failed_transactions_total{chain="l1"}']).toBe(0);
+		expect(metrics['litro_last_user_transaction_timestamp_seconds{chain="l2"}']).toBeGreaterThan(
+			1_700_000_000,
+		);
 		expect(metrics['litro_arbos_version{chain="l2"}']).toBe(40);
 		expect(metrics['litro_arbos_version{chain="l1"}']).toBeUndefined();
 

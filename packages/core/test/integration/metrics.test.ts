@@ -159,6 +159,19 @@ describe("litro metrics", () => {
 		await eventually('litro_transactions_total{chain="l2"}', (v) => v >= before + 20, 30_000);
 	});
 
+	it("counts a reverting transaction as failed, not as an RPC error", async () => {
+		const client = await wallet(L2_RPC_URL, accounts.funnel.privateKey);
+		const before = (await query('litro_failed_transactions_total{chain="l2"}')) ?? 0;
+		// ArbSys has no such method, so the call reverts; the explicit gas skips estimation, which
+		// would refuse to send it.
+		await client.sendTransaction({
+			to: "0x0000000000000000000000000000000000000064",
+			data: "0xdeadbeef",
+			gas: 100_000n,
+		});
+		await eventually('litro_failed_transactions_total{chain="l2"}', (v) => v >= before + 1, 30_000);
+	});
+
 	it("shows the batch poster posting those transactions to L1", async () => {
 		await eventually('litro_rollup_batches{chain="l2"}', (v) => v > 0);
 		const before = (await query('litro_rollup_batches{chain="l2"}')) ?? 0;
@@ -188,6 +201,21 @@ describe("litro metrics", () => {
 			await eventually('litro_rollup_delayed_waiting{chain="l2"}', (v) => v === 0, 90_000);
 		},
 		150_000,
+	);
+
+	it.skipIf(!FAST_FEED_URL)(
+		"measures how fast the Fast Feed delivers each transaction",
+		async () => {
+			const count = "litro_fast_feed_delivery_latency_ms_count";
+			const before = (await query(count)) ?? 0;
+			const client = await wallet(L2_RPC_URL, accounts.funnel.privateKey);
+			await client.sendTransaction({ to: client.account.address, value: 1n });
+			await eventually(count, (v) => v > before, 15_000);
+			await eventually(
+				"histogram_quantile(0.99, sum by (le) (rate(litro_fast_feed_delivery_latency_ms_bucket[5m])))",
+				(v) => v > 0 && v < 1000,
+			);
+		},
 	);
 
 	it.skipIf(!FAST_FEED_URL)("counts a Fast Feed client turned away for a bad key", async () => {

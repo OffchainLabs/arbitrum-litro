@@ -1,7 +1,7 @@
 {
 	"uid": "litro-nitro-nodes",
 	"title": "Nitro nodes",
-	"description": "What each Nitro node is doing: keeping up, sequencing, posting batches, asserting, serving feeds, and the resources it uses.",
+	"description": "What each Nitro node is doing: keeping up with the sequencer, sequencing, posting batches, and the resources it uses. Panels that only matter when something breaks are in Diagnostics.",
 	"tags": [
 		"litro",
 		"nitro"
@@ -61,9 +61,9 @@
 		},
 		{
 			"id": 2,
-			"type": "stat",
-			"title": "Head block",
-			"description": "Latest block each node has processed.",
+			"type": "timeseries",
+			"title": "Blocks behind the sequencer",
+			"description": "How far each node trails the newest block of its chain. Under load the validator falls behind and catches up; one that keeps falling behind delays assertions, and so withdrawals.",
 			"datasource": {
 				"type": "prometheus",
 				"uid": "prometheus"
@@ -71,51 +71,7 @@
 			"gridPos": {
 				"x": 0,
 				"y": 1,
-				"w": 8,
-				"h": 4
-			},
-			"targets": [
-				{
-					"datasource": {
-						"type": "prometheus",
-						"uid": "prometheus"
-					},
-					"refId": "A",
-					"expr": "chain_head_block{node=~\"$node\"}",
-					"legendFormat": "{{node}}"
-				}
-			],
-			"fieldConfig": {
-				"defaults": {
-					"unit": "short"
-				},
-				"overrides": []
-			},
-			"options": {
-				"reduceOptions": {
-					"calcs": [
-						"lastNotNull"
-					],
-					"values": false
-				},
-				"textMode": "value_and_name",
-				"colorMode": "none",
-				"graphMode": "none"
-			}
-		},
-		{
-			"id": 3,
-			"type": "timeseries",
-			"title": "Blocks behind the sequencer",
-			"description": "How far each node trails the newest block any node of the same chain has. A validator that keeps falling behind cannot assert recent state.",
-			"datasource": {
-				"type": "prometheus",
-				"uid": "prometheus"
-			},
-			"gridPos": {
-				"x": 8,
-				"y": 1,
-				"w": 16,
+				"w": 24,
 				"h": 8
 			},
 			"targets": [
@@ -132,6 +88,7 @@
 			"fieldConfig": {
 				"defaults": {
 					"unit": "short",
+					"min": 0,
 					"custom": {
 						"lineWidth": 2,
 						"fillOpacity": 10,
@@ -155,7 +112,7 @@
 			}
 		},
 		{
-			"id": 4,
+			"id": 3,
 			"type": "row",
 			"title": "Sequencer",
 			"collapsed": false,
@@ -168,76 +125,16 @@
 			"panels": []
 		},
 		{
-			"id": 5,
+			"id": 4,
 			"type": "timeseries",
-			"title": "Sequencer queue",
-			"description": "Transactions waiting to be sequenced, and the sequencer's backlog. Growing queues mean transactions arrive faster than blocks are built.",
+			"title": "Block build time",
+			"description": "Time the sequencer takes to build a block, median and 99th percentile. The number to watch when booting your own Nitro build with --nitro-image.",
 			"datasource": {
 				"type": "prometheus",
 				"uid": "prometheus"
 			},
 			"gridPos": {
 				"x": 0,
-				"y": 10,
-				"w": 12,
-				"h": 8
-			},
-			"targets": [
-				{
-					"datasource": {
-						"type": "prometheus",
-						"uid": "prometheus"
-					},
-					"refId": "A",
-					"expr": "arb_sequencer_queue_length{node=~\"$node\"}",
-					"legendFormat": "{{node}} queue"
-				},
-				{
-					"datasource": {
-						"type": "prometheus",
-						"uid": "prometheus"
-					},
-					"refId": "B",
-					"expr": "arb_sequencer_backlog{node=~\"$node\"}",
-					"legendFormat": "{{node}} backlog"
-				}
-			],
-			"fieldConfig": {
-				"defaults": {
-					"unit": "short",
-					"custom": {
-						"lineWidth": 2,
-						"fillOpacity": 10,
-						"stacking": {
-							"mode": "none"
-						},
-						"showPoints": "never"
-					}
-				},
-				"overrides": []
-			},
-			"options": {
-				"legend": {
-					"displayMode": "list",
-					"placement": "bottom"
-				},
-				"tooltip": {
-					"mode": "multi",
-					"sort": "desc"
-				}
-			}
-		},
-		{
-			"id": 6,
-			"type": "timeseries",
-			"title": "Block build time",
-			"description": "Time the sequencer takes to build a block, median and 99th percentile.",
-			"datasource": {
-				"type": "prometheus",
-				"uid": "prometheus"
-			},
-			"gridPos": {
-				"x": 12,
 				"y": 10,
 				"w": 12,
 				"h": 8
@@ -265,11 +162,152 @@
 			"fieldConfig": {
 				"defaults": {
 					"unit": "ns",
+					"min": 0,
 					"custom": {
 						"lineWidth": 2,
 						"fillOpacity": 10,
 						"stacking": {
 							"mode": "none"
+						},
+						"showPoints": "never"
+					}
+				},
+				"overrides": []
+			},
+			"options": {
+				"legend": {
+					"displayMode": "list",
+					"placement": "bottom"
+				},
+				"tooltip": {
+					"mode": "multi",
+					"sort": "desc"
+				}
+			}
+		},
+		{
+			"id": 5,
+			"type": "timeseries",
+			"title": "Why blocks closed",
+			"description": "Blocks per second by what ended them. Queue empty means the sequencer kept up; gas, data or time limits mean load reached the chain's capacity. Only reasons that occurred are shown.",
+			"datasource": {
+				"type": "prometheus",
+				"uid": "prometheus"
+			},
+			"gridPos": {
+				"x": 12,
+				"y": 10,
+				"w": 12,
+				"h": 8
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "prometheus"
+					},
+					"refId": "A",
+					"expr": "(rate(arb_sequencer_block_txexhausted{node=~\"$node\"}[30s])) > 0",
+					"legendFormat": "{{node}} queue empty"
+				},
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "prometheus"
+					},
+					"refId": "B",
+					"expr": "(rate(arb_sequencer_block_gaslimited{node=~\"$node\"}[30s])) > 0",
+					"legendFormat": "{{node}} gas limit"
+				},
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "prometheus"
+					},
+					"refId": "C",
+					"expr": "(rate(arb_sequencer_block_datalimited{node=~\"$node\"}[30s])) > 0",
+					"legendFormat": "{{node}} data limit"
+				},
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "prometheus"
+					},
+					"refId": "D",
+					"expr": "(rate(arb_sequencer_block_timelimited{node=~\"$node\"}[30s])) > 0",
+					"legendFormat": "{{node}} time limit"
+				}
+			],
+			"fieldConfig": {
+				"defaults": {
+					"unit": "short",
+					"min": 0,
+					"custom": {
+						"lineWidth": 2,
+						"fillOpacity": 30,
+						"stacking": {
+							"mode": "normal"
+						},
+						"showPoints": "never"
+					}
+				},
+				"overrides": []
+			},
+			"options": {
+				"legend": {
+					"displayMode": "list",
+					"placement": "bottom"
+				},
+				"tooltip": {
+					"mode": "multi",
+					"sort": "desc"
+				}
+			}
+		},
+		{
+			"id": 6,
+			"type": "timeseries",
+			"title": "Transaction ordering",
+			"description": "Transactions ordered first-come-first-served versus by priority gas auction. PGA appears only with --pga-rounds-per-block.",
+			"datasource": {
+				"type": "prometheus",
+				"uid": "prometheus"
+			},
+			"gridPos": {
+				"x": 0,
+				"y": 18,
+				"w": 12,
+				"h": 8
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "prometheus"
+					},
+					"refId": "A",
+					"expr": "(rate(arb_sequencer_ordering_fifo{node=~\"$node\"}[30s])) > 0",
+					"legendFormat": "{{node}} FIFO"
+				},
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "prometheus"
+					},
+					"refId": "B",
+					"expr": "(rate(arb_sequencer_ordering_pga{node=~\"$node\"}[30s])) > 0",
+					"legendFormat": "{{node}} PGA"
+				}
+			],
+			"fieldConfig": {
+				"defaults": {
+					"unit": "short",
+					"min": 0,
+					"custom": {
+						"lineWidth": 2,
+						"fillOpacity": 30,
+						"stacking": {
+							"mode": "normal"
 						},
 						"showPoints": "never"
 					}
@@ -289,87 +327,9 @@
 		},
 		{
 			"id": 7,
-			"type": "timeseries",
-			"title": "Why blocks closed",
-			"description": "Blocks per second, by what ended them: the queue ran dry (tx exhausted), or the block hit its gas, data or time limit. Limited blocks under load mean you are hitting the chain's capacity.",
-			"datasource": {
-				"type": "prometheus",
-				"uid": "prometheus"
-			},
-			"gridPos": {
-				"x": 0,
-				"y": 18,
-				"w": 12,
-				"h": 8
-			},
-			"targets": [
-				{
-					"datasource": {
-						"type": "prometheus",
-						"uid": "prometheus"
-					},
-					"refId": "A",
-					"expr": "rate(arb_sequencer_block_txexhausted{node=~\"$node\"}[30s])",
-					"legendFormat": "{{node}} queue empty"
-				},
-				{
-					"datasource": {
-						"type": "prometheus",
-						"uid": "prometheus"
-					},
-					"refId": "B",
-					"expr": "rate(arb_sequencer_block_gaslimited{node=~\"$node\"}[30s])",
-					"legendFormat": "{{node}} gas limit"
-				},
-				{
-					"datasource": {
-						"type": "prometheus",
-						"uid": "prometheus"
-					},
-					"refId": "C",
-					"expr": "rate(arb_sequencer_block_datalimited{node=~\"$node\"}[30s])",
-					"legendFormat": "{{node}} data limit"
-				},
-				{
-					"datasource": {
-						"type": "prometheus",
-						"uid": "prometheus"
-					},
-					"refId": "D",
-					"expr": "rate(arb_sequencer_block_timelimited{node=~\"$node\"}[30s])",
-					"legendFormat": "{{node}} time limit"
-				}
-			],
-			"fieldConfig": {
-				"defaults": {
-					"unit": "short",
-					"custom": {
-						"lineWidth": 2,
-						"fillOpacity": 30,
-						"stacking": {
-							"mode": "normal"
-						},
-						"showPoints": "never"
-					}
-				},
-				"overrides": []
-			},
-			"options": {
-				"legend": {
-					"displayMode": "list",
-					"placement": "bottom"
-				},
-				"tooltip": {
-					"mode": "multi",
-					"sort": "desc"
-				}
-			}
-		},
-		{
-			"id": 8,
-			"type": "timeseries",
-			"title": "Dropped transactions",
-			"description": "Transactions the sequencer dropped because they waited too long in its queue or the sender canceled them.",
+			"type": "stat",
+			"title": "Most transactions queued",
+			"description": "The longest the sequencer's queue got in the time range. Above a handful means transactions arrive faster than blocks are built.",
 			"datasource": {
 				"type": "prometheus",
 				"uid": "prometheus"
@@ -377,8 +337,8 @@
 			"gridPos": {
 				"x": 12,
 				"y": 18,
-				"w": 12,
-				"h": 8
+				"w": 6,
+				"h": 4
 			},
 			"targets": [
 				{
@@ -387,180 +347,186 @@
 						"uid": "prometheus"
 					},
 					"refId": "A",
-					"expr": "rate(arb_sequencer_transactions_dropped_queuetimeout{node=~\"$node\"}[1m])",
-					"legendFormat": "{{node}} queue timeout"
-				},
-				{
-					"datasource": {
-						"type": "prometheus",
-						"uid": "prometheus"
-					},
-					"refId": "B",
-					"expr": "rate(arb_sequencer_transactions_dropped_canceled{node=~\"$node\"}[1m])",
-					"legendFormat": "{{node}} canceled"
-				}
-			],
-			"fieldConfig": {
-				"defaults": {
-					"unit": "short",
-					"custom": {
-						"lineWidth": 2,
-						"fillOpacity": 30,
-						"stacking": {
-							"mode": "normal"
-						},
-						"showPoints": "never"
-					}
-				},
-				"overrides": []
-			},
-			"options": {
-				"legend": {
-					"displayMode": "list",
-					"placement": "bottom"
-				},
-				"tooltip": {
-					"mode": "multi",
-					"sort": "desc"
-				}
-			}
-		},
-		{
-			"id": 9,
-			"type": "timeseries",
-			"title": "Transaction ordering",
-			"description": "Transactions ordered first-come-first-served versus by priority gas auction (PGA rounds).",
-			"datasource": {
-				"type": "prometheus",
-				"uid": "prometheus"
-			},
-			"gridPos": {
-				"x": 0,
-				"y": 26,
-				"w": 12,
-				"h": 8
-			},
-			"targets": [
-				{
-					"datasource": {
-						"type": "prometheus",
-						"uid": "prometheus"
-					},
-					"refId": "A",
-					"expr": "rate(arb_sequencer_ordering_fifo{node=~\"$node\"}[30s])",
-					"legendFormat": "{{node}} FIFO"
-				},
-				{
-					"datasource": {
-						"type": "prometheus",
-						"uid": "prometheus"
-					},
-					"refId": "B",
-					"expr": "rate(arb_sequencer_ordering_pga{node=~\"$node\"}[30s])",
-					"legendFormat": "{{node}} PGA"
-				}
-			],
-			"fieldConfig": {
-				"defaults": {
-					"unit": "short",
-					"custom": {
-						"lineWidth": 2,
-						"fillOpacity": 30,
-						"stacking": {
-							"mode": "normal"
-						},
-						"showPoints": "never"
-					}
-				},
-				"overrides": []
-			},
-			"options": {
-				"legend": {
-					"displayMode": "list",
-					"placement": "bottom"
-				},
-				"tooltip": {
-					"mode": "multi",
-					"sort": "desc"
-				}
-			}
-		},
-		{
-			"id": 10,
-			"type": "timeseries",
-			"title": "L1 gas price the sequencer charges for",
-			"description": "The parent-chain gas price the sequencer uses to price each transaction's data.",
-			"datasource": {
-				"type": "prometheus",
-				"uid": "prometheus"
-			},
-			"gridPos": {
-				"x": 12,
-				"y": 26,
-				"w": 12,
-				"h": 8
-			},
-			"targets": [
-				{
-					"datasource": {
-						"type": "prometheus",
-						"uid": "prometheus"
-					},
-					"refId": "A",
-					"expr": "arb_sequencer_l1gasprice{node=~\"$node\"}",
+					"expr": "max_over_time(arb_sequencer_queue_length{node=~\"$node\"}[$__range])",
 					"legendFormat": "{{node}}"
 				}
 			],
 			"fieldConfig": {
 				"defaults": {
-					"unit": "wei",
-					"custom": {
-						"lineWidth": 2,
-						"fillOpacity": 10,
-						"stacking": {
-							"mode": "none"
-						},
-						"showPoints": "never"
-					}
+					"unit": "short"
 				},
 				"overrides": []
 			},
 			"options": {
-				"legend": {
-					"displayMode": "list",
-					"placement": "bottom"
+				"reduceOptions": {
+					"calcs": [
+						"lastNotNull"
+					],
+					"values": false
 				},
-				"tooltip": {
-					"mode": "multi",
-					"sort": "desc"
-				}
+				"textMode": "value_and_name",
+				"colorMode": "none",
+				"graphMode": "none"
 			}
 		},
 		{
-			"id": 11,
+			"id": 8,
+			"type": "stat",
+			"title": "Dropped transactions",
+			"description": "Transactions the sequencer dropped in the time range because they waited too long in its queue or were canceled.",
+			"datasource": {
+				"type": "prometheus",
+				"uid": "prometheus"
+			},
+			"gridPos": {
+				"x": 18,
+				"y": 18,
+				"w": 6,
+				"h": 4
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "prometheus"
+					},
+					"refId": "A",
+					"expr": "sum by (node) (increase(arb_sequencer_transactions_dropped_queuetimeout{node=~\"$node\"}[$__range]) + increase(arb_sequencer_transactions_dropped_canceled{node=~\"$node\"}[$__range]))",
+					"legendFormat": "{{node}}"
+				}
+			],
+			"fieldConfig": {
+				"defaults": {
+					"unit": "short"
+				},
+				"overrides": []
+			},
+			"options": {
+				"reduceOptions": {
+					"calcs": [
+						"lastNotNull"
+					],
+					"values": false
+				},
+				"textMode": "value_and_name",
+				"colorMode": "none",
+				"graphMode": "none"
+			}
+		},
+		{
+			"id": 9,
 			"type": "row",
 			"title": "Batch poster",
 			"collapsed": false,
 			"gridPos": {
 				"x": 0,
-				"y": 34,
+				"y": 26,
 				"w": 24,
 				"h": 1
 			},
 			"panels": []
 		},
 		{
-			"id": 12,
-			"type": "timeseries",
-			"title": "Batches waiting to post",
-			"description": "Batches the poster estimates it still has to post. It should return to zero after each post.",
+			"id": 10,
+			"type": "stat",
+			"title": "Batch poster wallet",
+			"description": "ETH each batch poster has left to pay for posting on its parent chain. At zero, batches stop. The L3 poster pays in L2 ETH and starts with far less than the L2 poster.",
 			"datasource": {
 				"type": "prometheus",
 				"uid": "prometheus"
 			},
 			"gridPos": {
 				"x": 0,
-				"y": 35,
+				"y": 27,
+				"w": 8,
+				"h": 4
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "prometheus"
+					},
+					"refId": "A",
+					"expr": "arb_batchposter_wallet_eth{node=~\"$node\", node!~\".*validator\"}",
+					"legendFormat": "{{node}}"
+				}
+			],
+			"fieldConfig": {
+				"defaults": {
+					"unit": "short",
+					"decimals": 4
+				},
+				"overrides": []
+			},
+			"options": {
+				"reduceOptions": {
+					"calcs": [
+						"lastNotNull"
+					],
+					"values": false
+				},
+				"textMode": "value_and_name",
+				"colorMode": "none",
+				"graphMode": "none"
+			}
+		},
+		{
+			"id": 11,
+			"type": "stat",
+			"title": "Posting failures",
+			"description": "Failed batch-posting attempts in the time range.",
+			"datasource": {
+				"type": "prometheus",
+				"uid": "prometheus"
+			},
+			"gridPos": {
+				"x": 8,
+				"y": 27,
+				"w": 4,
+				"h": 4
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "prometheus"
+					},
+					"refId": "A",
+					"expr": "increase(arb_batchPoster_action_failure{node=~\"$node\", node!~\".*validator\"}[$__range])",
+					"legendFormat": "{{node}}"
+				}
+			],
+			"fieldConfig": {
+				"defaults": {
+					"unit": "short"
+				},
+				"overrides": []
+			},
+			"options": {
+				"reduceOptions": {
+					"calcs": [
+						"lastNotNull"
+					],
+					"values": false
+				},
+				"textMode": "value_and_name",
+				"colorMode": "none",
+				"graphMode": "none"
+			}
+		},
+		{
+			"id": 12,
+			"type": "timeseries",
+			"title": "Parent-chain transactions pending",
+			"description": "Transactions the data poster (batches, assertions) has sent to the parent chain that are not mined yet. It rises under load and should drain back to zero.",
+			"datasource": {
+				"type": "prometheus",
+				"uid": "prometheus"
+			},
+			"gridPos": {
+				"x": 12,
+				"y": 27,
 				"w": 12,
 				"h": 8
 			},
@@ -571,13 +537,14 @@
 						"uid": "prometheus"
 					},
 					"refId": "A",
-					"expr": "arb_batchposter_estimated_batch_backlog{node=~\"$node\"}",
+					"expr": "clamp_min(arb_dataposter_nonce_unconfirmed{node=~\"$node\"} - arb_dataposter_nonce_softconfirmed{node=~\"$node\"}, 0)",
 					"legendFormat": "{{node}}"
 				}
 			],
 			"fieldConfig": {
 				"defaults": {
 					"unit": "short",
+					"min": 0,
 					"custom": {
 						"lineWidth": 2,
 						"fillOpacity": 10,
@@ -602,61 +569,29 @@
 		},
 		{
 			"id": 13,
-			"type": "stat",
-			"title": "Batch poster wallet",
-			"description": "ETH the batch poster has left to pay for posting on the parent chain. At zero, batches stop. The L3 poster pays in L2 ETH and starts with far less than the L2 poster.",
-			"datasource": {
-				"type": "prometheus",
-				"uid": "prometheus"
-			},
+			"type": "row",
+			"title": "Resources",
+			"collapsed": false,
 			"gridPos": {
-				"x": 12,
+				"x": 0,
 				"y": 35,
-				"w": 12,
-				"h": 4
+				"w": 24,
+				"h": 1
 			},
-			"targets": [
-				{
-					"datasource": {
-						"type": "prometheus",
-						"uid": "prometheus"
-					},
-					"refId": "A",
-					"expr": "arb_batchposter_wallet_eth{node=~\"$node\"}",
-					"legendFormat": "{{node}}"
-				}
-			],
-			"fieldConfig": {
-				"defaults": {
-					"unit": "short",
-					"decimals": 4
-				},
-				"overrides": []
-			},
-			"options": {
-				"reduceOptions": {
-					"calcs": [
-						"lastNotNull"
-					],
-					"values": false
-				},
-				"textMode": "value_and_name",
-				"colorMode": "none",
-				"graphMode": "none"
-			}
+			"panels": []
 		},
 		{
 			"id": 14,
 			"type": "timeseries",
-			"title": "Posting failures",
-			"description": "Failed batch-posting attempts per minute.",
+			"title": "CPU",
+			"description": "CPU used by each node's process.",
 			"datasource": {
 				"type": "prometheus",
 				"uid": "prometheus"
 			},
 			"gridPos": {
 				"x": 0,
-				"y": 43,
+				"y": 36,
 				"w": 12,
 				"h": 8
 			},
@@ -667,13 +602,14 @@
 						"uid": "prometheus"
 					},
 					"refId": "A",
-					"expr": "rate(arb_batchPoster_action_failure{node=~\"$node\"}[1m]) * 60",
+					"expr": "system_cpu_procload{node=~\"$node\"}",
 					"legendFormat": "{{node}}"
 				}
 			],
 			"fieldConfig": {
 				"defaults": {
-					"unit": "short",
+					"unit": "percent",
+					"min": 0,
 					"custom": {
 						"lineWidth": 2,
 						"fillOpacity": 10,
@@ -699,15 +635,15 @@
 		{
 			"id": 15,
 			"type": "timeseries",
-			"title": "Parent-chain transactions pending",
-			"description": "Transactions the data poster (batches, assertions) has sent to the parent chain that are not mined yet, and its send queue. Should hover near zero.",
+			"title": "Memory in use",
+			"description": "Go heap in use by each node.",
 			"datasource": {
 				"type": "prometheus",
 				"uid": "prometheus"
 			},
 			"gridPos": {
 				"x": 12,
-				"y": 43,
+				"y": 36,
 				"w": 12,
 				"h": 8
 			},
@@ -718,22 +654,14 @@
 						"uid": "prometheus"
 					},
 					"refId": "A",
-					"expr": "arb_dataposter_nonce_unconfirmed{node=~\"$node\"} - arb_dataposter_nonce_softconfirmed{node=~\"$node\"}",
-					"legendFormat": "{{node}} pending"
-				},
-				{
-					"datasource": {
-						"type": "prometheus",
-						"uid": "prometheus"
-					},
-					"refId": "B",
-					"expr": "arb_dataposter_queue_length{node=~\"$node\"}",
-					"legendFormat": "{{node}} queued"
+					"expr": "system_memory_used{node=~\"$node\"}",
+					"legendFormat": "{{node}}"
 				}
 			],
 			"fieldConfig": {
 				"defaults": {
-					"unit": "short",
+					"unit": "bytes",
+					"min": 0,
 					"custom": {
 						"lineWidth": 2,
 						"fillOpacity": 10,
@@ -758,360 +686,6 @@
 		},
 		{
 			"id": 16,
-			"type": "row",
-			"title": "Validator (BoLD)",
-			"collapsed": false,
-			"gridPos": {
-				"x": 0,
-				"y": 51,
-				"w": 24,
-				"h": 1
-			},
-			"panels": []
-		},
-		{
-			"id": 17,
-			"type": "timeseries",
-			"title": "Assertion posting errors",
-			"description": "Failed attempts to post an assertion, per minute, beside assertions actually created on the parent chain. Under load, litro's fast validator retries assertions it has just posted (item not found on-chain, EXPECTED_ASSERTION_SEEN); errors only matter when assertions stop being created.",
-			"datasource": {
-				"type": "prometheus",
-				"uid": "prometheus"
-			},
-			"gridPos": {
-				"x": 0,
-				"y": 52,
-				"w": 12,
-				"h": 8
-			},
-			"targets": [
-				{
-					"datasource": {
-						"type": "prometheus",
-						"uid": "prometheus"
-					},
-					"refId": "A",
-					"expr": "rate(arb_validator_poster_error_posting_assertion{node=~\"$node\"}[1m]) * 60",
-					"legendFormat": "{{node}} errors"
-				},
-				{
-					"datasource": {
-						"type": "prometheus",
-						"uid": "prometheus"
-					},
-					"refId": "B",
-					"expr": "increase(litro_rollup_assertions_created_total[1m])",
-					"legendFormat": "{{chain}} assertions created"
-				}
-			],
-			"fieldConfig": {
-				"defaults": {
-					"unit": "short",
-					"custom": {
-						"lineWidth": 2,
-						"fillOpacity": 10,
-						"stacking": {
-							"mode": "none"
-						},
-						"showPoints": "never"
-					}
-				},
-				"overrides": []
-			},
-			"options": {
-				"legend": {
-					"displayMode": "list",
-					"placement": "bottom"
-				},
-				"tooltip": {
-					"mode": "multi",
-					"sort": "desc"
-				}
-			}
-		},
-		{
-			"id": 18,
-			"type": "timeseries",
-			"title": "Latest confirmed assertion",
-			"description": "Block number of the latest confirmed assertion this node has seen. Withdrawals wait on confirmation.",
-			"datasource": {
-				"type": "prometheus",
-				"uid": "prometheus"
-			},
-			"gridPos": {
-				"x": 12,
-				"y": 52,
-				"w": 12,
-				"h": 8
-			},
-			"targets": [
-				{
-					"datasource": {
-						"type": "prometheus",
-						"uid": "prometheus"
-					},
-					"refId": "A",
-					"expr": "arb_validator_scanner_latest_confirmed_assertion_block_number{node=~\"$node\"}",
-					"legendFormat": "{{node}}"
-				}
-			],
-			"fieldConfig": {
-				"defaults": {
-					"unit": "short",
-					"custom": {
-						"lineWidth": 2,
-						"fillOpacity": 10,
-						"stacking": {
-							"mode": "none"
-						},
-						"showPoints": "never"
-					}
-				},
-				"overrides": []
-			},
-			"options": {
-				"legend": {
-					"displayMode": "list",
-					"placement": "bottom"
-				},
-				"tooltip": {
-					"mode": "multi",
-					"sort": "desc"
-				}
-			}
-		},
-		{
-			"id": 19,
-			"type": "row",
-			"title": "Feeds",
-			"collapsed": false,
-			"gridPos": {
-				"x": 0,
-				"y": 60,
-				"w": 24,
-				"h": 1
-			},
-			"panels": []
-		},
-		{
-			"id": 20,
-			"type": "timeseries",
-			"title": "Sequencer feed clients",
-			"description": "Clients of the sequencer feed (port 9642), such as other nodes following the chain.",
-			"datasource": {
-				"type": "prometheus",
-				"uid": "prometheus"
-			},
-			"gridPos": {
-				"x": 0,
-				"y": 61,
-				"w": 12,
-				"h": 8
-			},
-			"targets": [
-				{
-					"datasource": {
-						"type": "prometheus",
-						"uid": "prometheus"
-					},
-					"refId": "A",
-					"expr": "arb_feed_clients_current{node=~\"$node\"}",
-					"legendFormat": "{{node}}"
-				}
-			],
-			"fieldConfig": {
-				"defaults": {
-					"unit": "short",
-					"custom": {
-						"lineWidth": 2,
-						"fillOpacity": 10,
-						"stacking": {
-							"mode": "none"
-						},
-						"showPoints": "never"
-					}
-				},
-				"overrides": []
-			},
-			"options": {
-				"legend": {
-					"displayMode": "list",
-					"placement": "bottom"
-				},
-				"tooltip": {
-					"mode": "multi",
-					"sort": "desc"
-				}
-			}
-		},
-		{
-			"id": 21,
-			"type": "timeseries",
-			"title": "Transaction feed clients",
-			"description": "Clients of Nitro's transaction feed, which the Fast Feed relay connects to.",
-			"datasource": {
-				"type": "prometheus",
-				"uid": "prometheus"
-			},
-			"gridPos": {
-				"x": 12,
-				"y": 61,
-				"w": 12,
-				"h": 8
-			},
-			"targets": [
-				{
-					"datasource": {
-						"type": "prometheus",
-						"uid": "prometheus"
-					},
-					"refId": "A",
-					"expr": "arb_transactionfeed_clients_current{node=~\"$node\"}",
-					"legendFormat": "{{node}}"
-				}
-			],
-			"fieldConfig": {
-				"defaults": {
-					"unit": "short",
-					"custom": {
-						"lineWidth": 2,
-						"fillOpacity": 10,
-						"stacking": {
-							"mode": "none"
-						},
-						"showPoints": "never"
-					}
-				},
-				"overrides": []
-			},
-			"options": {
-				"legend": {
-					"displayMode": "list",
-					"placement": "bottom"
-				},
-				"tooltip": {
-					"mode": "multi",
-					"sort": "desc"
-				}
-			}
-		},
-		{
-			"id": 22,
-			"type": "row",
-			"title": "Resources",
-			"collapsed": false,
-			"gridPos": {
-				"x": 0,
-				"y": 69,
-				"w": 24,
-				"h": 1
-			},
-			"panels": []
-		},
-		{
-			"id": 23,
-			"type": "timeseries",
-			"title": "CPU",
-			"description": "CPU used by each node's process.",
-			"datasource": {
-				"type": "prometheus",
-				"uid": "prometheus"
-			},
-			"gridPos": {
-				"x": 0,
-				"y": 70,
-				"w": 12,
-				"h": 8
-			},
-			"targets": [
-				{
-					"datasource": {
-						"type": "prometheus",
-						"uid": "prometheus"
-					},
-					"refId": "A",
-					"expr": "system_cpu_procload{node=~\"$node\"}",
-					"legendFormat": "{{node}}"
-				}
-			],
-			"fieldConfig": {
-				"defaults": {
-					"unit": "percent",
-					"custom": {
-						"lineWidth": 2,
-						"fillOpacity": 10,
-						"stacking": {
-							"mode": "none"
-						},
-						"showPoints": "never"
-					}
-				},
-				"overrides": []
-			},
-			"options": {
-				"legend": {
-					"displayMode": "list",
-					"placement": "bottom"
-				},
-				"tooltip": {
-					"mode": "multi",
-					"sort": "desc"
-				}
-			}
-		},
-		{
-			"id": 24,
-			"type": "timeseries",
-			"title": "Memory in use",
-			"description": "Go heap in use by each node.",
-			"datasource": {
-				"type": "prometheus",
-				"uid": "prometheus"
-			},
-			"gridPos": {
-				"x": 12,
-				"y": 70,
-				"w": 12,
-				"h": 8
-			},
-			"targets": [
-				{
-					"datasource": {
-						"type": "prometheus",
-						"uid": "prometheus"
-					},
-					"refId": "A",
-					"expr": "system_memory_used{node=~\"$node\"}",
-					"legendFormat": "{{node}}"
-				}
-			],
-			"fieldConfig": {
-				"defaults": {
-					"unit": "bytes",
-					"custom": {
-						"lineWidth": 2,
-						"fillOpacity": 10,
-						"stacking": {
-							"mode": "none"
-						},
-						"showPoints": "never"
-					}
-				},
-				"overrides": []
-			},
-			"options": {
-				"legend": {
-					"displayMode": "list",
-					"placement": "bottom"
-				},
-				"tooltip": {
-					"mode": "multi",
-					"sort": "desc"
-				}
-			}
-		},
-		{
-			"id": 25,
 			"type": "timeseries",
 			"title": "Goroutines",
 			"description": "Goroutines each node runs. Steady growth suggests a leak.",
@@ -1121,7 +695,7 @@
 			},
 			"gridPos": {
 				"x": 0,
-				"y": 78,
+				"y": 44,
 				"w": 12,
 				"h": 8
 			},
@@ -1139,6 +713,7 @@
 			"fieldConfig": {
 				"defaults": {
 					"unit": "short",
+					"min": 0,
 					"custom": {
 						"lineWidth": 2,
 						"fillOpacity": 10,
@@ -1162,7 +737,7 @@
 			}
 		},
 		{
-			"id": 26,
+			"id": 17,
 			"type": "timeseries",
 			"title": "Disk I/O",
 			"description": "Bytes each node reads and writes per second.",
@@ -1172,7 +747,7 @@
 			},
 			"gridPos": {
 				"x": 12,
-				"y": 78,
+				"y": 44,
 				"w": 12,
 				"h": 8
 			},
@@ -1199,6 +774,7 @@
 			"fieldConfig": {
 				"defaults": {
 					"unit": "Bps",
+					"min": 0,
 					"custom": {
 						"lineWidth": 2,
 						"fillOpacity": 10,
@@ -1220,6 +796,124 @@
 					"sort": "desc"
 				}
 			}
+		},
+		{
+			"id": 18,
+			"type": "row",
+			"title": "Diagnostics",
+			"collapsed": true,
+			"gridPos": {
+				"x": 0,
+				"y": 52,
+				"w": 24,
+				"h": 1
+			},
+			"panels": [
+				{
+					"id": 19,
+					"type": "timeseries",
+					"title": "Assertion posting errors",
+					"description": "Failed attempts to post an assertion, per minute. Under load litro's fast validator retries assertions it has just posted (item not found on-chain, EXPECTED_ASSERTION_SEEN); it matters only if Time since last assertion on the Litro chains dashboard keeps climbing.",
+					"datasource": {
+						"type": "prometheus",
+						"uid": "prometheus"
+					},
+					"gridPos": {
+						"x": 0,
+						"y": 53,
+						"w": 12,
+						"h": 8
+					},
+					"targets": [
+						{
+							"datasource": {
+								"type": "prometheus",
+								"uid": "prometheus"
+							},
+							"refId": "A",
+							"expr": "rate(arb_validator_poster_error_posting_assertion{node=~\"$node\"}[1m]) * 60",
+							"legendFormat": "{{node}}"
+						}
+					],
+					"fieldConfig": {
+						"defaults": {
+							"unit": "short",
+							"min": 0,
+							"custom": {
+								"lineWidth": 2,
+								"fillOpacity": 10,
+								"stacking": {
+									"mode": "none"
+								},
+								"showPoints": "never"
+							}
+						},
+						"overrides": []
+					},
+					"options": {
+						"legend": {
+							"displayMode": "list",
+							"placement": "bottom"
+						},
+						"tooltip": {
+							"mode": "multi",
+							"sort": "desc"
+						}
+					}
+				},
+				{
+					"id": 20,
+					"type": "timeseries",
+					"title": "L1 gas price the sequencer charges for",
+					"description": "The parent-chain gas price the sequencer uses to price each transaction's data. Static on litro unless you change the parent chain's base fee.",
+					"datasource": {
+						"type": "prometheus",
+						"uid": "prometheus"
+					},
+					"gridPos": {
+						"x": 12,
+						"y": 53,
+						"w": 12,
+						"h": 8
+					},
+					"targets": [
+						{
+							"datasource": {
+								"type": "prometheus",
+								"uid": "prometheus"
+							},
+							"refId": "A",
+							"expr": "arb_sequencer_l1gasprice{node=~\"$node\"}",
+							"legendFormat": "{{node}}"
+						}
+					],
+					"fieldConfig": {
+						"defaults": {
+							"unit": "wei",
+							"min": 0,
+							"custom": {
+								"lineWidth": 2,
+								"fillOpacity": 10,
+								"stacking": {
+									"mode": "none"
+								},
+								"showPoints": "never"
+							}
+						},
+						"overrides": []
+					},
+					"options": {
+						"legend": {
+							"displayMode": "list",
+							"placement": "bottom"
+						},
+						"tooltip": {
+							"mode": "multi",
+							"sort": "desc"
+						}
+					}
+				}
+			]
 		}
 	]
 }

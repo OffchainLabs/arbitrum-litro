@@ -302,11 +302,72 @@ export function connectWebSocket(url, handlers = {}) {
 
 /**
  * @typedef {{
- *   forwarded: number; bytes: number; connections: number;
+ *   forwarded: number; userFrames: number; bytes: number; connections: number;
  *   upstreamConnected: boolean; upstreamReconnects: number;
- *   rejected: Record<number, number>; closed: Record<number, number>;
+ *   rejected: Record<number, number>; closed: Record<number, number>; latency: LatencyHistogram;
  * }} RelayStats what the relay has done since it started, for `/metrics`
+ * @typedef {{ counts: number[]; sum: number; count: number }} LatencyHistogram counts per LATENCY_BUCKETS_MS bound
  */
+
+/** Upper bounds, in ms, of the delivery-latency histogram's buckets. */
+const LATENCY_BUCKETS_MS = [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500];
+
+/**
+ * Count a frame that carries a user's transaction, and record how old it is as the relay sends
+ * it: from the sequencer's `timestamp_ms` to now, including any configured delay. Frames that
+ * are not JSON, or have no timestamp, are not counted.
+ *
+ * @param {RelayStats} stats
+ * @param {Buffer} payload
+ */
+function observeFrame(stats, payload) {
+	/** @type {{ timestamp_ms?: unknown; transaction?: { raw_tx?: unknown } }} */
+	let frame;
+	try {
+		frame = JSON.parse(payload.toString());
+	} catch {
+		return;
+	}
+	// Nitro streams ArbOS's own start-of-block transaction (type 0x6a) like any other.
+	const raw = frame.transaction?.raw_tx;
+	if (typeof raw === "string" && !raw.startsWith("0x6a")) {
+		stats.userFrames++;
+	}
+	observeLatency(stats.latency, frame.timestamp_ms);
+}
+
+/**
+ * @param {LatencyHistogram} histogram
+ * @param {unknown} sequencedAt the frame's timestamp_ms
+ */
+function observeLatency(histogram, sequencedAt) {
+	if (typeof sequencedAt !== "number") {
+		return;
+	}
+	const latency = Math.max(0, Date.now() - sequencedAt);
+	const found = LATENCY_BUCKETS_MS.findIndex((bound) => latency <= bound);
+	const bucket = found === -1 ? LATENCY_BUCKETS_MS.length : found;
+	histogram.counts[bucket] = (histogram.counts[bucket] ?? 0) + 1;
+	histogram.sum += latency;
+	histogram.count += 1;
+}
+
+/** @param {LatencyHistogram} histogram @returns {string[]} */
+function latencyLines(histogram) {
+	const name = "litro_fast_feed_delivery_latency_ms";
+	let cumulative = 0;
+	const buckets = [...LATENCY_BUCKETS_MS, "+Inf"].map((bound, index) => {
+		cumulative += histogram.counts[index] ?? 0;
+		return `${name}_bucket{le="${bound}"} ${cumulative}`;
+	});
+	return [
+		`# HELP ${name} Age of each frame as the relay sends it, from the sequencer's timestamp_ms`,
+		`# TYPE ${name} histogram`,
+		...buckets,
+		`${name}_sum ${histogram.sum}`,
+		`${name}_count ${histogram.count}`,
+	];
+}
 
 /**
  * The relay's counters in Prometheus text format. Never anything derived from the API keys.
@@ -333,6 +394,12 @@ export function relayMetrics(stats, clients, delayMs) {
 		...metric("litro_fast_feed_frames_total", "counter", "Frames relayed from Nitro", [
 			["", stats.forwarded],
 		]),
+		...metric(
+			"litro_fast_feed_user_frames_total",
+			"counter",
+			"Frames carrying a user's transaction (not ArbOS's start-of-block one)",
+			[["", stats.userFrames]],
+		),
 		...metric("litro_fast_feed_bytes_total", "counter", "Payload bytes relayed from Nitro", [
 			["", stats.bytes],
 		]),
@@ -361,6 +428,7 @@ export function relayMetrics(stats, clients, delayMs) {
 			[["", stats.upstreamReconnects]],
 		),
 		...metric("litro_fast_feed_delay_ms", "gauge", "Delay added to every frame", [["", delayMs]]),
+		...latencyLines(stats.latency),
 	].join("\n")}\n`;
 }
 
@@ -386,12 +454,14 @@ export function startFastFeedRelay(options) {
 	/** @type {RelayStats} */
 	const stats = {
 		forwarded: 0,
+		userFrames: 0,
 		bytes: 0,
 		connections: 0,
 		upstreamConnected: false,
 		upstreamReconnects: 0,
 		rejected: {},
 		closed: {},
+		latency: { counts: Array(LATENCY_BUCKETS_MS.length + 1).fill(0), sum: 0, count: 0 },
 	};
 	let stopped = false;
 	/** @type {ClientConnection | undefined} */
@@ -418,6 +488,7 @@ export function startFastFeedRelay(options) {
 	const broadcast = (payload) => {
 		stats.forwarded++;
 		stats.bytes += payload.length;
+		observeFrame(stats, payload);
 		const frame = encodeFrame(OPCODE.binary, payload);
 		for (const client of clients) {
 			if (client.pending >= maxLag) {

@@ -187,14 +187,19 @@ pnpm dev stop                       # removes the testnode, Prometheus and Grafa
 
 The dashboards, each panel captioned with what it tells you:
 
-- **Litro chains** (home): is every chain producing blocks, how much load it carries, and whether
-  the rollup pipeline is moving: time since the last batch, deposits waiting in the delayed inbox,
-  and assertions created and confirmed.
-- **Nitro nodes**: whether each node keeps up with the sequencer, why blocks close, dropped
-  transactions, the batch poster's backlog and wallet, assertions posted, feed clients, CPU, memory.
-- **Fast Feed relay**: connected clients, frame rate, and why clients were refused or closed.
-- **Nitro: every metric**: one panel per metric any node exports, filtered by regex, so nothing
-  Nitro reports is out of reach.
+- **Litro chains** (home): is every chain running and how long it has been idle; user
+  transactions and reverts per second; batches per minute; deposits waiting and how long; time
+  since the last batch; and how long since an assertion was created and confirmed, which is when
+  withdrawals can be claimed.
+- **Nitro nodes**: how far each node trails the sequencer, block build time, why blocks closed,
+  transaction ordering (FIFO or PGA), the batch posters' wallets and pending parent-chain
+  transactions, and CPU, memory, goroutines and disk. Panels that only matter when something
+  breaks sit in a collapsed Diagnostics row.
+- **Fast Feed relay**: connected clients, delivery latency (median and p99 from the moment the
+  sequencer sequenced each transaction), transactions relayed, and why clients were refused or
+  closed.
+- **Nitro: every metric**: one panel per metric any node exports, filtered by regex (default
+  `arb_sequencer_.*`), so nothing Nitro reports is out of reach.
 
 The raw endpoints are published on `127.0.0.1` too, for your own Prometheus. `--grafana-port` and
 `--prometheus-port` move the UIs. Prometheus and Grafana run as containers beside the testnode

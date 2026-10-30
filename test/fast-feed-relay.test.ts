@@ -184,6 +184,37 @@ describe("fast feed relay", () => {
 		expect(value("litro_fast_feed_delay_ms")).toBe(5);
 	});
 
+	it("records each frame's age since the sequencer stamped it", async () => {
+		const { relay, upstream, url } = await startRelay();
+		const client = await subscribe(url);
+		upstream.push(
+			JSON.stringify({
+				version: 1,
+				timestamp_ms: Date.now() - 30,
+				transaction: { raw_tx: "0x02f8" },
+			}),
+		);
+		upstream.push(
+			JSON.stringify({ version: 1, timestamp_ms: Date.now(), transaction: { raw_tx: "0x6af8" } }),
+		);
+		upstream.push("not json, so not timed");
+		await waitFor(() => client.messages.length === 3);
+		const text = await (await fetch(`http://127.0.0.1:${relay.port}/metrics`)).text();
+		const value = (series: string) =>
+			Number(
+				text
+					.split("\n")
+					.find((line) => line.startsWith(`${series} `))
+					?.split(" ")[1],
+			);
+		// Two timed frames; only the first carries a user's transaction (0x6a is ArbOS's own).
+		expect(value("litro_fast_feed_frames_total")).toBe(3);
+		expect(value("litro_fast_feed_user_frames_total")).toBe(1);
+		expect(value("litro_fast_feed_delivery_latency_ms_count")).toBe(2);
+		expect(value('litro_fast_feed_delivery_latency_ms_bucket{le="250"}')).toBe(2);
+		expect(value('litro_fast_feed_delivery_latency_ms_bucket{le="+Inf"}')).toBe(2);
+	});
+
 	it("closes a client that sends a data frame with 1003", async () => {
 		const { url } = await startRelay();
 		const client = await subscribe(url);
