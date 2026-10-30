@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -353,8 +353,9 @@ describe("nitro image rebase", () => {
 
 	it("prefers a Dockerfile beside the module, as the CLI bundle ships it", () => {
 		const dir = mkdtempSync(join(tmpdir(), "litro-bundle-"));
-		writeFileSync(join(dir, "testnode-rebase.Dockerfile"), "FROM scratch\n");
-		expect(findRebaseDockerfile(dir)).toBe(join(dir, "testnode-rebase.Dockerfile"));
+		mkdirSync(join(dir, "docker"));
+		writeFileSync(join(dir, "docker", "testnode-rebase.Dockerfile"), "FROM scratch\n");
+		expect(findRebaseDockerfile(dir)).toBe(join(dir, "docker", "testnode-rebase.Dockerfile"));
 	});
 
 	it("fails loudly when no repo root is above the start directory", () => {

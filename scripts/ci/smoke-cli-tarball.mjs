@@ -107,6 +107,6 @@ check(
 );
 
 check(
-	existsSync(join(dir, "node_modules/@arbitrum/litro/bundle/testnode-rebase.Dockerfile")),
+	existsSync(join(dir, "node_modules/@arbitrum/litro/bundle/docker/testnode-rebase.Dockerfile")),
 	"the bundle ships the rebase Dockerfile",
 );

@@ -1,0 +1,134 @@
+{
+	"uid": "litro-nitro-all",
+	"title": "Nitro: every metric",
+	"description": "One panel per metric a Nitro node exports, filtered by a regex. Nothing Nitro reports is left out, including metrics added in later Nitro versions.",
+	"tags": [
+		"litro",
+		"nitro"
+	],
+	"timezone": "browser",
+	"editable": true,
+	"graphTooltip": 1,
+	"refresh": "5s",
+	"time": {
+		"from": "now-15m",
+		"to": "now"
+	},
+	"schemaVersion": 39,
+	"version": 1,
+	"templating": {
+		"list": [
+			{
+				"name": "node",
+				"label": "Node",
+				"type": "query",
+				"datasource": {
+					"type": "prometheus",
+					"uid": "prometheus"
+				},
+				"query": {
+					"query": "label_values(up{job=\"nitro\"}, node)",
+					"refId": "variable"
+				},
+				"definition": "label_values(up{job=\"nitro\"}, node)",
+				"refresh": 2,
+				"sort": 1,
+				"multi": false,
+				"includeAll": false,
+				"current": {}
+			},
+			{
+				"name": "filter",
+				"label": "Metric regex",
+				"type": "textbox",
+				"query": "arb_sequencer_.*",
+				"current": {
+					"text": "arb_sequencer_.*",
+					"value": "arb_sequencer_.*"
+				}
+			},
+			{
+				"name": "metric",
+				"label": "Metric",
+				"type": "query",
+				"datasource": {
+					"type": "prometheus",
+					"uid": "prometheus"
+				},
+				"query": {
+					"query": "label_values({job=\"nitro\", node=\"$node\", __name__=~\"$filter\"}, __name__)",
+					"refId": "variable"
+				},
+				"definition": "label_values({job=\"nitro\", node=\"$node\", __name__=~\"$filter\"}, __name__)",
+				"refresh": 2,
+				"sort": 1,
+				"multi": true,
+				"includeAll": true,
+				"current": {
+					"text": "All",
+					"value": "$__all"
+				}
+			}
+		]
+	},
+	"annotations": {
+		"list": []
+	},
+	"panels": [
+		{
+			"id": 1,
+			"type": "timeseries",
+			"title": "$metric",
+			"description": "",
+			"datasource": {
+				"type": "prometheus",
+				"uid": "prometheus"
+			},
+			"gridPos": {
+				"x": 0,
+				"y": 0,
+				"w": 8,
+				"h": 8
+			},
+			"targets": [
+				{
+					"datasource": {
+						"type": "prometheus",
+						"uid": "prometheus"
+					},
+					"refId": "A",
+					"expr": "{__name__=\"$metric\", node=\"$node\"}",
+					"legendFormat": "{{node}} {{quantile}}"
+				}
+			],
+			"fieldConfig": {
+				"defaults": {
+					"unit": "short",
+					"min": 0,
+					"custom": {
+						"lineWidth": 2,
+						"fillOpacity": 10,
+						"stacking": {
+							"mode": "none"
+						},
+						"showPoints": "never"
+					}
+				},
+				"overrides": []
+			},
+			"options": {
+				"legend": {
+					"displayMode": "list",
+					"placement": "bottom"
+				},
+				"tooltip": {
+					"mode": "multi",
+					"sort": "desc"
+				}
+			},
+			"repeat": "metric",
+			"repeatDirection": "h",
+			"maxPerRow": 3
+		}
+	]
+}

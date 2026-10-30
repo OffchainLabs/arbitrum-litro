@@ -74,6 +74,8 @@ COPY docker/fast-feed-relay.mjs /opt/arbitrum-testnode/bin/fast-feed-relay.mjs
 COPY --chmod=755 docker/configure-pga.sh /opt/arbitrum-testnode/bin/configure-pga.sh
 COPY docker/configure-sequencer.mjs /opt/arbitrum-testnode/bin/configure-sequencer.mjs
 COPY docker/sequencer-features.sh /opt/arbitrum-testnode/bin/sequencer-features.sh
+COPY docker/observability.sh /opt/arbitrum-testnode/bin/observability.sh
+COPY docker/chain-exporter.mjs /opt/arbitrum-testnode/bin/chain-exporter.mjs
 COPY .testnode-context/export-config /opt/arbitrum-testnode/export-config
 COPY .testnode-context/metadata.json /opt/arbitrum-testnode/metadata.json
 COPY .testnode-context/runtime /opt/arbitrum-testnode/runtime
@@ -87,7 +89,7 @@ RUN chown -R user:user /opt/arbitrum-testnode/runtime /opt/arbitrum-testnode/run
 RUN mkdir -p /tokenbridge-data && chown user:user /tokenbridge-data
 USER user
 
-EXPOSE 8545 8547 8548 8549 8550 8080 9642 9646
+EXPOSE 8545 8547 8548 8549 8550 8080 9642 9646 6070-6075 6080
 
 HEALTHCHECK --interval=3s --timeout=3s --start-period=30s --retries=10 \
 	CMD /usr/local/bin/healthcheck.sh

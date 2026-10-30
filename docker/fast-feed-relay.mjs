@@ -14,7 +14,8 @@ import { pathToFileURL } from "node:url";
 //   close 1013 "client lagged"           client fell more than 2048 messages behind
 //   close 1003 "unexpected client message"  client sent a data frame
 //   close 1011 "server shutting down"
-// Frames are forwarded byte for byte as binary messages, one transaction per message.
+// Frames are forwarded byte for byte as binary messages, one transaction per message. A plain
+// GET /metrics returns the relay's counters in Prometheus format.
 
 export const DEFAULT_FAST_FEED_API_KEY = "litro-fast-feed-dev-key";
 export const MAX_CLIENT_LAG = 2048;
@@ -300,14 +301,146 @@ export function connectWebSocket(url, handlers = {}) {
 }
 
 /**
+ * @typedef {{
+ *   forwarded: number; userFrames: number; bytes: number; connections: number;
+ *   upstreamConnected: boolean; upstreamReconnects: number;
+ *   rejected: Record<number, number>; closed: Record<number, number>; latency: LatencyHistogram;
+ * }} RelayStats what the relay has done since it started, for `/metrics`
+ * @typedef {{ counts: number[]; sum: number; count: number }} LatencyHistogram counts per LATENCY_BUCKETS_MS bound
+ */
+
+/** Upper bounds, in ms, of the delivery-latency histogram's buckets. */
+const LATENCY_BUCKETS_MS = [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500];
+
+/**
+ * Count a frame that carries a user's transaction, and record how old it is as the relay sends
+ * it: from the sequencer's `timestamp_ms` to now, including any configured delay. Frames that
+ * are not JSON, or have no timestamp, are not counted.
+ *
+ * @param {RelayStats} stats
+ * @param {Buffer} payload
+ */
+function observeFrame(stats, payload) {
+	/** @type {{ timestamp_ms?: unknown; transaction?: { raw_tx?: unknown } }} */
+	let frame;
+	try {
+		frame = JSON.parse(payload.toString());
+	} catch {
+		return;
+	}
+	// Nitro streams ArbOS's own start-of-block transaction (type 0x6a) like any other.
+	const raw = frame.transaction?.raw_tx;
+	if (typeof raw === "string" && !raw.startsWith("0x6a")) {
+		stats.userFrames++;
+	}
+	observeLatency(stats.latency, frame.timestamp_ms);
+}
+
+/**
+ * @param {LatencyHistogram} histogram
+ * @param {unknown} sequencedAt the frame's timestamp_ms
+ */
+function observeLatency(histogram, sequencedAt) {
+	if (typeof sequencedAt !== "number") {
+		return;
+	}
+	const latency = Math.max(0, Date.now() - sequencedAt);
+	const found = LATENCY_BUCKETS_MS.findIndex((bound) => latency <= bound);
+	const bucket = found === -1 ? LATENCY_BUCKETS_MS.length : found;
+	histogram.counts[bucket] = (histogram.counts[bucket] ?? 0) + 1;
+	histogram.sum += latency;
+	histogram.count += 1;
+}
+
+/** @param {LatencyHistogram} histogram @returns {string[]} */
+function latencyLines(histogram) {
+	const name = "litro_fast_feed_delivery_latency_ms";
+	let cumulative = 0;
+	const buckets = [...LATENCY_BUCKETS_MS, "+Inf"].map((bound, index) => {
+		cumulative += histogram.counts[index] ?? 0;
+		return `${name}_bucket{le="${bound}"} ${cumulative}`;
+	});
+	return [
+		`# HELP ${name} Age of each frame as the relay sends it, from the sequencer's timestamp_ms`,
+		`# TYPE ${name} histogram`,
+		...buckets,
+		`${name}_sum ${histogram.sum}`,
+		`${name}_count ${histogram.count}`,
+	];
+}
+
+/**
+ * The relay's counters in Prometheus text format. Never anything derived from the API keys.
+ *
+ * @param {RelayStats} stats
+ * @param {number} clients
+ * @param {number} delayMs
+ */
+export function relayMetrics(stats, clients, delayMs) {
+	/** @type {(name: string, type: string, help: string, samples: Array<[string, number]>) => string[]} */
+	const metric = (name, type, help, samples) => [
+		`# HELP ${name} ${help}`,
+		`# TYPE ${name} ${type}`,
+		...samples.map(([labels, value]) => `${name}${labels} ${value}`),
+	];
+	/** @param {string} label @param {Record<number, number>} counts @returns {Array<[string, number]>} */
+	const byLabel = (label, counts) =>
+		Object.entries(counts).map(([key, value]) => [`{${label}="${key}"}`, value]);
+	return `${[
+		...metric("litro_fast_feed_clients", "gauge", "Clients connected now", [["", clients]]),
+		...metric("litro_fast_feed_connections_total", "counter", "Clients admitted", [
+			["", stats.connections],
+		]),
+		...metric("litro_fast_feed_frames_total", "counter", "Frames relayed from Nitro", [
+			["", stats.forwarded],
+		]),
+		...metric(
+			"litro_fast_feed_user_frames_total",
+			"counter",
+			"Frames carrying a user's transaction (not ArbOS's start-of-block one)",
+			[["", stats.userFrames]],
+		),
+		...metric("litro_fast_feed_bytes_total", "counter", "Payload bytes relayed from Nitro", [
+			["", stats.bytes],
+		]),
+		...metric(
+			"litro_fast_feed_rejected_total",
+			"counter",
+			"Upgrade requests refused, by HTTP status",
+			byLabel("status", stats.rejected),
+		),
+		...metric(
+			"litro_fast_feed_closed_total",
+			"counter",
+			"Clients the relay closed, by close code",
+			byLabel("code", stats.closed),
+		),
+		...metric(
+			"litro_fast_feed_upstream_connected",
+			"gauge",
+			"Whether the relay is connected to Nitro's transaction feed",
+			[["", stats.upstreamConnected ? 1 : 0]],
+		),
+		...metric(
+			"litro_fast_feed_upstream_reconnects_total",
+			"counter",
+			"Reconnects to Nitro's transaction feed",
+			[["", stats.upstreamReconnects]],
+		),
+		...metric("litro_fast_feed_delay_ms", "gauge", "Delay added to every frame", [["", delayMs]]),
+		...latencyLines(stats.latency),
+	].join("\n")}\n`;
+}
+
+/**
  * @param {{
  *   port?: number; host?: string; upstreamUrl: string;
  *   apiKeys?: string[]; auth?: boolean; ticketsPerKey?: number;
  *   delayMs?: number; roundSeconds?: number; maxLag?: number;
  *   log?: (message: string) => void;
  * }} options
- * @returns {Promise<{ port: number; stats: { forwarded: number; upstreamConnected: boolean };
- *   clientCount: () => number; close: () => Promise<void> }>}
+ * @returns {Promise<{ port: number; stats: RelayStats; clientCount: () => number;
+ *   close: () => Promise<void> }>}
  */
 export function startFastFeedRelay(options) {
 	const log = options.log ?? (() => {});
@@ -318,7 +451,18 @@ export function startFastFeedRelay(options) {
 	const maxLag = options.maxLag ?? MAX_CLIENT_LAG;
 	/** @type {Set<RelayClient>} */
 	const clients = new Set();
-	const stats = { forwarded: 0, upstreamConnected: false };
+	/** @type {RelayStats} */
+	const stats = {
+		forwarded: 0,
+		userFrames: 0,
+		bytes: 0,
+		connections: 0,
+		upstreamConnected: false,
+		upstreamReconnects: 0,
+		rejected: {},
+		closed: {},
+		latency: { counts: Array(LATENCY_BUCKETS_MS.length + 1).fill(0), sum: 0, count: 0 },
+	};
 	let stopped = false;
 	/** @type {ClientConnection | undefined} */
 	let upstream;
@@ -334,6 +478,7 @@ export function startFastFeedRelay(options) {
 		}
 		client.closing = true;
 		clients.delete(client);
+		stats.closed[code] = (stats.closed[code] ?? 0) + 1;
 		client.socket.write(encodeFrame(OPCODE.close, closePayload(code, reason)));
 		client.socket.end();
 		setTimeout(() => client.socket.destroy(), 1000).unref();
@@ -342,6 +487,8 @@ export function startFastFeedRelay(options) {
 	/** @param {Buffer} payload */
 	const broadcast = (payload) => {
 		stats.forwarded++;
+		stats.bytes += payload.length;
+		observeFrame(stats, payload);
 		const frame = encodeFrame(OPCODE.binary, payload);
 		for (const client of clients) {
 			if (client.pending >= maxLag) {
@@ -374,6 +521,7 @@ export function startFastFeedRelay(options) {
 				stats.upstreamConnected = false;
 				upstream = undefined;
 				if (!stopped) {
+					stats.upstreamReconnects++;
 					log("upstream transaction feed disconnected; reconnecting");
 					reconnectTimer = setTimeout(connectUpstream, 500);
 				}
@@ -394,7 +542,12 @@ export function startFastFeedRelay(options) {
 		);
 	};
 
-	const server = createServer((_req, res) => {
+	const server = createServer((req, res) => {
+		if (req.method === "GET" && req.url === "/metrics") {
+			res.writeHead(200, { "Content-Type": "text/plain; version=0.0.4" });
+			res.end(relayMetrics(stats, clients.size, delayMs));
+			return;
+		}
 		res.writeHead(426, { "Content-Type": "text/plain", Upgrade: "websocket" });
 		res.end("Upgrade Required");
 	});
@@ -438,6 +591,7 @@ export function startFastFeedRelay(options) {
 		socket.on("error", () => socket.destroy());
 		const admission = admit(req);
 		if ("status" in admission) {
+			stats.rejected[admission.status] = (stats.rejected[admission.status] ?? 0) + 1;
 			rejectUpgrade(socket, admission.status, admission.message);
 			return;
 		}
@@ -449,6 +603,7 @@ export function startFastFeedRelay(options) {
 		/** @type {RelayClient} */
 		const client = { socket, key, pending: 0, closing: false };
 		clients.add(client);
+		stats.connections++;
 		const decoder = new FrameDecoder();
 		socket.on("data", (/** @type {Buffer} */ chunk) => {
 			for (const frame of decoder.push(chunk)) {
