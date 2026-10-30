@@ -162,7 +162,15 @@ export function removeMetricsStack(containerName) {
 }
 
 /**
- * @param {{ name: string; network: string; alias: string; port: string; image: string; env?: Record<string, string>; args?: string[]; containerName: string }} spec
+ * The volume `--keep-history` keeps Prometheus's data in. `stop` leaves it; remove it with
+ * `docker volume rm`.
+ *
+ * @param {string} containerName
+ */
+export const historyVolume = (containerName) => `${containerName}-prometheus-history`;
+
+/**
+ * @param {{ name: string; network: string; alias: string; port: string; image: string; env?: Record<string, string>; args?: string[]; volumes?: string[]; containerName: string }} spec
  */
 function createCompanion({
 	name,
@@ -172,6 +180,7 @@ function createCompanion({
 	image,
 	env = {},
 	args = [],
+	volumes = [],
 	containerName,
 }) {
 	runDocker([
@@ -187,6 +196,7 @@ function createCompanion({
 		"-p",
 		port,
 		...Object.entries(env).flatMap(([key, value]) => ["-e", `${key}=${value}`]),
+		...volumes.flatMap((volume) => ["-v", volume]),
 		image,
 		...args,
 	]);
@@ -268,7 +278,12 @@ export async function startMetricsStack({
 		alias: "prometheus",
 		port: `127.0.0.1:${observability.prometheusPort}:9090`,
 		image: PROMETHEUS_IMAGE,
-		args: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=1d"],
+		args: [
+			"--config.file=/etc/prometheus/prometheus.yml",
+			`--storage.tsdb.retention.time=${observability.keepHistory ? "30d" : "1d"}`,
+		],
+		// A named volume outlives the container, and Docker seeds it with the image's ownership.
+		volumes: observability.keepHistory ? [`${historyVolume(containerName)}:/prometheus`] : [],
 		containerName,
 	});
 	createCompanion({

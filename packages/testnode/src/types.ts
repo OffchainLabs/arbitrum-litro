@@ -29,6 +29,8 @@ export interface ObservabilityOptions {
 	grafanaPort?: number | string | undefined;
 	/** Host port for Prometheus, when the CLI runs the metrics stack (default 9090). */
 	prometheusPort?: number | string | undefined;
+	/** Keep Prometheus's data in a named volume, so history survives stop and start. */
+	keepHistory?: boolean | string | undefined;
 }
 
 export interface ObservabilityState {
@@ -36,6 +38,7 @@ export interface ObservabilityState {
 	pprof: boolean;
 	grafanaPort: number;
 	prometheusPort: number;
+	keepHistory: boolean;
 }
 
 /** One endpoint Prometheus scrapes inside the testnode container. */

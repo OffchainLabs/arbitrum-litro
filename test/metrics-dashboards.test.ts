@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { DASHBOARDS, dashboard } from "../metrics/build-dashboards.mjs";
+import { SUMMARY_QUERIES } from "../packages/testnode/src/metrics-query.mjs";
 
 const DIR = "metrics/dashboards";
 
@@ -87,6 +88,10 @@ describe("metrics dashboards", () => {
 			allPanels(spec)
 				.flatMap((panel) => panel.targets ?? [])
 				.map((target) => ({ file, expr: target.expr })),
+		);
+		// `litro metrics summary` answers the same questions, so it is held to the same names.
+		queries.push(
+			...SUMMARY_QUERIES.map((query) => ({ file: "litro metrics summary", expr: query.expr })),
 		);
 		const unknown = queries.flatMap(({ file, expr }) =>
 			metricsIn(expr.replace(/\$[a-z]+/g, ""))

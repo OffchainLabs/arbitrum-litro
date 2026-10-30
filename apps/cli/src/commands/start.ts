@@ -75,6 +75,12 @@ const observabilityFlags = z.object({
 		.number()
 		.optional()
 		.describe("Host port for Prometheus with --metrics (default 9090)"),
+	keepHistory: z
+		.boolean()
+		.optional()
+		.describe(
+			"Keep Prometheus's data in a named volume, so `litro metrics` can read history across stop and start (30 days)",
+		),
 });
 type ObservabilityFlags = z.infer<typeof observabilityFlags>;
 
@@ -87,6 +93,7 @@ function mergeObservabilityFlags(
 		pprofEnabled: options.pprof ?? file.pprof,
 		grafanaPort: options.grafanaPort ?? file.grafanaPort,
 		prometheusPort: options.prometheusPort ?? file.prometheusPort,
+		keepHistory: options.keepHistory ?? file.keepHistory,
 	};
 }
 

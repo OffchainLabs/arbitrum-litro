@@ -11,7 +11,18 @@ describe("root cli", () => {
 		const commands = Cli.toCommands.get(createCli());
 		const names = [...(commands?.keys() ?? [])].sort();
 		expect(names).toEqual(
-			["bake", "clean", "feed", "init", "logs", "snapshot", "start", "status", "stop"].sort(),
+			[
+				"bake",
+				"clean",
+				"feed",
+				"init",
+				"logs",
+				"metrics",
+				"snapshot",
+				"start",
+				"status",
+				"stop",
+			].sort(),
 		);
 	});
 });
