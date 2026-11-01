@@ -9,6 +9,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { QUESTIONS } from "../packages/testnode/src/metrics-questions.mjs";
 
 const DATASOURCE = { type: "prometheus", uid: "prometheus" };
 
@@ -216,14 +217,14 @@ export const LITRO_CHAINS = {
 			description: "Whether each chain's RPC answered the exporter's last poll (1 = up).",
 			kind: "stat",
 			width: 6,
-			queries: [{ expr: `litro_rpc_up${CHAIN}`, legend: "{{chain}}" }],
+			queries: [{ expr: QUESTIONS.rpcUp(CHAIN), legend: "{{chain}}" }],
 		},
 		{
 			title: "Head block",
 			description: "Latest block number per chain.",
 			kind: "stat",
 			width: 6,
-			queries: [{ expr: `eth_exe_block_most_recent_number${CHAIN}`, legend: "{{chain}}" }],
+			queries: [{ expr: QUESTIONS.headBlock(CHAIN), legend: "{{chain}}" }],
 		},
 		{
 			title: "L1 head block age",
@@ -245,7 +246,7 @@ export const LITRO_CHAINS = {
 			decimals: 0,
 			queries: [
 				{
-					expr: `time() - litro_last_user_transaction_timestamp_seconds{chain=~"$chain", chain!="l1"}`,
+					expr: QUESTIONS.secondsSinceLastTransaction('{chain=~"$chain", chain!="l1"}'),
 					legend: "{{chain}}",
 				},
 			],
@@ -256,22 +257,20 @@ export const LITRO_CHAINS = {
 				"ArbOS version each Arbitrum chain runs; 60 once --pga-rounds-per-block has upgraded it.",
 			kind: "stat",
 			width: 4,
-			queries: [{ expr: `litro_arbos_version${CHAIN}`, legend: "{{chain}}" }],
+			queries: [{ expr: QUESTIONS.arbosVersion(CHAIN), legend: "{{chain}}" }],
 		},
 		{ row: "Load" },
 		{
 			title: "Transactions per second",
 			description:
 				"User transactions included per second, per chain. ArbOS's own start-of-block transaction is not counted.",
-			queries: [{ expr: `rate(litro_transactions_total${CHAIN}[30s])`, legend: "{{chain}}" }],
+			queries: [{ expr: QUESTIONS.transactionsPerSecond(CHAIN), legend: "{{chain}}" }],
 		},
 		{
 			title: "Failed transactions per second",
 			description:
 				"User transactions that were included but reverted. A reverting contract call shows here, not as an RPC error.",
-			queries: [
-				{ expr: `rate(litro_failed_transactions_total${CHAIN}[30s])`, legend: "{{chain}}" },
-			],
+			queries: [{ expr: QUESTIONS.failedTransactionsPerSecond(CHAIN), legend: "{{chain}}" }],
 		},
 		{
 			title: "Gas per second",
@@ -283,7 +282,7 @@ export const LITRO_CHAINS = {
 			title: "Batches per minute",
 			description:
 				"Batches each batch poster posted to its parent chain in the last minute. It follows transaction load; zero while the chain is idle.",
-			queries: [{ expr: "increase(litro_rollup_batches[1m])", legend: "{{chain}} → {{parent}}" }],
+			queries: [{ expr: QUESTIONS.batchesPerMinute(), legend: "{{chain}} → {{parent}}" }],
 		},
 		{ row: "Deposits, batches and withdrawals (child → parent)" },
 		{
@@ -292,7 +291,7 @@ export const LITRO_CHAINS = {
 				"Deposits, retryables and force-included transactions in the delayed inbox that no posted batch has read yet. Batch posting reports are left out.",
 			kind: "stat",
 			width: 6,
-			queries: [{ expr: "litro_rollup_delayed_waiting", legend: "{{chain}}" }],
+			queries: [{ expr: QUESTIONS.depositsWaiting(), legend: "{{chain}}" }],
 		},
 		{
 			title: "Oldest waiting deposit",
@@ -303,7 +302,7 @@ export const LITRO_CHAINS = {
 			decimals: 0,
 			queries: [
 				{
-					expr: "time() - litro_rollup_oldest_delayed_waiting_timestamp_seconds",
+					expr: QUESTIONS.oldestDepositWaitingSeconds(),
 					legend: "{{chain}}",
 				},
 			],
@@ -316,7 +315,7 @@ export const LITRO_CHAINS = {
 			decimals: 0,
 			queries: [
 				{
-					expr: "time() - litro_rollup_last_batch_timestamp_seconds",
+					expr: QUESTIONS.secondsSinceLastBatch(),
 					legend: "{{chain}} → {{parent}}",
 				},
 			],
@@ -344,11 +343,11 @@ export const LITRO_CHAINS = {
 			decimals: 0,
 			queries: [
 				{
-					expr: "time() - litro_rollup_last_assertion_created_timestamp_seconds",
+					expr: QUESTIONS.secondsSinceAssertionCreated(),
 					legend: "{{chain}} created",
 				},
 				{
-					expr: "time() - litro_rollup_last_assertion_confirmed_timestamp_seconds",
+					expr: QUESTIONS.secondsSinceAssertionConfirmed(),
 					legend: "{{chain}} confirmed",
 				},
 			],
@@ -370,7 +369,7 @@ export const FAST_FEED_RELAY = {
 			description: "Clients holding a Fast Feed connection now.",
 			kind: "stat",
 			width: 8,
-			queries: [{ expr: "litro_fast_feed_clients", legend: "clients" }],
+			queries: [{ expr: QUESTIONS.fastFeedClients(), legend: "clients" }],
 		},
 		{
 			title: "Upstream connected",
@@ -394,11 +393,11 @@ export const FAST_FEED_RELAY = {
 			unit: "ms",
 			queries: [
 				{
-					expr: "histogram_quantile(0.5, sum by (le) (rate(litro_fast_feed_delivery_latency_ms_bucket[1m])))",
+					expr: QUESTIONS.fastFeedLatencyMs(0.5),
 					legend: "p50",
 				},
 				{
-					expr: "histogram_quantile(0.99, sum by (le) (rate(litro_fast_feed_delivery_latency_ms_bucket[1m])))",
+					expr: QUESTIONS.fastFeedLatencyMs(0.99),
 					legend: "p99",
 				},
 			],
@@ -408,7 +407,7 @@ export const FAST_FEED_RELAY = {
 			description:
 				"Transactions relayed to clients per second. User transactions should match the L2 on the Litro chains dashboard; all frames also include the ArbOS transaction Nitro sequences at the start of every block.",
 			queries: [
-				{ expr: "rate(litro_fast_feed_user_frames_total[30s])", legend: "user transactions" },
+				{ expr: QUESTIONS.fastFeedUserTransactionsPerSecond(), legend: "user transactions" },
 				{ expr: "rate(litro_fast_feed_frames_total[30s])", legend: "all frames" },
 			],
 		},
@@ -418,7 +417,7 @@ export const FAST_FEED_RELAY = {
 				"Upgrade requests refused in the last minute, by HTTP status: 401 wrong or missing API key, 429 the key is already connected, 426 not a WebSocket upgrade.",
 			queries: [
 				{
-					expr: 'sum by (status) (increase(litro_fast_feed_rejected_total[1m])) or label_replace(vector(0), "status", "none", "", "")',
+					expr: `sum by (status) (${QUESTIONS.fastFeedRejected()}) or label_replace(vector(0), "status", "none", "", "")`,
 					legend: "HTTP {{status}}",
 				},
 			],
@@ -486,7 +485,7 @@ export const NITRO_NODES = {
 			width: 24,
 			queries: [
 				{
-					expr: `max by (chain) (chain_head_block) - on (chain) group_right chain_head_block${NODE}`,
+					expr: QUESTIONS.blocksBehindSequencer(NODE),
 					legend: "{{node}}",
 				},
 			],
@@ -611,13 +610,13 @@ export const NITRO_NODES = {
 			title: "CPU",
 			description: "CPU used by each node's process.",
 			unit: "percent",
-			queries: [{ expr: `system_cpu_procload${NODE}`, legend: "{{node}}" }],
+			queries: [{ expr: QUESTIONS.cpuPercent(NODE), legend: "{{node}}" }],
 		},
 		{
 			title: "Memory in use",
 			description: "Go heap in use by each node.",
 			unit: "bytes",
-			queries: [{ expr: `system_memory_used${NODE}`, legend: "{{node}}" }],
+			queries: [{ expr: QUESTIONS.memoryBytes(NODE), legend: "{{node}}" }],
 		},
 		{
 			title: "Goroutines",

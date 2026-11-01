@@ -66,10 +66,11 @@ export {
 	GRAFANA_IMAGE,
 	METRICS_FOR_LABEL,
 	findMetricsStack,
-	historyVolume,
+	listMetricsHistory,
 	PROMETHEUS_IMAGE,
 	grafanaProvisioning,
 	prometheusConfig,
+	removeMetricsHistory,
 	removeMetricsStack,
 	startMetricsStack,
 } from "./metrics-stack.mjs";
@@ -79,8 +80,9 @@ export {
 	parseDuration,
 	queryInstant,
 	queryRange,
-	SUMMARY_QUERIES,
+	SUMMARY,
 } from "./metrics-query.mjs";
+export { QUESTIONS } from "./metrics-questions.mjs";
 export {
 	NITRO_NODES,
 	observabilityEndpoints,

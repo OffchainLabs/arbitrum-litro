@@ -2,7 +2,7 @@ import { type Server, createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-	SUMMARY_QUERIES,
+	QUESTIONS,
 	listMetrics,
 	metricsSummary,
 	parseDuration,
@@ -46,16 +46,15 @@ const vector = (samples: Array<[Record<string, string>, string]>) => ({
 describe("metrics queries", () => {
 	it("answers each summary question under its section, keyed by chain or node", async () => {
 		const answers: Record<string, ReturnType<typeof vector>> = {
-			litro_rpc_up: vector([
+			[QUESTIONS.rpcUp()]: vector([
 				[{ chain: "l1" }, "1"],
 				[{ chain: "l2" }, "1"],
 			]),
-			"rate(litro_transactions_total[1m])": vector([[{ chain: "l2" }, "4.12345"]]),
-			litro_rollup_delayed_waiting: vector([[{ chain: "l2", parent: "l1" }, "0"]]),
-			system_cpu_procload: vector([[{ node: "l2-validator" }, "52"]]),
-			litro_fast_feed_clients: vector([[{}, "1"]]),
-			"histogram_quantile(0.99, sum by (le) (rate(litro_fast_feed_delivery_latency_ms_bucket[5m])))":
-				vector([[{}, "NaN"]]),
+			[QUESTIONS.transactionsPerSecond()]: vector([[{ chain: "l2" }, "4.12345"]]),
+			[QUESTIONS.depositsWaiting()]: vector([[{ chain: "l2", parent: "l1" }, "0"]]),
+			[QUESTIONS.cpuPercent()]: vector([[{ node: "l2-validator" }, "52"]]),
+			[QUESTIONS.fastFeedClients()]: vector([[{}, "1"]]),
+			[QUESTIONS.fastFeedLatencyMs(0.99)]: vector([[{}, "NaN"]]),
 		};
 		const { url } = await fakePrometheus({
 			"/api/v1/query": (params) => answers[params.get("query") ?? ""] ?? vector([]),
@@ -69,11 +68,6 @@ describe("metrics queries", () => {
 		});
 		// A section the testnode does not run, or a query with no series, leaves no field.
 		expect(summary.chains["l1"]).not.toHaveProperty("transactionsPerSecond");
-	});
-
-	it("covers every summary question with a distinct field", () => {
-		const fields = SUMMARY_QUERIES.map((query) => `${query.section}.${query.field}`);
-		expect(new Set(fields).size).toBe(fields.length);
 	});
 
 	it("returns a range as timestamped points over the window asked for", async () => {
@@ -150,6 +144,17 @@ describe("metrics queries", () => {
 	it("passes Prometheus's error on, so a bad query says why", async () => {
 		const { url } = await fakePrometheus({});
 		await expect(queryInstant(url, "rate(")).rejects.toThrow(/Prometheus: no \/api\/v1\/query/);
+	});
+
+	it("says which HTTP status came back when the answer is not Prometheus's JSON", async () => {
+		const server = createServer((_req, res) => {
+			res.statusCode = 502;
+			res.end("<html>Bad Gateway</html>");
+		});
+		servers.push(server);
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+		await expect(queryInstant(url, "up")).rejects.toThrow("Prometheus: HTTP 502");
 	});
 
 	it("reads durations in seconds, minutes, hours and days", () => {

@@ -2,7 +2,9 @@
 
 // Read a running testnode's metrics back from its Prometheus, for `litro metrics` and so for
 // agents: any PromQL query, the catalog of metrics with what each means, and a summary that
-// answers the dashboards' questions in one JSON object.
+// answers the dashboards' questions (metrics-questions.mjs) in one JSON object.
+
+import { QUESTIONS } from "./metrics-questions.mjs";
 
 /**
  * @typedef {Record<string, string>} Labels
@@ -40,8 +42,9 @@ const sampleValue = (/** @type {string} */ raw) => {
  */
 async function prometheus(baseUrl, path, params) {
 	const response = await fetch(`${baseUrl}${path}?${new URLSearchParams(params)}`);
+	// Prometheus answers its own errors in JSON (with a 4xx); anything else is a proxy or a crash.
 	const body = /** @type {{ status: string; data?: unknown; error?: string }} */ (
-		await response.json()
+		await response.json().catch(() => ({ status: "error", error: `HTTP ${response.status}` }))
 	);
 	if (body.status !== "success") {
 		throw new Error(`Prometheus: ${body.error ?? response.statusText}`);
@@ -128,162 +131,115 @@ export async function listMetrics(baseUrl, filter = ".*") {
 }
 
 /**
- * The dashboards' questions as queries: where each answer goes in the summary, which label names
- * its entry, and the PromQL. Rates cover the last minute.
- *
- * @type {Array<{ section: "chains" | "rollups" | "nodes" | "fastFeed"; by?: string; field: string; expr: string }>}
+ * What `litro metrics summary` answers, by section: the questions the dashboards ask, keyed by the
+ * label that names each entry (a chain, a Nitro node), or flat for the Fast Feed relay.
  */
-export const SUMMARY_QUERIES = [
-	{ section: "chains", by: "chain", field: "up", expr: "litro_rpc_up" },
-	{ section: "chains", by: "chain", field: "headBlock", expr: "eth_exe_block_most_recent_number" },
-	{
-		section: "chains",
+export const SUMMARY = {
+	chains: {
 		by: "chain",
-		field: "transactionsPerSecond",
-		expr: "rate(litro_transactions_total[1m])",
+		fields: {
+			up: QUESTIONS.rpcUp(),
+			headBlock: QUESTIONS.headBlock(),
+			transactionsPerSecond: QUESTIONS.transactionsPerSecond(),
+			failedTransactionsPerSecond: QUESTIONS.failedTransactionsPerSecond(),
+			secondsSinceLastTransaction: QUESTIONS.secondsSinceLastTransaction(),
+			arbosVersion: QUESTIONS.arbosVersion(),
+		},
 	},
-	{
-		section: "chains",
+	rollups: {
 		by: "chain",
-		field: "failedTransactionsPerSecond",
-		expr: "rate(litro_failed_transactions_total[1m])",
+		fields: {
+			batchesLastMinute: QUESTIONS.batchesPerMinute(),
+			secondsSinceLastBatch: QUESTIONS.secondsSinceLastBatch(),
+			depositsWaiting: QUESTIONS.depositsWaiting(),
+			oldestDepositWaitingSeconds: QUESTIONS.oldestDepositWaitingSeconds(),
+			secondsSinceAssertionCreated: QUESTIONS.secondsSinceAssertionCreated(),
+			secondsSinceAssertionConfirmed: QUESTIONS.secondsSinceAssertionConfirmed(),
+		},
 	},
-	{
-		section: "chains",
-		by: "chain",
-		field: "secondsSinceLastTransaction",
-		expr: "time() - litro_last_user_transaction_timestamp_seconds",
-	},
-	{ section: "chains", by: "chain", field: "arbosVersion", expr: "litro_arbos_version" },
-	{
-		section: "rollups",
-		by: "chain",
-		field: "batchesLastMinute",
-		expr: "increase(litro_rollup_batches[1m])",
-	},
-	{
-		section: "rollups",
-		by: "chain",
-		field: "secondsSinceLastBatch",
-		expr: "time() - litro_rollup_last_batch_timestamp_seconds",
-	},
-	{
-		section: "rollups",
-		by: "chain",
-		field: "depositsWaiting",
-		expr: "litro_rollup_delayed_waiting",
-	},
-	{
-		section: "rollups",
-		by: "chain",
-		field: "oldestDepositWaitingSeconds",
-		expr: "time() - litro_rollup_oldest_delayed_waiting_timestamp_seconds",
-	},
-	{
-		section: "rollups",
-		by: "chain",
-		field: "secondsSinceAssertionCreated",
-		expr: "time() - litro_rollup_last_assertion_created_timestamp_seconds",
-	},
-	{
-		section: "rollups",
-		by: "chain",
-		field: "secondsSinceAssertionConfirmed",
-		expr: "time() - litro_rollup_last_assertion_confirmed_timestamp_seconds",
-	},
-	{
-		section: "nodes",
+	nodes: {
 		by: "node",
-		field: "blocksBehindSequencer",
-		expr: "max by (chain) (chain_head_block) - on (chain) group_right chain_head_block",
+		fields: {
+			blocksBehindSequencer: QUESTIONS.blocksBehindSequencer(),
+			cpuPercent: QUESTIONS.cpuPercent(),
+			memoryBytes: QUESTIONS.memoryBytes(),
+		},
 	},
-	{ section: "nodes", by: "node", field: "cpuPercent", expr: "system_cpu_procload" },
-	{ section: "nodes", by: "node", field: "memoryBytes", expr: "system_memory_used" },
-	{ section: "fastFeed", field: "clients", expr: "litro_fast_feed_clients" },
-	{
-		section: "fastFeed",
-		field: "userTransactionsPerSecond",
-		expr: "rate(litro_fast_feed_user_frames_total[1m])",
+	fastFeed: {
+		fields: {
+			clients: QUESTIONS.fastFeedClients(),
+			userTransactionsPerSecond: QUESTIONS.fastFeedUserTransactionsPerSecond(),
+			latencyP50Ms: QUESTIONS.fastFeedLatencyMs(0.5),
+			latencyP99Ms: QUESTIONS.fastFeedLatencyMs(0.99),
+			rejectedLastMinute: `sum(${QUESTIONS.fastFeedRejected()})`,
+		},
 	},
-	{
-		section: "fastFeed",
-		field: "latencyP50Ms",
-		expr: "histogram_quantile(0.5, sum by (le) (rate(litro_fast_feed_delivery_latency_ms_bucket[5m])))",
-	},
-	{
-		section: "fastFeed",
-		field: "latencyP99Ms",
-		expr: "histogram_quantile(0.99, sum by (le) (rate(litro_fast_feed_delivery_latency_ms_bucket[5m])))",
-	},
-	{
-		section: "fastFeed",
-		field: "rejectedLast5m",
-		expr: "sum(increase(litro_fast_feed_rejected_total[5m]))",
-	},
-];
+};
 
-/**
- * @typedef {Record<string, number | null>} SummaryFields
- * @typedef {{
- *   at: string;
- *   chains: Record<string, SummaryFields>;
- *   rollups: Record<string, SummaryFields>;
- *   nodes: Record<string, SummaryFields>;
- *   fastFeed: SummaryFields;
- * }} MetricsSummary
- */
-
-/**
- * The fields a summary answer goes in: the section itself, or its entry for one chain or node.
- *
- * @param {Record<string, any>} section
- * @param {string | undefined} key
- * @returns {SummaryFields}
- */
-function summaryFields(section, key) {
-	if (key === undefined) {
-		return section;
-	}
-	if (!section[key]) {
-		section[key] = {};
-	}
-	return section[key];
-}
+/** @typedef {Record<string, number | null>} SummaryFields */
 
 /** @param {number | null} value */
 const round = (value) => (value === null ? null : Math.round(value * 1000) / 1000);
 
 /**
- * The testnode's state now, by section: `chains` and `rollups` keyed by chain, `nodes` by Nitro
- * node, `fastFeed` flat. A chain, node or relay the testnode does not run (no L3, no Fast Feed)
+ * Each field's samples now.
+ *
+ * @param {string} baseUrl
+ * @param {Record<string, string>} fields
+ */
+const answer = (baseUrl, fields) =>
+	Promise.all(
+		Object.entries(fields).map(async ([field, expr]) => ({
+			field,
+			samples: await queryInstant(baseUrl, expr),
+		})),
+	);
+
+/**
+ * One entry per value of the `by` label (a chain, a node), holding each field it has an answer for.
+ *
+ * @param {string} baseUrl
+ * @param {{ by: string; fields: Record<string, string> }} section
+ */
+async function keyedSection(baseUrl, { by, fields }) {
+	/** @type {Record<string, SummaryFields>} */
+	const entries = {};
+	for (const { field, samples } of await answer(baseUrl, fields)) {
+		for (const sample of samples) {
+			const key = sample.metric[by] ?? "unknown";
+			entries[key] = { ...entries[key], [field]: round(sample.value) };
+		}
+	}
+	return entries;
+}
+
+/**
+ * @param {string} baseUrl
+ * @param {Record<string, string>} fields
+ */
+async function flatSection(baseUrl, fields) {
+	/** @type {SummaryFields} */
+	const values = {};
+	for (const { field, samples } of await answer(baseUrl, fields)) {
+		for (const sample of samples) {
+			values[field] = round(sample.value);
+		}
+	}
+	return values;
+}
+
+/**
+ * The testnode's state now. A chain, node or relay the testnode does not run (no L3, no Fast Feed)
  * leaves no entry, and a question with no answer yet leaves no field.
  *
  * @param {string} baseUrl
- * @returns {Promise<MetricsSummary>}
  */
 export async function metricsSummary(baseUrl) {
-	const answers = await Promise.all(
-		SUMMARY_QUERIES.map(async (query) => ({
-			query,
-			samples: await queryInstant(baseUrl, query.expr),
-		})),
-	);
-	/** @type {MetricsSummary} */
-	const summary = {
-		at: new Date().toISOString(),
-		chains: {},
-		rollups: {},
-		nodes: {},
-		fastFeed: {},
-	};
-	for (const { query, samples } of answers) {
-		for (const sample of samples) {
-			const fields = summaryFields(
-				summary[query.section],
-				query.by ? (sample.metric[query.by] ?? "unknown") : undefined,
-			);
-			fields[query.field] = round(sample.value);
-		}
-	}
-	return summary;
+	const [chains, rollups, nodes, fastFeed] = await Promise.all([
+		keyedSection(baseUrl, SUMMARY.chains),
+		keyedSection(baseUrl, SUMMARY.rollups),
+		keyedSection(baseUrl, SUMMARY.nodes),
+		flatSection(baseUrl, SUMMARY.fastFeed.fields),
+	]);
+	return { at: new Date().toISOString(), chains, rollups, nodes, fastFeed };
 }

@@ -221,7 +221,7 @@ pnpm dev metrics query 'rate(litro_transactions_total{chain="l2"}[1m])' --since 
 
 Prometheus keeps one day of samples, and `litro stop` removes them. `start --keep-history` keeps
 30 days in a Docker volume (`<container>-prometheus-history`) that survives `stop` and the next
-`start`; `docker volume rm` it to start over.
+`start`; `stop --forget-history` removes it.
 
 ### GitHub Action
 
