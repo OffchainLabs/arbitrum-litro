@@ -8,6 +8,7 @@ import { cleanCli } from "./commands/clean.js";
 import { feedCli } from "./commands/feed.js";
 import { initCli } from "./commands/init.js";
 import { logsCli } from "./commands/logs.js";
+import { metricsCli } from "./commands/metrics.js";
 import { snapshotCli } from "./commands/snapshot.js";
 import { startCli } from "./commands/start.js";
 import { statusCli } from "./commands/status.js";
@@ -31,6 +32,7 @@ export function createCli() {
 		.command(feedCli)
 		.command(initCli)
 		.command(logsCli)
+		.command(metricsCli)
 		.command(snapshotCli)
 		.command(statusCli)
 		.command(stopCli)

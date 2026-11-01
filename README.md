@@ -207,6 +207,22 @@ The raw endpoints are published on `127.0.0.1` too, for your own Prometheus. `--
 rather than bind mounts, so they work on Docker Desktop, Colima and remote daemons. Metrics need
 an image from litro v0.5.0 or later.
 
+#### Reading metrics from an agent
+
+`litro metrics` reads the same Prometheus back as JSON, so an agent can check the testnode's
+health or look back over a run without opening Grafana. Each subcommand is also an MCP tool
+(`metrics_summary`, `metrics_list`, `metrics_query`) and an installable skill.
+
+```bash
+pnpm dev metrics summary                         # every chain, rollup, node and the relay, now
+pnpm dev metrics list --filter 'arb_sequencer_.*' # metric names, types and what they measure
+pnpm dev metrics query 'rate(litro_transactions_total{chain="l2"}[1m])' --since 15m --step 1m
+```
+
+Prometheus keeps one day of samples, and `litro stop` removes them. `start --keep-history` keeps
+30 days in a Docker volume (`<container>-prometheus-history`) that survives `stop` and the next
+`start`; `stop --forget-history` removes it.
+
 ### GitHub Action
 
 ```yaml

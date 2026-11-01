@@ -17,6 +17,7 @@ describe("observability options", () => {
 		expect(resolveObservabilityOptions()).toEqual({
 			metrics: false,
 			pprof: false,
+			keepHistory: false,
 			grafanaPort: 3000,
 			prometheusPort: 9090,
 		});

@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { request } from "node:http";
+import { metricsSummary } from "@arbitrum/testnode";
 import { http, type Hex, createWalletClient, defineChain, parseAbi, parseEther } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { describe, expect, it } from "vitest";
@@ -130,6 +131,22 @@ describe("litro metrics", () => {
 			redirectUri?: string;
 		};
 		expect(home.redirectUri).toMatch(/\/litro-chains$/);
+	});
+
+	it("answers `litro metrics summary` for every chain, rollup and node", async () => {
+		const summary = await metricsSummary(PROMETHEUS_URL);
+		const chains = EXPECT_L3 ? ["l1", "l2", "l3"] : ["l1", "l2"];
+		expect(Object.keys(summary.chains).sort()).toEqual(chains);
+		for (const chain of chains) {
+			expect(summary.chains[chain]).toMatchObject({ up: 1, headBlock: expect.any(Number) });
+		}
+		expect(summary.rollups["l2"]).toMatchObject({ depositsWaiting: expect.any(Number) });
+		expect(summary.nodes["l2-validator"]).toMatchObject({
+			blocksBehindSequencer: expect.any(Number),
+		});
+		if (FAST_FEED_URL) {
+			expect(summary.fastFeed).toMatchObject({ clients: expect.any(Number) });
+		}
 	});
 
 	it("exports Nitro's own metrics from every node", async () => {

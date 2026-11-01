@@ -1,6 +1,8 @@
 import {
+	listMetricsHistory,
 	listStartContainers,
 	removeContainer,
+	removeMetricsHistory,
 	removeMetricsStack,
 	selectStartContainer,
 } from "@arbitrum/testnode";
@@ -29,6 +31,10 @@ export const stopCli = Cli.create("stop", {
 			.string()
 			.optional()
 			.describe("Remove only this start container and leave the init stack running"),
+		forgetHistory: z
+			.boolean()
+			.optional()
+			.describe("Also remove the Prometheus history `start --keep-history` kept"),
 	}),
 	run(c) {
 		const containers = listStartContainers();
@@ -45,7 +51,19 @@ export const stopCli = Cli.create("stop", {
 			removeMetricsStack();
 			stopInitStack();
 		}
+		const history = listMetricsHistory(c.options.container && targets[0]?.name);
+		if (c.options.forgetHistory) {
+			removeMetricsHistory(history);
+		} else if (history.length > 0) {
+			console.log(
+				`[stop] Kept metrics history in ${history.join(", ")} (--forget-history removes it)`,
+			);
+		}
 		console.log("[stop] Done.");
-		return { success: true, removed: targets.map((container) => container.name) };
+		return {
+			success: true,
+			removed: targets.map((container) => container.name),
+			history: { volumes: history, removed: c.options.forgetHistory === true },
+		};
 	},
 });

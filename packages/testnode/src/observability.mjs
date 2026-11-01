@@ -35,6 +35,7 @@ export function resolveObservabilityOptions(options = {}) {
 		grafanaPort: toNumber(options.grafanaPort, "grafana-port", { integer: true, min: 1 }) ?? 3000,
 		prometheusPort:
 			toNumber(options.prometheusPort, "prometheus-port", { integer: true, min: 1 }) ?? 9090,
+		keepHistory: toBoolean(options.keepHistory),
 	};
 }
 
