@@ -48,6 +48,12 @@ const sequencerFlags = z.object({
 		.number()
 		.optional()
 		.describe("Enable priority gas auction ordering with this many rounds per L2 block"),
+	arbosVersion: z
+		.number()
+		.optional()
+		.describe(
+			"Upgrade the L2 to this ArbOS version at boot (default: the newest the image's Nitro runs, 61)",
+		),
 });
 type SequencerFlags = z.infer<typeof sequencerFlags>;
 const SEQUENCER_FLAG_NAMES = Object.keys(sequencerFlags.shape) as Array<keyof SequencerFlags>;

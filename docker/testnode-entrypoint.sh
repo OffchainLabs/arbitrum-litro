@@ -90,8 +90,6 @@ start_background env HOME="$DATA_ROOT/sequencer" /usr/local/bin/nitro \
 	$SEQUENCER_FEATURE_ARGS \
 	$(nitro_observability_args 6070 6071)
 
-start_sequencer_features
-
 start_background env HOME="$DATA_ROOT/validator" /usr/local/bin/nitro \
 	--validation.wasm.allowed-wasm-module-roots "$NITRO_WASM_ROOTS" \
 	--conf.file="$CONFIG_ROOT/l2-nodeConfig.json" \
@@ -143,6 +141,10 @@ if [ "$VARIANT" != "l2" ]; then
 		--auth.port=8553 \
 		$(nitro_observability_args 6074 6075)
 fi
+
+# Chain setup that needs the RPCs. ArbOS goes first, so PGA finds the version it needs.
+upgrade_arbos
+start_sequencer_features
 
 # Legacy compat: make network files accessible at /tokenbridge-data/ for SDK's gen:network
 mkdir -p /tokenbridge-data

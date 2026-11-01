@@ -48,6 +48,10 @@ inputs:
     required: false
     default: ""
     description: "Enable priority gas auction ordering on L2 with this many rounds per block"
+  arbos-version:
+    required: false
+    default: ""
+    description: "Upgrade the L2 to this ArbOS version at boot (default: the newest the image's Nitro runs)"
   l2-max-block-speed:
     required: false
     default: ""
@@ -154,6 +158,7 @@ runs:
         INPUT_NITRO_IMAGE: ${{ inputs.nitro-image }}
         INPUT_OUTPUT_DIR: ${{ inputs.output-dir }}
         INPUT_PGA_ROUNDS_PER_BLOCK: ${{ inputs.pga-rounds-per-block }}
+        INPUT_ARBOS_VERSION: ${{ inputs.arbos-version }}
         INPUT_TIMEBOOST_ENABLED: ${{ inputs.timeboost-enabled }}
         INPUT_VERSION: ${{ inputs.version }}
         GITHUB_WORKSPACE: ${{ github.workspace }}
@@ -217,6 +222,7 @@ runs:
         INPUT_NITRO_IMAGE: ${{ inputs.nitro-image }}
         INPUT_OUTPUT_DIR: ${{ inputs.output-dir }}
         INPUT_PGA_ROUNDS_PER_BLOCK: ${{ inputs.pga-rounds-per-block }}
+        INPUT_ARBOS_VERSION: ${{ inputs.arbos-version }}
         INPUT_NETWORK_CONFIG_PATH: ${{ inputs.network-config-path }}
         INPUT_STARTUP_TIMEOUT_SECONDS: ${{ inputs.startup-timeout-seconds }}
         INPUT_TIMEBOOST_ENABLED: ${{ inputs.timeboost-enabled }}

@@ -104,6 +104,16 @@ L2-only and L2+L3 images are supported. Values such as `100ms`, `1s`, and `2.5s`
 Nitro validates the value when it starts. When the variable is unset, the bundled runtime configs
 and existing polling behavior are unchanged.
 
+### ArbOS version
+
+The snapshots are baked on ArbOS 40. At boot the image upgrades the L2 to ArbOS 61, the newest
+its Nitro runs and what Arbitrum One runs, as the chain owner. That takes a few seconds and
+happens before the container turns healthy. `--arbos-version` (`arbos-version` in the action,
+`TESTNODE_ARBOS_VERSION` on the image) picks another target; a chain already on that version or
+later is left alone, so `--arbos-version 40` keeps the snapshot's. The L3 stays on ArbOS 40: its
+chain owner is the L2-side UpgradeExecutor's address, which nothing on the L3 can act as. An image [rebased onto your own Nitro](#booting-your-own-nitro-build) is not
+upgraded unless you pass a version, because a version that Nitro cannot run would halt the chain.
+
 ### Fast Feed
 
 The [Fast Feed](https://docs.arbitrum.io/how-arbitrum-works/priority-gas-auction/fast-feed) streams
@@ -142,8 +152,9 @@ block. Two rounds per block at a 250 ms block speed reproduces that:
 pnpm dev start --fast-feed-enabled --pga-rounds-per-block 2 --l2-max-block-speed 250ms
 ```
 
-With PGA on, the image upgrades the L2 to ArbOS 60 and enables tip collection as the chain owner
-when it boots (about a second), then orders each round by priority tip. Frames gain a
+PGA needs ArbOS 60 or later, which the [boot-time upgrade](#arbos-version) already provides. With
+PGA on, the image also enables tip collection as the chain owner when it boots, then orders each
+round by priority tip. Frames gain a
 `pga_round` field. On the testnode, each transaction's frame arrives about one round (125 ms)
 before `eth_sendRawTransaction` returns. `--fast-feed-delay-ms` holds each frame back by the
 given number of milliseconds before sending it, which stands in for the network distance to a
@@ -645,6 +656,7 @@ Derived from the official nitro-testnode mnemonic. All accounts are pre-funded o
 | `fast-feed-delay-ms` | No | `0` | One-way delay added to every Fast Feed frame |
 | `pga-rounds-per-block` | No | — | Enable PGA ordering on L2 with this many rounds per block (see [Fast Feed](#fast-feed)) |
 | `l2-max-block-speed` | No | — | L2 sequencer `max-block-speed` as a Go duration, e.g. `250ms` |
+| `arbos-version` | No | — | Upgrade the L2 to this [ArbOS version](#arbos-version) at boot; the image's default is 61 |
 
 ## Action Outputs
 
