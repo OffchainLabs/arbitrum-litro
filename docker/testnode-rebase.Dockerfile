@@ -50,7 +50,7 @@ WORKDIR /home/user
 #   docker image prune -af --filter "label=org.offchainlabs.testnode-rebase=true" --filter "until=168h"
 LABEL org.offchainlabs.testnode-rebase=true
 
-EXPOSE 8545 8547 8548 8549 8550 8080 9642 9646
+EXPOSE 8545 8547 8548 8549 8550 8080 9642 9646 6070-6075 6080
 
 HEALTHCHECK --interval=3s --timeout=3s --start-period=30s --retries=10 \
 	CMD /usr/local/bin/healthcheck.sh

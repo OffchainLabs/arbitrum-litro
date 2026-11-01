@@ -46,6 +46,7 @@ if [ "${TESTNODE_PARENT_CHAIN_POLL_INTERVAL+x}" = "x" ]; then
 fi
 
 . "$TESTNODE_BIN/sequencer-features.sh"
+. "$TESTNODE_BIN/observability.sh"
 # Probed once: the batch-size rename (see configure-sequencer.mjs) and each optional feature
 # depend on which flags this Nitro build has.
 NITRO_HELP="$(/usr/local/bin/nitro --help 2>&1 || true)"
@@ -86,7 +87,8 @@ start_background env HOME="$DATA_ROOT/sequencer" /usr/local/bin/nitro \
 	--ws.addr=0.0.0.0 \
 	--ws.port=8548 \
 	--auth.port=8551 \
-	$SEQUENCER_FEATURE_ARGS
+	$SEQUENCER_FEATURE_ARGS \
+	$(nitro_observability_args 6070 6071)
 
 start_sequencer_features
 
@@ -117,7 +119,8 @@ start_background env HOME="$DATA_ROOT/validator" /usr/local/bin/nitro \
 	--http.api=net,web3,eth \
 	--ws.addr=0.0.0.0 \
 	--ws.port=8648 \
-	--auth.port=8552
+	--auth.port=8552 \
+	$(nitro_observability_args 6072 6073)
 
 if [ "$VARIANT" != "l2" ]; then
 	echo "waiting 10s for L2 sequencer to start..."
@@ -137,13 +140,16 @@ if [ "$VARIANT" != "l2" ]; then
 		--http.vhosts='*' \
 		--ws.addr=0.0.0.0 \
 		--ws.port=8550 \
-		--auth.port=8553
+		--auth.port=8553 \
+		$(nitro_observability_args 6074 6075)
 fi
 
 # Legacy compat: make network files accessible at /tokenbridge-data/ for SDK's gen:network
 mkdir -p /tokenbridge-data
 ln -sf /opt/arbitrum-testnode/export-config/l1l2_network.json /tokenbridge-data/l1l2_network.json
 ln -sf /opt/arbitrum-testnode/export-config/l2l3_network.json /tokenbridge-data/l2l3_network.json
+
+start_observability
 
 # Serve config files and health endpoint over HTTP for service container consumers
 start_background python3 /usr/local/bin/config-server.py 8080

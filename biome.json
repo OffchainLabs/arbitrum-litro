@@ -44,6 +44,6 @@
 		}
 	},
 	"files": {
-		"ignore": ["node_modules", "dist", "config"]
+		"ignore": ["node_modules", "dist", "bundle", "config", "metrics/dashboards"]
 	}
 }

@@ -1,4 +1,9 @@
-import { listStartContainers, removeContainer, selectStartContainer } from "@arbitrum/testnode";
+import {
+	listStartContainers,
+	removeContainer,
+	removeMetricsStack,
+	selectStartContainer,
+} from "@arbitrum/testnode";
 import { composeDown } from "@arbitrum/testnode-core/docker.js";
 import { stopCurrentRun } from "@arbitrum/testnode-core/run-logger.js";
 import { Cli, z } from "incur";
@@ -32,9 +37,12 @@ export const stopCli = Cli.create("stop", {
 			: containers;
 		for (const container of targets) {
 			console.log(`[stop] Removing ${container.name}...`);
+			removeMetricsStack(container.name);
 			removeContainer(container.name);
 		}
 		if (!c.options.container) {
+			// Also stacks whose testnode was removed some other way.
+			removeMetricsStack();
 			stopInitStack();
 		}
 		console.log("[stop] Done.");

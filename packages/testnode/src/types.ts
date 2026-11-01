@@ -19,6 +19,33 @@ export interface VariantDefinition {
 	supportedContractsVersions?: string[];
 }
 
+/** Metrics and profiling, as callers supply them. */
+export interface ObservabilityOptions {
+	/** Prometheus metrics on every Nitro node, the chain exporter and the relay. */
+	metricsEnabled?: boolean | string | undefined;
+	/** pprof on every Nitro node. */
+	pprofEnabled?: boolean | string | undefined;
+	/** Host port for Grafana, when the CLI runs the metrics stack (default 3000). */
+	grafanaPort?: number | string | undefined;
+	/** Host port for Prometheus, when the CLI runs the metrics stack (default 9090). */
+	prometheusPort?: number | string | undefined;
+}
+
+export interface ObservabilityState {
+	metrics: boolean;
+	pprof: boolean;
+	grafanaPort: number;
+	prometheusPort: number;
+}
+
+/** One endpoint Prometheus scrapes inside the testnode container. */
+export interface ScrapeTarget {
+	job: string;
+	port: number;
+	path: string;
+	labels: Record<string, string>;
+}
+
 /** Optional L2 sequencer features, as callers supply them (flags, env vars, config files). */
 export interface SequencerOptions {
 	/** API key the Fast Feed relay accepts; empty or unset uses the dev key. */
@@ -97,6 +124,7 @@ export interface TestnodeState {
 		l2l3Network: string;
 		localNetwork: string;
 	};
+	observability: ObservabilityState;
 	rpcUrls: { l1: string; l2: string; l3: string };
 	sequencer: SequencerState;
 	snapshotId: string;
@@ -121,6 +149,7 @@ export interface BaseStateOptions {
 	 * the rebase is booted — letting callers exercise a Nitro build of their own.
 	 */
 	nitroImage?: string | undefined;
+	observability?: ObservabilityOptions | undefined;
 	outputDir?: string | undefined;
 	sequencer?: SequencerOptions | undefined;
 	timeboostEnabled?: boolean | string | undefined;
@@ -150,7 +179,7 @@ export interface StartContainer {
 	state: string;
 	/** healthy, unhealthy or "health: starting"; empty before a healthcheck reports */
 	health: string;
-	/** Published endpoints by name (l1, l2, l3, fastFeed, sequencerFeed) */
+	/** Published endpoints by name, as endpoints.mjs names each container port */
 	endpoints: Record<string, string>;
 }
 

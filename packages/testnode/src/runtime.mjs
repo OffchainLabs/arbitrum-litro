@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import {
 	START_CONTAINER_LABEL,
 	inspectContainer,
@@ -13,6 +13,7 @@ import {
 } from "./containers.mjs";
 import { endpointUrl } from "./endpoints.mjs";
 import { toBoolean } from "./inputs.mjs";
+import { observabilityDockerArgs, resolveObservabilityOptions } from "./observability.mjs";
 import {
 	needsHealthyContainer,
 	resolveSequencerOptions,
@@ -288,21 +289,31 @@ export function rebasedTestnodeImageRef(variant, baseImageRef, nitroImage) {
 }
 
 /**
+ * A file the CLI ships, by its path in the repo. The CLI bundle carries its assets under the same
+ * paths beside itself; a checkout has them under the repo root.
+ *
+ * @param {string} repoPath
+ * @param {string} [startDir]
+ * @returns {string}
+ */
+export function findAsset(repoPath, startDir = import.meta.dirname) {
+	const bundled = join(startDir, repoPath);
+	if (existsSync(bundled)) {
+		return bundled;
+	}
+	const candidate = join(findRepoRoot(startDir), repoPath);
+	if (!existsSync(candidate)) {
+		throw new Error(`Unable to locate ${repoPath} beside the CLI or in the repo`);
+	}
+	return candidate;
+}
+
+/**
  * @param {string} [startDir]
  * @returns {string}
  */
 export function findRebaseDockerfile(startDir = import.meta.dirname) {
-	// The CLI bundle ships the Dockerfile beside itself; a checkout keeps it under docker/.
-	const bundled = join(startDir, basename(REBASE_DOCKERFILE));
-	if (existsSync(bundled)) {
-		return bundled;
-	}
-	const root = findRepoRoot(startDir);
-	const candidate = join(root, REBASE_DOCKERFILE);
-	if (!existsSync(candidate)) {
-		throw new Error(`Unable to locate ${REBASE_DOCKERFILE} in ${root}`);
-	}
-	return candidate;
+	return findAsset(REBASE_DOCKERFILE, startDir);
 }
 
 /**
@@ -579,6 +590,7 @@ function buildTestnodeState({
 	imageRepository,
 	l3Enabled,
 	nitroImage,
+	observability,
 	outputDir,
 	sequencer,
 	timeboostEnabled,
@@ -623,6 +635,7 @@ function buildTestnodeState({
 			? rebasedTestnodeImageRef(variant, baseImageRef, resolvedNitroImage)
 			: baseImageRef,
 		nitroImage: resolvedNitroImage,
+		observability: resolveObservabilityOptions(observability),
 		outputDir: resolvedOutputDir,
 		paths: buildStatePaths(configDir, definition.l3Enabled),
 		rpcUrls,
@@ -687,6 +700,7 @@ export function testnodeDockerRunArgs(state) {
 		args.push("-e", "TESTNODE_TIMEBOOST_AUCTION_CONTRACT_ADDRESS");
 	}
 	args.push(...sequencerDockerArgs(state.sequencer));
+	args.push(...observabilityDockerArgs(state.observability, state.variantDefinition.l3Enabled));
 	args.push(state.imageRef);
 	return args;
 }

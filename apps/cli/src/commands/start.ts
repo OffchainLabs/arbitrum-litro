@@ -2,13 +2,18 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import {
 	type ContainerDiagnostics,
+	type ObservabilityOptions,
 	type SequencerOptions,
 	bootTestnode,
 	buildStartTestnodeState,
 	collectContainerDiagnostics,
 	copyNetworkConfigPaths,
+	findAsset,
+	observabilityEndpoints,
 	pruneStaleRebasedImages,
 	rebaseTestnodeImage,
+	scrapeTargets,
+	startMetricsStack,
 } from "@arbitrum/testnode";
 import { Cli, z } from "incur";
 import { DEFAULT_START_IMAGE_VERSION } from "../package-metadata.js";
@@ -53,8 +58,41 @@ function mergeSequencerFlags(options: SequencerFlags, file: SequencerFlags): Seq
 	) as SequencerOptions;
 }
 
+// Metrics and profiling, the same way: flags, start-file keys and the observability options.
+const observabilityFlags = z.object({
+	metrics: z
+		.boolean()
+		.optional()
+		.describe(
+			"Serve metrics from every Nitro node, the chains and the Fast Feed relay, with Prometheus and Grafana dashboards",
+		),
+	pprof: z.boolean().optional().describe("Serve pprof from every Nitro node"),
+	grafanaPort: z
+		.number()
+		.optional()
+		.describe("Host port for Grafana with --metrics (default 3000)"),
+	prometheusPort: z
+		.number()
+		.optional()
+		.describe("Host port for Prometheus with --metrics (default 9090)"),
+});
+type ObservabilityFlags = z.infer<typeof observabilityFlags>;
+
+function mergeObservabilityFlags(
+	options: ObservabilityFlags,
+	file: ObservabilityFlags,
+): ObservabilityOptions {
+	return {
+		metricsEnabled: options.metrics ?? file.metrics,
+		pprofEnabled: options.pprof ?? file.pprof,
+		grafanaPort: options.grafanaPort ?? file.grafanaPort,
+		prometheusPort: options.prometheusPort ?? file.prometheusPort,
+	};
+}
+
 const startFileSchema = z.object({
 	...sequencerFlags.shape,
+	...observabilityFlags.shape,
 	containerName: z.string().optional(),
 	feeTokenDecimals: z.number().optional(),
 	imageRef: z.string().optional(),
@@ -82,6 +120,7 @@ interface StartResolvedInput {
 	networkConfigPaths: string[];
 	nitroContractsVersion: string | undefined;
 	nitroImage: string | undefined;
+	observability: ObservabilityOptions;
 	outputDir: string | undefined;
 	sequencer: SequencerOptions;
 	startupTimeoutSeconds: number;
@@ -117,6 +156,11 @@ type StartResult =
 			l3RpcUrl: string;
 			localNetworkPath: string;
 			networkConfigPaths: string[];
+			observability: ReturnType<typeof buildStartTestnodeState>["observability"];
+			/** Metrics and pprof endpoints on the host, by name */
+			observabilityEndpoints: Record<string, string>;
+			/** Prometheus scrape targets inside the container, for the metrics stack */
+			scrapeTargets: ReturnType<typeof scrapeTargets>;
 			sequencer: ReturnType<typeof buildStartTestnodeState>["sequencer"];
 			timeboostEnabled: boolean;
 			variant: string;
@@ -194,21 +238,22 @@ function resolveMergedNetworkConfigPaths(params: {
 }
 
 export function resolveStartInput(
-	options: SequencerFlags & {
-		config?: string | undefined;
-		containerName?: string | undefined;
-		feeTokenDecimals?: number | undefined;
-		imageRef?: string | undefined;
-		imageRepository?: string | undefined;
-		l3Enabled?: boolean | undefined;
-		networkConfigPath?: string | undefined;
-		nitroContractsVersion?: string | undefined;
-		nitroImage?: string | undefined;
-		outputDir?: string | undefined;
-		startupTimeoutSeconds?: number | undefined;
-		timeboostEnabled?: boolean | undefined;
-		imageVersion?: string | undefined;
-	},
+	options: SequencerFlags &
+		ObservabilityFlags & {
+			config?: string | undefined;
+			containerName?: string | undefined;
+			feeTokenDecimals?: number | undefined;
+			imageRef?: string | undefined;
+			imageRepository?: string | undefined;
+			l3Enabled?: boolean | undefined;
+			networkConfigPath?: string | undefined;
+			nitroContractsVersion?: string | undefined;
+			nitroImage?: string | undefined;
+			outputDir?: string | undefined;
+			startupTimeoutSeconds?: number | undefined;
+			timeboostEnabled?: boolean | undefined;
+			imageVersion?: string | undefined;
+		},
 	cwd = process.cwd(),
 ): StartResolvedInput {
 	const { config: fileConfig, path: resolvedConfigPath } = loadStartFileConfig(options.config, cwd);
@@ -236,10 +281,22 @@ export function resolveStartInput(
 			fileValue: fileConfig.outputDir,
 			optionValue: options.outputDir,
 		}),
+		observability: mergeObservabilityFlags(options, fileConfig),
 		sequencer: mergeSequencerFlags(options, fileConfig),
 		startupTimeoutSeconds: options.startupTimeoutSeconds ?? fileConfig.startupTimeoutSeconds ?? 120,
 		timeboostEnabled: options.timeboostEnabled ?? fileConfig.timeboostEnabled ?? false,
 		version: resolveStartVersion(options.imageVersion, fileConfig.version),
+	};
+}
+
+function observabilityResult(state: ReturnType<typeof buildStartTestnodeState>) {
+	const features = {
+		l3Enabled: state.variantDefinition.l3Enabled,
+		fastFeed: state.sequencer.fastFeed !== undefined,
+	};
+	return {
+		observabilityEndpoints: observabilityEndpoints(state.observability, features),
+		scrapeTargets: scrapeTargets(features),
 	};
 }
 
@@ -287,6 +344,7 @@ export function runStart(
 		imageRepository: input.imageRepository,
 		l3Enabled: input.l3Enabled,
 		nitroImage: input.nitroImage,
+		observability: input.observability,
 		outputDir: input.outputDir,
 		sequencer: input.sequencer,
 		timeboostEnabled: input.timeboostEnabled,
@@ -325,6 +383,8 @@ export function runStart(
 		l3RpcUrl: state.rpcUrls.l3,
 		localNetworkPath: state.paths.localNetwork,
 		networkConfigPaths: input.networkConfigPaths,
+		observability: state.observability,
+		...observabilityResult(state),
 		sequencer: state.sequencer,
 		timeboostEnabled: input.timeboostEnabled,
 		variant: state.variant,
@@ -336,6 +396,7 @@ export const startCli = Cli.create("start", {
 	description: "Boot the published testnode image from config with one command",
 	options: z.object({
 		...sequencerFlags.shape,
+		...observabilityFlags.shape,
 		config: z.string().optional().describe("Path to a start JSON config file"),
 		containerName: z.string().optional().describe("Optional Docker container name override"),
 		feeTokenDecimals: z
@@ -380,10 +441,20 @@ export const startCli = Cli.create("start", {
 			.optional()
 			.describe("Pinned release version used to resolve the testnode image tag"),
 	}),
-	run(c) {
+	async run(c) {
 		try {
 			const input = resolveStartInput(c.options);
-			return runStart(input);
+			const result = runStart(input);
+			if (!result.success || !result.observability.metrics) {
+				return result;
+			}
+			const stack = await startMetricsStack({
+				containerName: result.containerName,
+				observability: result.observability,
+				targets: result.scrapeTargets,
+				dashboardsDir: findAsset("metrics/dashboards"),
+			});
+			return { ...result, metrics: stack };
 		} catch (error) {
 			return {
 				success: false as const,

@@ -1,4 +1,4 @@
-import { listStartContainers } from "@arbitrum/testnode";
+import { findMetricsStack, listStartContainers } from "@arbitrum/testnode";
 import { isServiceRunning } from "@arbitrum/testnode-core/docker.js";
 import type { InitContext } from "@arbitrum/testnode-core/init-runner.js";
 import {
@@ -48,7 +48,10 @@ export const statusCli = Cli.create("status", {
 	run() {
 		const checkout = findCheckout();
 		return {
-			containers: listStartContainers(),
+			containers: listStartContainers().map((container) => ({
+				...container,
+				metrics: findMetricsStack(container.name),
+			})),
 			...(checkout ? initStatus(checkout) : {}),
 		};
 	},

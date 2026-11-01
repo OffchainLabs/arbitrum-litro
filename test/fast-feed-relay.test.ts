@@ -154,6 +154,67 @@ describe("fast feed relay", () => {
 		expect(status).toBe(426);
 	});
 
+	it("serves its counters at GET /metrics, without key material", async () => {
+		const { relay, upstream, url } = await startRelay({ apiKeys: ["secret-key"], delayMs: 5 });
+		expect(await upgradeStatus(url, {})).toBe(401);
+		const client = await subscribe(url, "secret-key");
+		expect(await upgradeStatus(url, { Authorization: "Bearer secret-key" })).toBe(429);
+		upstream.push("abcd");
+		await waitFor(() => client.messages.length === 1);
+		client.send(1, Buffer.from("not allowed"));
+		await waitFor(() => client.closes.length === 1);
+
+		const text = await (await fetch(`http://127.0.0.1:${relay.port}/metrics`)).text();
+		expect(text).not.toContain("secret-key");
+		const value = (series: string) =>
+			Number(
+				text
+					.split("\n")
+					.find((line) => line.startsWith(`${series} `))
+					?.split(" ")[1],
+			);
+		expect(value("litro_fast_feed_connections_total")).toBe(1);
+		expect(value("litro_fast_feed_frames_total")).toBe(1);
+		expect(value("litro_fast_feed_bytes_total")).toBe(4);
+		expect(value('litro_fast_feed_rejected_total{status="401"}')).toBe(1);
+		expect(value('litro_fast_feed_rejected_total{status="429"}')).toBe(1);
+		expect(value('litro_fast_feed_closed_total{code="1003"}')).toBe(1);
+		expect(value("litro_fast_feed_clients")).toBe(0);
+		expect(value("litro_fast_feed_upstream_connected")).toBe(1);
+		expect(value("litro_fast_feed_delay_ms")).toBe(5);
+	});
+
+	it("records each frame's age since the sequencer stamped it", async () => {
+		const { relay, upstream, url } = await startRelay();
+		const client = await subscribe(url);
+		upstream.push(
+			JSON.stringify({
+				version: 1,
+				timestamp_ms: Date.now() - 30,
+				transaction: { raw_tx: "0x02f8" },
+			}),
+		);
+		upstream.push(
+			JSON.stringify({ version: 1, timestamp_ms: Date.now(), transaction: { raw_tx: "0x6af8" } }),
+		);
+		upstream.push("not json, so not timed");
+		await waitFor(() => client.messages.length === 3);
+		const text = await (await fetch(`http://127.0.0.1:${relay.port}/metrics`)).text();
+		const value = (series: string) =>
+			Number(
+				text
+					.split("\n")
+					.find((line) => line.startsWith(`${series} `))
+					?.split(" ")[1],
+			);
+		// Two timed frames; only the first carries a user's transaction (0x6a is ArbOS's own).
+		expect(value("litro_fast_feed_frames_total")).toBe(3);
+		expect(value("litro_fast_feed_user_frames_total")).toBe(1);
+		expect(value("litro_fast_feed_delivery_latency_ms_count")).toBe(2);
+		expect(value('litro_fast_feed_delivery_latency_ms_bucket{le="250"}')).toBe(2);
+		expect(value('litro_fast_feed_delivery_latency_ms_bucket{le="+Inf"}')).toBe(2);
+	});
+
 	it("closes a client that sends a data frame with 1003", async () => {
 		const { url } = await startRelay();
 		const client = await subscribe(url);
