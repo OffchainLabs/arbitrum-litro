@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
 	DEFAULT_FAST_FEED_API_KEY,
-	needsHealthyContainer,
 	resolveSequencerOptions,
 	sequencerDockerArgs,
 	sequencerEnvironment,
@@ -103,12 +102,13 @@ describe("sequencer container settings", () => {
 		expect(sequencerDockerArgs(resolveSequencerOptions())).toEqual([]);
 	});
 
-	it("waits for a healthy container only for features that finish after the RPC is up", () => {
-		expect(needsHealthyContainer(resolveSequencerOptions())).toBe(false);
-		expect(needsHealthyContainer(resolveSequencerOptions({ l2MaxBlockSpeed: "250ms" }))).toBe(
-			false,
+	it("asks the image for an ArbOS version only when one is given", () => {
+		expect(sequencerEnvironment(resolveSequencerOptions())).not.toHaveProperty(
+			"TESTNODE_ARBOS_VERSION",
 		);
-		expect(needsHealthyContainer(resolveSequencerOptions({ fastFeedEnabled: true }))).toBe(true);
-		expect(needsHealthyContainer(resolveSequencerOptions({ pgaRoundsPerBlock: 2 }))).toBe(true);
+		expect(sequencerEnvironment(resolveSequencerOptions({ arbosVersion: "50" }))).toMatchObject({
+			TESTNODE_ARBOS_VERSION: "50",
+		});
+		expect(() => resolveSequencerOptions({ arbosVersion: "latest" })).toThrow(/arbos-version/);
 	});
 });

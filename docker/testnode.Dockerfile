@@ -1,5 +1,6 @@
 ARG NODE_IMAGE=node:26-bookworm-slim
 ARG FOUNDRY_IMAGE=ghcr.io/foundry-rs/foundry:v1.3.5
+# TESTNODE_ARBOS_VERSION_DEFAULT below is the newest ArbOS this Nitro runs; keep them together.
 ARG NITRO_IMAGE=offchainlabs/nitro-node:v3.12.1-70fa99a
 ARG BUNDLE_VERSION=dev
 ARG BUNDLE_VARIANT=unknown
@@ -72,6 +73,7 @@ COPY docker/testnode-server.py /usr/local/bin/config-server.py
 COPY --from=foundry /usr/local/bin/cast /opt/arbitrum-testnode/bin/cast
 COPY docker/fast-feed-relay.mjs /opt/arbitrum-testnode/bin/fast-feed-relay.mjs
 COPY --chmod=755 docker/configure-pga.sh /opt/arbitrum-testnode/bin/configure-pga.sh
+COPY --chmod=755 docker/upgrade-arbos.sh /opt/arbitrum-testnode/bin/upgrade-arbos.sh
 COPY docker/configure-sequencer.mjs /opt/arbitrum-testnode/bin/configure-sequencer.mjs
 COPY docker/sequencer-features.sh /opt/arbitrum-testnode/bin/sequencer-features.sh
 COPY docker/observability.sh /opt/arbitrum-testnode/bin/observability.sh
@@ -90,6 +92,10 @@ RUN mkdir -p /tokenbridge-data && chown user:user /tokenbridge-data
 USER user
 
 EXPOSE 8545 8547 8548 8549 8550 8080 9642 9646 6070-6075 6080
+
+# The newest ArbOS the Nitro in NITRO_IMAGE runs; the L2 is upgraded to it at boot
+# (upgrade_arbos in sequencer-features.sh). An image rebased onto another Nitro does not inherit it.
+ENV TESTNODE_ARBOS_VERSION_DEFAULT=61
 
 HEALTHCHECK --interval=3s --timeout=3s --start-period=30s --retries=10 \
 	CMD /usr/local/bin/healthcheck.sh

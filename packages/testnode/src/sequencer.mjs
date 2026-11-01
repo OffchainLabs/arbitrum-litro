@@ -1,7 +1,7 @@
 // @ts-check
 
-// Optional L2 sequencer features the published image supports: the Fast Feed, PGA rounds and the
-// block speed. The image owns their behavior (docker/sequencer-features.sh); this module turns
+// Optional chain features the published image supports: the Fast Feed, PGA rounds, the block speed
+// and the ArbOS version. The image owns their behavior (docker/sequencer-features.sh); this module turns
 // caller options into the container settings that switch them on.
 
 import { endpointUrl } from "./endpoints.mjs";
@@ -29,6 +29,7 @@ export function resolveSequencerOptions(options = {}) {
 			integer: true,
 			min: 1,
 		}),
+		arbosVersion: toNumber(options.arbosVersion, "arbos-version", { integer: true, min: 1 }),
 	};
 }
 
@@ -45,16 +46,6 @@ function resolveFastFeed(options) {
 		url: endpointUrl(9646, FAST_FEED_HOST_PORT),
 		sequencerFeedUrl: endpointUrl(9642, SEQUENCER_FEED_HOST_PORT),
 	};
-}
-
-/**
- * Whether a feature finishes setting up after the RPCs answer (the Fast Feed relay, PGA's ArbOS
- * upgrade). The image starts its config server, and so turns healthy, only once they are ready.
- *
- * @param {SequencerState} state
- */
-export function needsHealthyContainer(state) {
-	return state.fastFeed !== undefined || state.pgaRoundsPerBlock !== undefined;
 }
 
 /**
@@ -81,6 +72,9 @@ export function sequencerEnvironment(state) {
 	}
 	if (state.l2MaxBlockSpeed !== undefined) {
 		env["TESTNODE_L2_MAX_BLOCK_SPEED"] = state.l2MaxBlockSpeed;
+	}
+	if (state.arbosVersion !== undefined) {
+		env["TESTNODE_ARBOS_VERSION"] = String(state.arbosVersion);
 	}
 	return env;
 }

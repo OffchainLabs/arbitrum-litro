@@ -90,3 +90,32 @@ describe("sequencer_feature_args", () => {
 		expect(featureArgs({ TESTNODE_PGA_ROUNDS_PER_BLOCK: "2" }, "")).toMatchObject({ ok: false });
 	});
 });
+
+/** Source the helper with `env` and run upgrade_arbos, with the RPC and the upgrade stubbed. */
+function upgradeArbos(env: Record<string, string>) {
+	const bin = mkdtempSync(join(tmpdir(), "upgrade-arbos-"));
+	writeFileSync(join(bin, "curl"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+	writeFileSync(join(bin, "upgrade-arbos.sh"), '#!/bin/sh\necho "upgrade $2 as $4"\n', {
+		mode: 0o755,
+	});
+	return execFileSync("sh", ["-c", `. "${HELPER}"; upgrade_arbos`], {
+		encoding: "utf-8",
+		env: { PATH: `${bin}:${process.env["PATH"]}`, TESTNODE_BIN: bin, ...env },
+	}).trim();
+}
+
+describe("upgrade_arbos", () => {
+	it("upgrades the L2 to the newest ArbOS the image's Nitro runs", () => {
+		expect(upgradeArbos({ TESTNODE_ARBOS_VERSION_DEFAULT: "61" })).toBe("upgrade 61 as arbos l2");
+	});
+
+	it("upgrades to the version asked for instead", () => {
+		expect(
+			upgradeArbos({ TESTNODE_ARBOS_VERSION_DEFAULT: "61", TESTNODE_ARBOS_VERSION: "50" }),
+		).toBe("upgrade 50 as arbos l2");
+	});
+
+	it("leaves an image rebased onto another Nitro on the snapshot's version", () => {
+		expect(upgradeArbos({})).toBe("arbos: staying on the snapshot's version");
+	});
+});
