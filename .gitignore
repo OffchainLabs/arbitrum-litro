@@ -1,5 +1,6 @@
 node_modules
 dist
+bundle
 config/*.json
 !config/testnodes.json
 config/*.yaml

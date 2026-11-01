@@ -9,15 +9,16 @@ import {
 	buildStartTestnodeState,
 	findRebaseDockerfile,
 	hasVariantSnapshot,
-	parseStartContainers,
 	pruneStaleRebasedImages,
 	rebaseTestnodeImage,
 	rebasedTestnodeImageRef,
 	resolvePublishMatrix,
 	resolveVariantSnapshot,
+	selectStartContainer,
 	snapshotIdForContractsVersion,
 	testnodeDockerRunArgs,
 	testnodeRebaseBuildArgs,
+	toStartContainer,
 } from "../src/index.js";
 
 describe("hasVariantSnapshot", () => {
@@ -363,67 +364,74 @@ describe("nitro image rebase", () => {
 	});
 });
 
-describe("parseStartContainers", () => {
-	const row = (fields: Record<string, string>) =>
-		JSON.stringify({
-			Image: "img",
-			State: "running",
-			Status: "Up 1 minute",
-			Labels: "",
-			Ports: "",
-			...fields,
-		});
-
-	it("reads labeled containers with their variant, health and endpoints", () => {
-		const output = row({
-			Names: "my-node",
-			Labels: `a=b,${START_CONTAINER_LABEL}=l2`,
-			Status: "Up 2 minutes (healthy)",
-			Ports:
-				"127.0.0.1:8080->8080/tcp, 127.0.0.1:8545->8545/tcp, 127.0.0.1:8547-8548->8547-8548/tcp, 127.0.0.1:9642->9642/tcp, 127.0.0.1:9646->9646/tcp, 8549-8550/tcp",
-		});
-		expect(parseStartContainers(output)).toEqual([
-			{
-				name: "my-node",
-				variant: "l2",
-				image: "img",
-				state: "running",
-				health: "healthy",
-				endpoints: {
-					l1: "http://127.0.0.1:8545",
-					l2: "http://127.0.0.1:8547",
-					fastFeed: "ws://127.0.0.1:9646/",
-					sequencerFeed: "ws://127.0.0.1:9642/feed",
-				},
+describe("toStartContainer", () => {
+	const inspected = (overrides: Record<string, unknown> = {}) => ({
+		Name: "/my-node",
+		Config: { Image: "img", Labels: { a: "b", [START_CONTAINER_LABEL]: "l2" } },
+		State: { Status: "running", Health: { Status: "healthy" } },
+		HostConfig: {
+			PortBindings: {
+				"8080/tcp": [{ HostIp: "127.0.0.1", HostPort: "8080" }],
+				"8545/tcp": [{ HostIp: "127.0.0.1", HostPort: "8545" }],
+				"8547/tcp": [{ HostIp: "127.0.0.1", HostPort: "8547" }],
+				"8549/tcp": null,
+				"9642/tcp": [{ HostIp: "127.0.0.1", HostPort: "9642" }],
+				"9646/tcp": [{ HostIp: "127.0.0.1", HostPort: "9646" }],
 			},
-		]);
+		},
+		...overrides,
 	});
 
-	it("counts unlabeled containers only when the default name ends in a variant", () => {
-		const output = [
-			row({ Names: "arbitrum-testnode-l3-eth", State: "exited", Status: "Exited (0) 2 days ago" }),
-			row({ Names: "arbitrum-testnode-sequencer-1" }),
-			row({ Names: "unrelated" }),
-		].join("\n");
-		expect(parseStartContainers(output).map((c) => [c.name, c.variant, c.health])).toEqual([
-			["arbitrum-testnode-l3-eth", "l3-eth", ""],
-		]);
-	});
-
-	it("parses a pathological Ports value in linear time", () => {
-		const started = performance.now();
-		const output = row({
-			Names: "n",
-			Labels: `${START_CONTAINER_LABEL}=l2`,
-			Ports: `${"1.".repeat(50_000)}:`,
+	it("reads the variant, health and published endpoints from docker inspect", () => {
+		expect(toStartContainer(inspected())).toEqual({
+			name: "my-node",
+			variant: "l2",
+			image: "img",
+			state: "running",
+			health: "healthy",
+			endpoints: {
+				l1: "http://127.0.0.1:8545",
+				l2: "http://127.0.0.1:8547",
+				fastFeed: "ws://127.0.0.1:9646/",
+				sequencerFeed: "ws://127.0.0.1:9642/feed",
+			},
 		});
-		expect(parseStartContainers(output)[0]?.endpoints).toEqual({});
-		expect(performance.now() - started).toBeLessThan(1000);
 	});
 
-	it("lists a container both docker filters return once", () => {
-		const labeled = row({ Names: "arbitrum-testnode-l2", Labels: `${START_CONTAINER_LABEL}=l2` });
-		expect(parseStartContainers(`${labeled}\n\n${labeled}\n`)).toHaveLength(1);
+	it("uses the published host port, and localhost for an all-interfaces binding", () => {
+		const container = toStartContainer(
+			inspected({
+				State: { Status: "exited" },
+				HostConfig: { PortBindings: { "8547/tcp": [{ HostIp: "", HostPort: "28547" }] } },
+			}),
+		);
+		expect(container.health).toBe("");
+		expect(container.endpoints).toEqual({ l2: "http://127.0.0.1:28547" });
+	});
+});
+
+describe("selectStartContainer", () => {
+	const container = (name: string, state: string) => ({
+		name,
+		variant: "l2",
+		image: "img",
+		state,
+		health: "",
+		endpoints: {},
+	});
+
+	it("picks the named container, else the only running one, else the only one", () => {
+		const containers = [container("a", "exited"), container("b", "running")];
+		expect(selectStartContainer(containers, "a").name).toBe("a");
+		expect(selectStartContainer(containers, undefined).name).toBe("b");
+		expect(selectStartContainer([container("a", "exited")], undefined).name).toBe("a");
+	});
+
+	it("refuses to guess, and names what it could have meant", () => {
+		const running = [container("a", "running"), container("b", "running")];
+		expect(() => selectStartContainer(running, undefined)).toThrow(/--container: a, b/);
+		expect(() => selectStartContainer(running, "c")).toThrow(/No start container named c/);
+		expect(() => selectStartContainer([], undefined)).toThrow(/No start container found/);
 	});
 });
 

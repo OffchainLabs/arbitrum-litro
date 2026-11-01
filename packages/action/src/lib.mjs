@@ -2,7 +2,6 @@ export {
 	bootTestnode,
 	buildActionTestnodeState,
 	buildTestnodeImageRef,
-	collectContainerDiagnostics,
 	NITRO_CONTRACTS_VERSIONS,
 	copyNetworkConfigPaths,
 	DEFAULT_NITRO_CONTRACTS_VERSION,
@@ -12,12 +11,15 @@ export {
 	pruneStaleRebasedImages,
 	rebasedTestnodeImageRef,
 	rebaseTestnodeImage,
-	removeContainer,
 	resolveVariant,
-	runDocker,
 	VARIANTS,
 	waitForRpc,
 } from "../../testnode/src/runtime.mjs";
+export {
+	collectContainerDiagnostics,
+	removeContainer,
+	runDocker,
+} from "../../testnode/src/containers.mjs";
 
 /**
  * Testnode state options from the composite action's environment: `INPUT_*` for its inputs
