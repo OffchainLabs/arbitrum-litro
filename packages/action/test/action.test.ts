@@ -139,6 +139,7 @@ describe("published bundle metadata", () => {
 	it("persists Anvil state for derived bundle commits", () => {
 		expect(entrypoint).toContain('--state "$DATA_ROOT/anvil-state/state.json"');
 		expect(entrypoint).toContain("--state-interval 1");
+		expect(entrypoint).toContain("--max-persisted-states 128");
 	});
 
 	it("publishes latest aliases only after every release image succeeds", () => {

@@ -77,7 +77,8 @@ start_background /usr/local/bin/anvil \
 	--chain-id 1337 \
 	--mnemonic "indoor dish desk flag debris potato excuse depart ticket judge file exit" \
 	--state "$DATA_ROOT/anvil-state/state.json" \
-	--state-interval 1
+	--state-interval 1 \
+	--max-persisted-states 128
 
 echo "waiting for anvil on port 8545..."
 # 8545 = 0x2161

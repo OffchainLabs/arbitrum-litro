@@ -28,6 +28,7 @@ services:
       - --chain-id=1337
       - --state=/state/state.json
       - --state-interval=1
+      - --max-persisted-states=128
     volumes:
       - ../config/anvil-state:/state
 
