@@ -57,6 +57,12 @@ else
 fi
 node "$TESTNODE_BIN/configure-sequencer.mjs" "$CONFIG_ROOT" "$RENAME_BATCH_MAX_SIZE" "${TESTNODE_L2_MAX_BLOCK_SPEED:-}"
 sequencer_feature_args
+# Recent Nitro rejects Stylus activation inside eth_call/eth_estimateGas unless this is set; contracts
+# that activate programs in their constructor (e.g. StylusDeployer) need it to estimate gas.
+STYLUS_ARGS=""
+if nitro_supports "--execution.stylus-target.allow-offchain-activation"; then
+	STYLUS_ARGS="--execution.stylus-target.allow-offchain-activation"
+fi
 
 start_background /usr/local/bin/anvil \
 	--host 0.0.0.0 \
@@ -88,6 +94,7 @@ start_background env HOME="$DATA_ROOT/sequencer" /usr/local/bin/nitro \
 	--ws.port=8548 \
 	--auth.port=8551 \
 	$SEQUENCER_FEATURE_ARGS \
+	$STYLUS_ARGS \
 	$(nitro_observability_args 6070 6071)
 
 start_sequencer_features
@@ -141,6 +148,7 @@ if [ "$VARIANT" != "l2" ]; then
 		--ws.addr=0.0.0.0 \
 		--ws.port=8550 \
 		--auth.port=8553 \
+		$STYLUS_ARGS \
 		$(nitro_observability_args 6074 6075)
 fi
 
