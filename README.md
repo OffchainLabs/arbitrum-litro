@@ -226,9 +226,9 @@ Prometheus keeps one day of samples, and `litro stop` removes them. `start --kee
 ### GitHub Action
 
 ```yaml
-- uses: OffchainLabs/arbitrum-litro@v0.5.0
+- uses: OffchainLabs/arbitrum-litro@v0.5.1
   with:
-    version: v0.5.0
+    version: v0.5.1
     l3-enabled: true
     timeboost-enabled: false
 ```
@@ -279,10 +279,10 @@ under the testnode's flags and config:
     context: .
     tags: nitro-node-dev:latest
 
-- uses: OffchainLabs/arbitrum-litro@v0.5.0
+- uses: OffchainLabs/arbitrum-litro@v0.5.1
   id: testnode
   with:
-    version: v0.5.0
+    version: v0.5.1
     nitro-image: nitro-node-dev:latest
 ```
 
@@ -331,10 +331,10 @@ The published testnode image also contains a prebuilt `token-bridge-contracts` w
 consumers can run scripts from that workspace without another image or build step:
 
 ```yaml
-- uses: OffchainLabs/arbitrum-litro@v0.5.0
+- uses: OffchainLabs/arbitrum-litro@v0.5.1
   id: testnode
   with:
-    version: v0.5.0
+    version: v0.5.1
 
 - name: Run contract deployment command
   run: |
@@ -442,7 +442,7 @@ job — log in before invoking it:
     username: ${{ github.actor }}
     password: ${{ secrets.GITHUB_TOKEN }}
 
-- uses: OffchainLabs/arbitrum-litro/bake@v0.5.0
+- uses: OffchainLabs/arbitrum-litro/bake@v0.5.1
   with:
     setup-command: ./scripts/deploy-and-seed.sh
     image-ref: ghcr.io/acme/arbitrum-testnode:governance
@@ -470,7 +470,7 @@ pnpm dev start --image-ref ghcr.io/acme/arbitrum-testnode:governance
 In CI:
 
 ```yaml
-- uses: OffchainLabs/arbitrum-litro@v0.5.0
+- uses: OffchainLabs/arbitrum-litro@v0.5.1
   with:
     image-ref: ghcr.io/acme/arbitrum-testnode:governance
     l3-enabled: false
