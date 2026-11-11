@@ -14,11 +14,7 @@ import {
 import { endpointUrl } from "./endpoints.mjs";
 import { toBoolean } from "./inputs.mjs";
 import { observabilityDockerArgs, resolveObservabilityOptions } from "./observability.mjs";
-import {
-	needsHealthyContainer,
-	resolveSequencerOptions,
-	sequencerDockerArgs,
-} from "./sequencer.mjs";
+import { resolveSequencerOptions, sequencerDockerArgs } from "./sequencer.mjs";
 
 export {
 	DEFAULT_FAST_FEED_API_KEY,
@@ -803,14 +799,14 @@ export function bootTestnode(state, timeoutMs) {
 	for (const url of rpcs) {
 		waitForContainer(state.containerName, () => rpcAnswers(url), timeoutMs, `RPC at ${url}`);
 	}
-	if (needsHealthyContainer(state.sequencer)) {
-		waitForContainer(
-			state.containerName,
-			() => inspectContainer(state.containerName).health === "healthy",
-			timeoutMs,
-			"the container healthcheck",
-		);
-	}
+	// The image turns healthy once its boot setup is done: the ArbOS upgrade and the sequencer
+	// features (docker/sequencer-features.sh).
+	waitForContainer(
+		state.containerName,
+		() => inspectContainer(state.containerName).health === "healthy",
+		timeoutMs,
+		"the container healthcheck",
+	);
 	return exportTestnodeConfig(state);
 }
 

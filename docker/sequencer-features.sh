@@ -1,7 +1,8 @@
-# Optional L2 sequencer features: Timeboost, the Fast Feed, PGA rounds, and block speed.
-# Sourced by testnode-entrypoint.sh, which calls sequencer_feature_args before starting the
-# sequencer and start_sequencer_features once it is running. Each feature is read from its
-# TESTNODE_* variable in exactly one place.
+# Optional L2 sequencer features: Timeboost, the Fast Feed, PGA rounds, and block speed; and the
+# ArbOS upgrade every chain gets at boot. Sourced by testnode-entrypoint.sh, which calls
+# sequencer_feature_args before starting the sequencer, then upgrade_arbos and
+# start_sequencer_features once the chains are running. Each setting is read from its TESTNODE_*
+# variable in exactly one place.
 
 : "${TESTNODE_BIN:=/opt/arbitrum-testnode/bin}"
 FAST_FEED_RELAY="$TESTNODE_BIN/fast-feed-relay.mjs"
@@ -96,6 +97,24 @@ sequencer_feature_args() {
 			--execution.sequencer.pga.rounds-per-block=$TESTNODE_PGA_ROUNDS_PER_BLOCK"
 		echo "pga: $TESTNODE_PGA_ROUNDS_PER_BLOCK rounds per block"
 	fi
+}
+
+# Litro's snapshots are baked on ArbOS 40. The L2 is upgraded at boot, as its chain owner, to
+# TESTNODE_ARBOS_VERSION, else to TESTNODE_ARBOS_VERSION_DEFAULT: the newest version this image's
+# own Nitro runs, set in testnode.Dockerfile. An image rebased onto another Nitro has no default,
+# since scheduling a version that Nitro cannot run would halt the chain, so it stays on the
+# snapshot's version unless asked. The L3 stays on the snapshot's version: baking handed its
+# ownership to the L2-side UpgradeExecutor's address, which nothing on the L3 can act as.
+upgrade_arbos() {
+	target="${TESTNODE_ARBOS_VERSION:-${TESTNODE_ARBOS_VERSION_DEFAULT:-}}"
+	if [ -z "$target" ]; then
+		echo "arbos: staying on the snapshot's version"
+		return
+	fi
+	wait_for_rpc http://127.0.0.1:8547
+	# Well-known nitro-testnode key: index 5 owns the L2.
+	PATH="$TESTNODE_BIN:$PATH" "$TESTNODE_BIN/upgrade-arbos.sh" http://127.0.0.1:8547 "$target" \
+		0xdc04c5399f82306ec4b4d654a342f40e2e0620fe39950d967e1e574b32d4dd36 "arbos l2"
 }
 
 # Starts what runs beside the sequencer and finishes chain setup. Returns once each feature is
