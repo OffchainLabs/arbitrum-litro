@@ -1,0 +1,106 @@
+name: Bench image compression
+
+# Throwaway: compares cold pull time of the published gzip testnode image with
+# a zstd copy of it. Lives only on the bench/zstd branch.
+on:
+  push:
+    branches: [bench/zstd]
+
+env:
+  SOURCE: ghcr.io/offchainlabs/arbitrum-litro
+  BENCH: ghcr.io/offchainlabs/arbitrum-litro-bench
+
+jobs:
+  recompress:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        variant: [l2, l3-eth]
+    steps:
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Write FROM-only Dockerfile
+        run: |
+          mkdir ctx
+          echo "FROM ${SOURCE}:latest-${{ matrix.variant }}" > ctx/Dockerfile
+      - uses: docker/build-push-action@v6
+        with:
+          context: ctx
+          platforms: linux/amd64
+          provenance: false
+          outputs: type=image,name=${{ env.BENCH }}:zstd-${{ matrix.variant }},push=true,compression=zstd,compression-level=3,force-compression=true,oci-mediatypes=true
+      - name: Compare manifests
+        run: |
+          set -euo pipefail
+          for ref in "${SOURCE}:latest-${{ matrix.variant }}" "${BENCH}:zstd-${{ matrix.variant }}"; do
+            m="$(docker buildx imagetools inspect --raw "$ref")"
+            if echo "$m" | jq -e '.manifests' >/dev/null; then
+              d="$(echo "$m" | jq -r '[.manifests[] | select(.platform.architecture=="amd64")][0].digest')"
+              m="$(docker buildx imagetools inspect --raw "${ref%:*}@$d")"
+            fi
+            echo "$ref"
+            echo "$m" | jq -r '.layers | "  layers=\(length) bytes=\(map(.size)|add) types=\(map(.mediaType)|unique|join(","))"'
+            echo "| ${ref} | $(echo "$m" | jq '.layers|length') | $(echo "$m" | jq '[.layers[].size]|add/1048576|floor') MiB | $(echo "$m" | jq -r '.layers|map(.mediaType)|unique|join(", ")') |" >> sizes.md
+          done
+          { echo "### ${{ matrix.variant }} sizes (amd64)"; echo "| ref | layers | compressed | media types |"; echo "|---|---|---|---|"; cat sizes.md; } >> "$GITHUB_STEP_SUMMARY"
+
+  pull:
+    needs: recompress
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+        variant: [l2, l3-eth]
+        compression: [gzip, zstd]
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Time cold pulls
+        env:
+          RUNNER_NAME_TAG: ${{ matrix.runner }}
+          VARIANT: ${{ matrix.variant }}
+          COMPRESSION: ${{ matrix.compression }}
+        run: |
+          set -euo pipefail
+          if [ "$COMPRESSION" = gzip ]; then ref="${SOURCE}:latest-${VARIANT}"; else ref="${BENCH}:zstd-${VARIANT}"; fi
+          docker version --format 'client={{.Client.Version}} server={{.Server.Version}}'
+          docker info --format 'driver={{.Driver}} cpus={{.NCPU}} mem={{.MemTotal}}'
+          times=()
+          for i in 1 2 3; do
+            docker image rm -f "$ref" >/dev/null 2>&1 || true
+            docker system prune -af >/dev/null
+            test -z "$(docker images -q)"
+            t0="$(date +%s.%N)"
+            docker pull -q --platform linux/amd64 "$ref" >/dev/null
+            t1="$(date +%s.%N)"
+            t="$(awk -v a="$t0" -v b="$t1" 'BEGIN{printf "%.1f", b-a}')"
+            echo "pull $i: ${t}s"
+            times+=("$t")
+          done
+          median="$(printf '%s\n' "${times[@]}" | sort -n | sed -n 2p)"
+          docker run --rm --platform linux/amd64 --entrypoint /bin/sh "$ref" -c true 2>/dev/null \
+            || docker run --rm --platform linux/amd64 --entrypoint true "$ref" 2>/dev/null \
+            || echo "smoke run skipped (no shell or true in image)"
+          echo "| ${RUNNER_NAME_TAG} | ${VARIANT} | ${COMPRESSION} | ${times[*]} | ${median} |" >> "$GITHUB_STEP_SUMMARY"
+          mkdir -p out
+          jq -n --arg runner "$RUNNER_NAME_TAG" --arg variant "$VARIANT" --arg compression "$COMPRESSION" \
+            --arg median "$median" --arg runs "${times[*]}" '$ARGS.named' \
+            > "out/${RUNNER_NAME_TAG}-${VARIANT}-${COMPRESSION}.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pull-${{ matrix.runner }}-${{ matrix.variant }}-${{ matrix.compression }}
+          path: out/
