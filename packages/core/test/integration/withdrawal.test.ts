@@ -9,7 +9,8 @@ import { executeWithdrawal } from "../../src/withdraw.js";
 // The action exports these; LOCAL_NETWORK_PATH overrides the network file for a local run.
 const L1_RPC_URL = process.env["ARBITRUM_TESTNODE_L1_RPC_URL"] || "http://127.0.0.1:8545";
 const L2_RPC_URL = process.env["ARBITRUM_TESTNODE_L2_RPC_URL"] || "http://127.0.0.1:8547";
-const L3_RPC_URL = process.env["ARBITRUM_TESTNODE_L3_RPC_URL"] || "http://127.0.0.1:3347";
+// The action exports an empty L3 URL for an L2-only image, whose network file still lists the L3.
+const L3_RPC_URL = process.env["ARBITRUM_TESTNODE_L3_RPC_URL"] ?? "http://127.0.0.1:3347";
 const LOCAL_NETWORK_PATH =
 	process.env["LOCAL_NETWORK_PATH"] || process.env["ARBITRUM_TESTNODE_LOCAL_NETWORK_PATH"] || "";
 
@@ -53,21 +54,24 @@ describe("withdrawal speed", () => {
 		console.log(`L2→L1 withdrawal completed in ${result.durationMs}ms`);
 	});
 
-	it.skipIf(!network.l3Network)("L3→L2 ETH withdrawal completes within 30 seconds", async () => {
-		const rollup = network.l3Network?.ethBridge.rollup as Address;
-		const outboxAddress = await getOutboxAddress(rollup, L2_RPC_URL);
+	it.skipIf(!(network.l3Network && L3_RPC_URL))(
+		"L3→L2 ETH withdrawal completes within 30 seconds",
+		async () => {
+			const rollup = network.l3Network?.ethBridge.rollup as Address;
+			const outboxAddress = await getOutboxAddress(rollup, L2_RPC_URL);
 
-		const result = await executeWithdrawal({
-			childRpcUrl: L3_RPC_URL,
-			parentRpcUrl: L2_RPC_URL,
-			privateKey: accounts.funnel.privateKey,
-			amount: parseEther("0.001"),
-			outboxAddress,
-			pollIntervalMs: 1000,
-			timeoutMs: 30_000,
-		});
+			const result = await executeWithdrawal({
+				childRpcUrl: L3_RPC_URL,
+				parentRpcUrl: L2_RPC_URL,
+				privateKey: accounts.funnel.privateKey,
+				amount: parseEther("0.001"),
+				outboxAddress,
+				pollIntervalMs: 1000,
+				timeoutMs: 30_000,
+			});
 
-		expect(result.durationMs).toBeLessThan(30_000);
-		console.log(`L3→L2 withdrawal completed in ${result.durationMs}ms`);
-	});
+			expect(result.durationMs).toBeLessThan(30_000);
+			console.log(`L3→L2 withdrawal completed in ${result.durationMs}ms`);
+		},
+	);
 });
