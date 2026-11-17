@@ -69,6 +69,9 @@ services:
     command:
       - --conf.file=/config/l3-nodeConfig.json
       - --node.dangerous.disable-blob-reader
+      # init turns the L3 staker on before capturing; like the validator above and the
+      # image's entrypoint, it runs without a block validator.
+      - --node.staker.dangerous.without-block-validator
       - --http.addr=0.0.0.0
       - --http.port=8547
       - --http.api=net,web3,eth,txpool,debug
