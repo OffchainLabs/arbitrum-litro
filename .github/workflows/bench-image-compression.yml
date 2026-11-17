@@ -1,7 +1,7 @@
-name: Bench image compression
+name: Bench testnode boot
 
-# Throwaway: compares cold pull time of the published gzip testnode image with
-# a zstd copy of it. Lives only on the bench/zstd branch.
+# Throwaway: compares pull + boot time of image variants through the action.
+# Lives only on the bench/zstd branch.
 on:
   push:
     branches: [bench/zstd]
@@ -9,98 +9,127 @@ on:
 env:
   SOURCE: ghcr.io/offchainlabs/arbitrum-litro
   BENCH: ghcr.io/offchainlabs/arbitrum-litro-bench
+  ZSTD: compression=zstd,compression-level=3,force-compression=true,oci-mediatypes=true
 
 jobs:
-  recompress:
+  build:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     strategy:
+      max-parallel: 1
       matrix:
         variant: [l2, l3-eth]
     steps:
+      - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Write FROM-only Dockerfile
-        run: |
-          mkdir ctx
-          echo "FROM ${SOURCE}:latest-${{ matrix.variant }}" > ctx/Dockerfile
-      - uses: docker/build-push-action@v6
-        with:
-          context: ctx
-          platforms: linux/amd64
-          provenance: false
-          outputs: type=image,name=${{ env.BENCH }}:zstd-${{ matrix.variant }},push=true,compression=zstd,compression-level=3,force-compression=true,oci-mediatypes=true
-      - name: Compare manifests
+      - name: Patch entrypoint to wait for L2 instead of sleeping
         run: |
           set -euo pipefail
-          for ref in "${SOURCE}:latest-${{ matrix.variant }}" "${BENCH}:zstd-${{ matrix.variant }}"; do
+          src="${SOURCE}:latest-${{ matrix.variant }}"
+          docker pull -q "$src" >/dev/null
+          cid="$(docker create "$src")"
+          docker cp "$cid:/usr/local/bin/arbitrum-testnode" bench/arbitrum-testnode
+          docker rm "$cid" >/dev/null
+          grep -q '^	sleep 10$' bench/arbitrum-testnode
+          python3 - bench/arbitrum-testnode <<'EOF'
+          import sys
+          p = sys.argv[1]
+          s = open(p).read()
+          wait = ("\tuntil curl -sf -X POST -H 'Content-Type: application/json' "
+                  "-d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_chainId\",\"params\":[]}' "
+                  "http://127.0.0.1:8547 >/dev/null; do sleep 0.2; done\n")
+          s = s.replace("\tsleep 10\n", wait, 1)
+          open(p, "w").write(s)
+          EOF
+          grep -n -B1 -A1 "until curl" bench/arbitrum-testnode
+          labels="$(docker inspect --format '{{json .Config.Labels}}' "$src" | jq -r 'to_entries[] | "\(.key)=\(.value)"')"
+          { echo "labels<<EOF"; echo "$labels"; echo "EOF"; } >> "$GITHUB_ENV"
+      - name: zstd + nowait
+        uses: docker/build-push-action@v6
+        with:
+          context: bench
+          file: bench/nowait.Dockerfile
+          build-args: SRC=${{ env.SOURCE }}:latest-${{ matrix.variant }}
+          platforms: linux/amd64
+          provenance: false
+          outputs: type=image,name=${{ env.BENCH }}:nowait-${{ matrix.variant }},push=true,${{ env.ZSTD }}
+      - name: zstd + nowait + slim
+        uses: docker/build-push-action@v6
+        with:
+          context: bench
+          file: bench/slim.Dockerfile
+          build-args: SRC=${{ env.BENCH }}:nowait-${{ matrix.variant }}
+          labels: ${{ env.labels }}
+          platforms: linux/amd64
+          provenance: false
+          outputs: type=image,name=${{ env.BENCH }}:slim-${{ matrix.variant }},push=true,${{ env.ZSTD }}
+      - name: Sizes
+        run: |
+          set -euo pipefail
+          for ref in "${SOURCE}:latest-${{ matrix.variant }}" "${BENCH}:zstd-${{ matrix.variant }}" "${BENCH}:nowait-${{ matrix.variant }}" "${BENCH}:slim-${{ matrix.variant }}"; do
             m="$(docker buildx imagetools inspect --raw "$ref")"
             if echo "$m" | jq -e '.manifests' >/dev/null; then
               d="$(echo "$m" | jq -r '[.manifests[] | select(.platform.architecture=="amd64")][0].digest')"
               m="$(docker buildx imagetools inspect --raw "${ref%:*}@$d")"
             fi
-            echo "$ref"
-            echo "$m" | jq -r '.layers | "  layers=\(length) bytes=\(map(.size)|add) types=\(map(.mediaType)|unique|join(","))"'
-            echo "| ${ref} | $(echo "$m" | jq '.layers|length') | $(echo "$m" | jq '[.layers[].size]|add/1048576|floor') MiB | $(echo "$m" | jq -r '.layers|map(.mediaType)|unique|join(", ")') |" >> sizes.md
+            echo "size $ref layers=$(echo "$m" | jq '.layers|length') bytes=$(echo "$m" | jq '[.layers[].size]|add')"
           done
-          { echo "### ${{ matrix.variant }} sizes (amd64)"; echo "| ref | layers | compressed | media types |"; echo "|---|---|---|---|"; cat sizes.md; } >> "$GITHUB_STEP_SUMMARY"
 
-  pull:
-    needs: recompress
-    runs-on: ${{ matrix.runner }}
+  boot:
+    needs: build
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: read
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-latest, ubuntu-24.04-arm]
         variant: [l2, l3-eth]
-        compression: [gzip, zstd]
+        image: [gzip, zstd, nowait, slim]
+        trial: [1, 2, 3]
+    name: boot (${{ matrix.variant }}, ${{ matrix.image }}, ${{ matrix.trial }})
     steps:
-      - uses: docker/login-action@v3
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Time cold pulls
+          node-version: 26
+      - uses: pnpm/action-setup@v4
+      - run: pnpm install --frozen-lockfile
+      - name: Resolve ref
+        id: ref
+        run: |
+          if [ "${{ matrix.image }}" = gzip ]; then
+            echo "ref=${SOURCE}:latest-${{ matrix.variant }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=${BENCH}:${{ matrix.image }}-${{ matrix.variant }}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Boot through the action
+        id: action
+        uses: ./
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          image-ref: ${{ steps.ref.outputs.ref }}
+          l3-enabled: ${{ matrix.variant == 'l3-eth' }}
+      - name: Soak and validate
         env:
-          RUNNER_NAME_TAG: ${{ matrix.runner }}
-          VARIANT: ${{ matrix.variant }}
-          COMPRESSION: ${{ matrix.compression }}
+          CONTAINER: ${{ steps.action.outputs.container-name }}
+          L1_RPC_URL: ${{ steps.action.outputs.l1-rpc-url }}
+          L2_RPC_URL: ${{ steps.action.outputs.l2-rpc-url }}
+          L3_RPC_URL: ${{ steps.action.outputs.l3-rpc-url }}
         run: |
           set -euo pipefail
-          if [ "$COMPRESSION" = gzip ]; then ref="${SOURCE}:latest-${VARIANT}"; else ref="${BENCH}:zstd-${VARIANT}"; fi
-          docker version --format 'client={{.Client.Version}} server={{.Server.Version}}'
-          docker info --format 'driver={{.Driver}} cpus={{.NCPU}} mem={{.MemTotal}}'
-          times=()
-          for i in 1 2 3; do
-            docker image rm -f "$ref" >/dev/null 2>&1 || true
-            docker system prune -af >/dev/null
-            test -z "$(docker images -q)"
-            t0="$(date +%s.%N)"
-            docker pull -q --platform linux/amd64 "$ref" >/dev/null
-            t1="$(date +%s.%N)"
-            t="$(awk -v a="$t0" -v b="$t1" 'BEGIN{printf "%.1f", b-a}')"
-            echo "pull $i: ${t}s"
-            times+=("$t")
+          sleep 20
+          test "$(docker inspect --format '{{.State.Running}}' "$CONTAINER")" = true
+          curl -sf http://127.0.0.1:8080/health | jq -e '.healthy'
+          for url in "$L1_RPC_URL" "$L2_RPC_URL" ${L3_RPC_URL:+"$L3_RPC_URL"}; do
+            curl -sfS -X POST -H 'Content-Type: application/json' \
+              -d '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber","params":[]}' "$url"; echo
           done
-          median="$(printf '%s\n' "${times[@]}" | sort -n | sed -n 2p)"
-          docker run --rm --platform linux/amd64 --entrypoint /bin/sh "$ref" -c true 2>/dev/null \
-            || docker run --rm --platform linux/amd64 --entrypoint true "$ref" 2>/dev/null \
-            || echo "smoke run skipped (no shell or true in image)"
-          echo "| ${RUNNER_NAME_TAG} | ${VARIANT} | ${COMPRESSION} | ${times[*]} | ${median} |" >> "$GITHUB_STEP_SUMMARY"
-          mkdir -p out
-          jq -n --arg runner "$RUNNER_NAME_TAG" --arg variant "$VARIANT" --arg compression "$COMPRESSION" \
-            --arg median "$median" --arg runs "${times[*]}" '$ARGS.named' \
-            > "out/${RUNNER_NAME_TAG}-${VARIANT}-${COMPRESSION}.json"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: pull-${{ matrix.runner }}-${{ matrix.variant }}-${{ matrix.compression }}
-          path: out/
+          docker exec "$CONTAINER" ps -eo comm 2>/dev/null | sort | uniq -c || docker top "$CONTAINER"
