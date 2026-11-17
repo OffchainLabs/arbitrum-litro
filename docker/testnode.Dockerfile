@@ -1,45 +1,31 @@
 ARG NODE_IMAGE=node:26-bookworm-slim
 ARG FOUNDRY_IMAGE=ghcr.io/foundry-rs/foundry:v1.3.5
 ARG NITRO_IMAGE=offchainlabs/nitro-node:v3.12.1-70fa99a
+# Must match the Debian release NITRO_IMAGE is built on: the copied nitro binary
+# links its glibc.
+ARG RUNTIME_IMAGE=debian:bookworm-slim
 ARG BUNDLE_VERSION=dev
 ARG BUNDLE_VARIANT=unknown
 
-# No defaults on purpose: the contracts arrive through the `tokenbridge` build
-# context, which a default cannot follow, so it would eventually label an image
-# with a commit it does not contain. Callers pass them from external-pins.ts.
+# No defaults on purpose: these label the contracts the snapshot in
+# .testnode-context was deployed from, which a default cannot follow, so it would
+# eventually label an image with a commit it does not contain. Callers pass them
+# from external-pins.ts.
 ARG NITRO_CONTRACTS_REF
 ARG NITRO_CONTRACTS_COMMIT
 ARG TOKENBRIDGE_REF
 ARG TOKENBRIDGE_COMMIT
 
-FROM scratch AS tokenbridge
-
-FROM ${NODE_IMAGE} AS token-bridge-contracts
-
-RUN apt-get update \
-	&& apt-get install -y --no-install-recommends build-essential ca-certificates git python3 \
-	&& rm -rf /var/lib/apt/lists/*
-
-# Node 26 images no longer bundle Yarn; the runtime stage copies this prefix.
-RUN npm install -g --prefix /opt/yarn-v1.22.22 yarn@1.22.22 \
-	&& ln -s /opt/yarn-v1.22.22/bin/yarn /usr/local/bin/yarn
-
-WORKDIR /workspace
-
-COPY --from=tokenbridge . /workspace
-
-RUN rm -rf .git && \
-	git init && \
-	git add . && \
-	git -c user.name="user" -c user.email="user@example.com" commit -m "Initial commit"
-
-RUN yarn install --frozen-lockfile \
-	&& yarn build \
-	&& rm -rf .git node_modules/.cache
+FROM ${NODE_IMAGE} AS node
 
 FROM ${FOUNDRY_IMAGE} AS foundry
 
-FROM ${NITRO_IMAGE}
+FROM ${NITRO_IMAGE} AS nitro
+
+# Not FROM ${NITRO_IMAGE}: that image carries ~1.2 GB of tools, contracts and
+# binaries the testnode never runs. Only the nitro binary and the WASM module
+# roots its --validation.wasm.allowed-wasm-module-roots flag names are taken.
+FROM ${RUNTIME_IMAGE}
 
 ARG BUNDLE_VERSION
 ARG BUNDLE_VARIANT
@@ -59,10 +45,21 @@ LABEL org.opencontainers.image.source="${IMAGE_SOURCE}" \
 	io.arbitrum.testnode.token-bridge.ref="${TOKENBRIDGE_REF}" \
 	io.arbitrum.testnode.token-bridge.commit="${TOKENBRIDGE_COMMIT}"
 
+# The first install is what the copied node binary links; testnode-rebase.Dockerfile
+# probes for exactly these. The second is what the scripts and consumers run in
+# the container (curl, jq, python3; pgrep from procps), which the Nitro images
+# the rebase targets already carry.
+RUN apt-get update \
+	&& apt-get install -y --no-install-recommends libatomic1 libstdc++6 \
+	&& apt-get install -y --no-install-recommends ca-certificates curl jq procps python3 \
+	&& rm -rf /var/lib/apt/lists/* \
+	&& useradd -s /bin/bash user \
+	&& mkdir -p /tokenbridge-data && chown user:user /tokenbridge-data
+
+COPY --from=nitro /usr/local/bin/nitro /usr/local/bin/nitro
+COPY --from=nitro --chown=user:user /home/user /home/user
 COPY --from=foundry /usr/local/bin/anvil /usr/local/bin/anvil
-COPY --from=token-bridge-contracts /usr/local/bin/node /usr/local/bin/node
-COPY --from=token-bridge-contracts /opt/yarn-v1.22.22 /opt/yarn-v1.22.22
-COPY --from=token-bridge-contracts --chown=user:user /workspace /workspace
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
 COPY --chmod=755 docker/testnode-entrypoint.sh /usr/local/bin/arbitrum-testnode
 COPY docker/configure-parent-chain-poll-interval.mjs /usr/local/bin/configure-parent-chain-poll-interval.mjs
 COPY --chmod=755 docker/testnode-healthcheck.sh /usr/local/bin/healthcheck.sh
@@ -78,16 +75,11 @@ COPY docker/observability.sh /opt/arbitrum-testnode/bin/observability.sh
 COPY docker/chain-exporter.mjs /opt/arbitrum-testnode/bin/chain-exporter.mjs
 COPY .testnode-context/export-config /opt/arbitrum-testnode/export-config
 COPY .testnode-context/metadata.json /opt/arbitrum-testnode/metadata.json
-COPY .testnode-context/runtime /opt/arbitrum-testnode/runtime
-COPY .testnode-context/runtime-config /opt/arbitrum-testnode/runtime-config
-USER root
-RUN apt-get update \
-	&& apt-get install -y --no-install-recommends libatomic1 libstdc++6 \
-	&& rm -rf /var/lib/apt/lists/*
-RUN ln -s /opt/yarn-v1.22.22/bin/yarn /usr/local/bin/yarn
-RUN chown -R user:user /opt/arbitrum-testnode/runtime /opt/arbitrum-testnode/runtime-config
-RUN mkdir -p /tokenbridge-data && chown user:user /tokenbridge-data
+COPY --chown=user:user .testnode-context/runtime /opt/arbitrum-testnode/runtime
+COPY --chown=user:user .testnode-context/runtime-config /opt/arbitrum-testnode/runtime-config
+RUN nitro --version && node --version && anvil --version
 USER user
+WORKDIR /home/user
 
 EXPOSE 8545 8547 8548 8549 8550 8080 9642 9646 6070-6075 6080
 
