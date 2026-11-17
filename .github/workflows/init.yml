@@ -125,19 +125,25 @@ jobs:
           L2: ${{ steps.action.outputs.l2-rpc-url }}
         run: |
           set -euo pipefail
-          check() { # <rollup> <parent rpc> <acting-as wallet>
-            test "$(cast call "$1" 'isValidator(address)(bool)' "$3" --rpc-url "$2")" = true
-            test "$(cast call "$1" 'confirmPeriodBlocks()(uint64)' --rpc-url "$2")" = 1
-          }
+          # Both validators run with the same key, so they can act as the same wallet address.
+          test "$(docker logs "$CT" 2>&1 | grep -c 'running as validator')" -ge 2
           wallets=$(docker logs "$CT" 2>&1 | grep -oE 'actingAsWallet=0x[0-9a-fA-F]{40}' | cut -d= -f2 | sort -u)
           echo "validator wallets: $wallets"
-          test "$(echo "$wallets" | wc -l)" = 2
-          l2=$(jq -r .l2Network.ethBridge.rollup "$NET")
-          l3=$(jq -r .l3Network.ethBridge.rollup "$NET")
-          for w in $wallets; do
-            cast call "$l2" 'isValidator(address)(bool)' "$w" --rpc-url "$L1" | grep -q true && check "$l2" "$L1" "$w" && continue
-            check "$l3" "$L2" "$w"
-          done
+          check() { # <name> <rollup> <parent rpc>
+            echo "$1 rollup $2"
+            test "$(cast call "$2" 'confirmPeriodBlocks()(uint64)' --rpc-url "$3")" = 1
+            test "$(cast call "$2" 'minimumAssertionPeriod()(uint256)' --rpc-url "$3")" = 1
+            for w in $wallets; do
+              if [ "$(cast call "$2" 'isValidator(address)(bool)' "$w" --rpc-url "$3")" = true ]; then
+                echo "  $w is whitelisted"
+                return 0
+              fi
+            done
+            echo "  no validator wallet is whitelisted" >&2
+            return 1
+          }
+          check L2 "$(jq -r .l2Network.ethBridge.rollup "$NET")" "$L1"
+          check L3 "$(jq -r .l3Network.ethBridge.rollup "$NET")" "$L2"
           ! docker logs "$CT" 2>&1 | grep -q NOT_VALIDATOR
 
       - name: Withdrawals complete on L2 and L3
