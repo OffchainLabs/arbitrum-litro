@@ -395,6 +395,7 @@ function createL2DeploySteps(
 					rollupData["rollup"] as Address,
 					stakeToken as Address,
 					rollupData["validatorWalletCreator"] as string,
+					rollupData["upgradeExecutor"] as Address,
 				);
 			}
 			return markStepDone(state, "generate-l2-config");
@@ -733,6 +734,8 @@ function createL3Steps(
 					validatorKey: accounts.validator.privateKey,
 					funderKey: accounts.funnel.privateKey,
 					requiredStakeWei,
+					upgradeExecutor: rollupData["upgradeExecutor"] as `0x${string}`,
+					ownerKey: accounts.l3owner.privateKey,
 				});
 			}
 			composeUp(["l3node"], runtime.dockerOpts);

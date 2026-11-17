@@ -128,6 +128,7 @@ export async function ensureL2ValidatorFunding(
 	rollupAddress: Address,
 	stakeTokenAddress: Address,
 	validatorWalletCreatorAddress: string,
+	upgradeExecutor: Address,
 ): Promise<void> {
 	await topUpEthIfNeeded(
 		accounts.validator.address,
@@ -191,6 +192,8 @@ export async function ensureL2ValidatorFunding(
 		validatorKey: accounts.validator.privateKey,
 		funderKey: accounts.funnel.privateKey,
 		requiredStakeWei,
+		upgradeExecutor,
+		ownerKey: accounts.l2owner.privateKey,
 	});
 }
 
