@@ -50,7 +50,8 @@ LABEL org.offchainlabs.testnode-rebase=true
 
 EXPOSE 8545 8547 8548 8549 8550 8080 9642 9646 6070-6075 6080
 
-HEALTHCHECK --interval=3s --timeout=3s --start-period=30s --retries=10 \
+# Same healthcheck as testnode.Dockerfile.
+HEALTHCHECK --interval=3s --timeout=3s --start-period=30s --start-interval=250ms --retries=10 \
 	CMD /usr/local/bin/healthcheck.sh
 
 ENTRYPOINT ["/usr/local/bin/arbitrum-testnode"]

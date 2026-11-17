@@ -83,7 +83,9 @@ WORKDIR /home/user
 
 EXPOSE 8545 8547 8548 8549 8550 8080 9642 9646 6070-6075 6080
 
-HEALTHCHECK --interval=3s --timeout=3s --start-period=30s --retries=10 \
+# --start-interval probes every 250ms until the first pass, so healthy follows readiness instead of
+# the next 3s tick. Docker Engine < 25 ignores it and probes every 3s.
+HEALTHCHECK --interval=3s --timeout=3s --start-period=30s --start-interval=250ms --retries=10 \
 	CMD /usr/local/bin/healthcheck.sh
 
 ENTRYPOINT ["/usr/local/bin/arbitrum-testnode"]
