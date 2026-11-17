@@ -39,11 +39,11 @@ echo "state file: $DATA_ROOT/anvil-state"
 ls -la "$DATA_ROOT/anvil-state" 2>&1 || echo "state file missing!"
 echo "variant: $VARIANT"
 
-if [ "${TESTNODE_PARENT_CHAIN_POLL_INTERVAL+x}" = "x" ]; then
-	node /usr/local/bin/configure-parent-chain-poll-interval.mjs \
-		"$CONFIG_ROOT" \
-		"$TESTNODE_PARENT_CHAIN_POLL_INTERVAL"
-fi
+# Nitro's 15s default is sized for Ethereum's 12s blocks. Here anvil makes a block every second and
+# the L2 several, so at 15s each staker sees a new batch up to 15s late.
+node /usr/local/bin/configure-parent-chain-poll-interval.mjs \
+	"$CONFIG_ROOT" \
+	"${TESTNODE_PARENT_CHAIN_POLL_INTERVAL:-250ms}"
 
 . "$TESTNODE_BIN/sequencer-features.sh"
 . "$TESTNODE_BIN/observability.sh"
@@ -62,6 +62,12 @@ sequencer_feature_args
 STYLUS_ARGS=""
 if nitro_supports "--execution.stylus-target.allow-offchain-activation"; then
 	STYLUS_ARGS="--execution.stylus-target.allow-offchain-activation"
+fi
+# A BoLD staker asserts only batches its parent chain has finalized. anvil reports a block final
+# 64 blocks (about a minute) after it is mined and never reorgs, so the wait buys nothing here.
+STAKER_ARGS=""
+if nitro_supports "--node.bold.state-provider-config.check-batch-finality"; then
+	STAKER_ARGS="--node.bold.state-provider-config.check-batch-finality=false"
 fi
 
 start_background /usr/local/bin/anvil \
@@ -121,6 +127,7 @@ start_background env HOME="$DATA_ROOT/validator" /usr/local/bin/nitro \
 	--node.bold.assertion-scanning-interval=100ms \
 	--node.bold.minimum-gap-to-parent-assertion=100ms \
 	--node.bold.parent-chain-block-time=100ms \
+	$STAKER_ARGS \
 	--http.addr=0.0.0.0 \
 	--http.port=8647 \
 	--http.api=net,web3,eth \
@@ -141,6 +148,7 @@ if [ "$VARIANT" != "l2" ]; then
 		--node.dangerous.disable-blob-reader \
 		--node.bold.check-staker-switch-interval=1s \
 		--node.staker.dangerous.without-block-validator \
+		$STAKER_ARGS \
 		--http.addr=0.0.0.0 \
 		--http.port=8549 \
 		--http.api=net,web3,eth,txpool,debug \
