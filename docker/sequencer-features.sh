@@ -35,7 +35,7 @@ wait_for_listen() {
 			exit 1
 		fi
 		exit_if_a_process_exited "$name"
-		sleep 1
+		sleep 0.2
 	done
 }
 
@@ -48,7 +48,7 @@ wait_for_rpc() {
 			exit 1
 		fi
 		exit_if_a_process_exited "RPC at $1"
-		sleep 1
+		sleep 0.2
 	done
 }
 
