@@ -138,3 +138,8 @@ jobs:
           L2_RPC_URL: ${{ steps.action.outputs.l2-rpc-url }}
           FAST_FEED_EXPECT_PGA: "true"
         run: pnpm exec vitest run -c vitest.integration.config.ts packages/core/test/integration/fast-feed.test.ts
+
+      # A published image whose validators cannot post or confirm assertions
+      # boots and answers RPCs, so only a withdrawal catches it.
+      - name: Withdrawals complete
+        run: pnpm exec vitest run -c vitest.integration.config.ts packages/core/test/integration/withdrawal.test.ts

@@ -1,0 +1,142 @@
+name: Init
+
+# Generates an l3-eth snapshot with `init`, the way Publish Testnode does, then
+# boots it through the action and completes a withdrawal on each rollup. The
+# other workflows boot a pre-built snapshot, so only this one catches a change
+# to init that leaves published images unable to confirm assertions.
+on:
+  pull_request:
+    paths:
+      - "packages/core/src/**"
+      - "packages/testnode/src/**"
+      - "apps/cli/src/commands/init.ts"
+      - "docker/**"
+      - ".github/workflows/init.yml"
+  workflow_dispatch:
+
+jobs:
+  init-withdrawals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      TOKEN_BRIDGE_LOCAL_DIR: ${{ github.workspace }}/../token-bridge-contracts
+      NITRO_CONTRACTS_LOCAL_DIR: ${{ github.workspace }}/../nitro-contracts
+      SNAPSHOT_ID: init-ci
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 26
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve external contracts pins
+        run: pnpm exec tsx scripts/ci/resolve-external-pins.ts
+
+      - name: Install Foundry (forge for token-bridge build)
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Install yarn (classic)
+        run: npm install -g yarn@1.22.22
+
+      - name: Prepare token-bridge-contracts host checkout
+        run: |
+          set -euxo pipefail
+          mkdir -p "$TOKEN_BRIDGE_LOCAL_DIR"
+          cd "$TOKEN_BRIDGE_LOCAL_DIR"
+          git init .
+          git remote add origin "$TOKEN_BRIDGE_REPOSITORY"
+          git fetch --depth 1 origin "$TOKEN_BRIDGE_COMMIT"
+          git checkout --detach FETCH_HEAD
+          git submodule update --init --recursive --depth 1
+          yarn install --frozen-lockfile
+          yarn build
+
+      - name: Prepare Nitro contracts checkout
+        run: |
+          set -euxo pipefail
+          mkdir -p "$NITRO_CONTRACTS_LOCAL_DIR"
+          cd "$NITRO_CONTRACTS_LOCAL_DIR"
+          git init .
+          git remote add origin "$NITRO_CONTRACTS_REPOSITORY"
+          git fetch --depth 1 origin "$NITRO_CONTRACTS_COMMIT"
+          git checkout --detach FETCH_HEAD
+          git submodule update --init --recursive --depth 1
+
+      # Same retry as Publish Testnode: init intermittently exits before capturing.
+      - name: Generate snapshot (init, retry until captured)
+        run: |
+          set -uo pipefail
+          for attempt in 1 2 3; do
+            timeout 1500 pnpm dev init --capture-id "$SNAPSHOT_ID" --rebuild --skip-post-capture-verify
+            if [ -f "config/snapshots/$SNAPSHOT_ID/manifest.json" ] &&
+              [ -s "config/snapshots/$SNAPSHOT_ID/anvil-state/state.json" ]; then
+              echo "snapshot captured on attempt $attempt"
+              break
+            fi
+            docker compose -f docker/docker-compose.yaml -p arbitrum-testnode logs --tail=80 || true
+            docker compose -f docker/docker-compose.yaml -p arbitrum-testnode down -v || true
+          done
+          test -f "config/snapshots/$SNAPSHOT_ID/manifest.json"
+          docker compose -f docker/docker-compose.yaml -p arbitrum-testnode down -v || true
+
+      - name: Prepare testnode context
+        run: node scripts/ci/prepare-testnode-context.mjs --variant l3-eth --snapshot-id "$SNAPSHOT_ID"
+
+      - name: Build local testnode image
+        run: >-
+          docker build
+          --build-context tokenbridge=${{ env.TOKEN_BRIDGE_DOCKER_CONTEXT }}
+          --build-arg BUNDLE_VERSION=${{ github.sha }}
+          --build-arg BUNDLE_VARIANT=l3-eth
+          --build-arg NITRO_CONTRACTS_REF=${{ env.NITRO_CONTRACTS_REF }}
+          --build-arg NITRO_CONTRACTS_COMMIT=${{ env.NITRO_CONTRACTS_COMMIT }}
+          --build-arg TOKENBRIDGE_REF=${{ env.TOKEN_BRIDGE_REF }}
+          --build-arg TOKENBRIDGE_COMMIT=${{ env.TOKEN_BRIDGE_COMMIT }}
+          -f docker/testnode.Dockerfile
+          -t local/arbitrum-testnode:${{ github.sha }}-nc3.2-l3-eth
+          .
+
+      - name: Run action
+        id: action
+        uses: ./
+        with:
+          image-repository: local/arbitrum-testnode
+          l3-enabled: true
+          nitro-contracts-version: v3.2
+          version: ${{ github.sha }}
+
+      - name: Validators are whitelisted and rollups confirm after 1 block
+        env:
+          CT: ${{ steps.action.outputs.container-name }}
+          NET: ${{ steps.action.outputs.local-network-path }}
+          L1: ${{ steps.action.outputs.l1-rpc-url }}
+          L2: ${{ steps.action.outputs.l2-rpc-url }}
+        run: |
+          set -euo pipefail
+          check() { # <rollup> <parent rpc> <acting-as wallet>
+            test "$(cast call "$1" 'isValidator(address)(bool)' "$3" --rpc-url "$2")" = true
+            test "$(cast call "$1" 'confirmPeriodBlocks()(uint64)' --rpc-url "$2")" = 1
+          }
+          wallets=$(docker logs "$CT" 2>&1 | grep -oE 'actingAsWallet=0x[0-9a-fA-F]{40}' | cut -d= -f2 | sort -u)
+          echo "validator wallets: $wallets"
+          test "$(echo "$wallets" | wc -l)" = 2
+          l2=$(jq -r .l2Network.ethBridge.rollup "$NET")
+          l3=$(jq -r .l3Network.ethBridge.rollup "$NET")
+          for w in $wallets; do
+            cast call "$l2" 'isValidator(address)(bool)' "$w" --rpc-url "$L1" | grep -q true && check "$l2" "$L1" "$w" && continue
+            check "$l3" "$L2" "$w"
+          done
+          ! docker logs "$CT" 2>&1 | grep -q NOT_VALIDATOR
+
+      - name: Withdrawals complete on L2 and L3
+        run: pnpm exec vitest run -c vitest.integration.config.ts packages/core/test/integration/withdrawal.test.ts
