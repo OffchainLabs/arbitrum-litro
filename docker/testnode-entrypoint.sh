@@ -130,8 +130,9 @@ start_background env HOME="$DATA_ROOT/validator" /usr/local/bin/nitro \
 	$(nitro_observability_args 6072 6073)
 
 if [ "$VARIANT" != "l2" ]; then
-	echo "waiting 10s for L2 sequencer to start..."
-	sleep 10
+	# The L3 node's parent chain is the L2 sequencer, so start it once that answers.
+	echo "waiting for L2 sequencer RPC..."
+	wait_for_rpc http://127.0.0.1:8547
 	echo "L2 wait done, starting L3 node"
 
 	start_background env HOME="$DATA_ROOT/l3node" /usr/local/bin/nitro \
