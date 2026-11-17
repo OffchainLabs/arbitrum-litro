@@ -706,7 +706,7 @@ export function testnodeDockerRunArgs(state) {
 }
 
 /**
- * Call `check` once a second until it returns true or `timeoutMs` passes. An error thrown by
+ * Call `check` every 250ms until it returns true or `timeoutMs` passes. An error thrown by
  * `check` ends the wait at once.
  *
  * @param {() => boolean} check
@@ -719,7 +719,7 @@ function pollUntil(check, timeoutMs, failure) {
 		if (check()) {
 			return;
 		}
-		execFileSync("sleep", ["1"], { stdio: "ignore" });
+		execFileSync("sleep", ["0.25"], { stdio: "ignore" });
 	}
 	throw new Error(failure);
 }
