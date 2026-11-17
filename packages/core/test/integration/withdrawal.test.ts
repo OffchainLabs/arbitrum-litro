@@ -1,9 +1,29 @@
+import { readFileSync } from "node:fs";
 import type { Address } from "viem";
 import { parseEther } from "viem";
 import { describe, expect, it } from "vitest";
 import { accounts } from "../../src/accounts.js";
 import { publicClient, rollupAbi } from "../../src/rpc.js";
 import { executeWithdrawal } from "../../src/withdraw.js";
+
+// The action exports these; LOCAL_NETWORK_PATH overrides the network file for a local run.
+const L1_RPC_URL = process.env["ARBITRUM_TESTNODE_L1_RPC_URL"] || "http://127.0.0.1:8545";
+const L2_RPC_URL = process.env["ARBITRUM_TESTNODE_L2_RPC_URL"] || "http://127.0.0.1:8547";
+const L3_RPC_URL = process.env["ARBITRUM_TESTNODE_L3_RPC_URL"] || "http://127.0.0.1:3347";
+const LOCAL_NETWORK_PATH =
+	process.env["LOCAL_NETWORK_PATH"] || process.env["ARBITRUM_TESTNODE_LOCAL_NETWORK_PATH"] || "";
+
+interface LocalNetwork {
+	l2Network: { ethBridge: { rollup: Address } };
+	l3Network?: { ethBridge: { rollup: Address } };
+}
+
+function readLocalNetwork(): LocalNetwork {
+	if (!LOCAL_NETWORK_PATH) {
+		throw new Error("Set LOCAL_NETWORK_PATH or ARBITRUM_TESTNODE_LOCAL_NETWORK_PATH");
+	}
+	return JSON.parse(readFileSync(LOCAL_NETWORK_PATH, "utf8")) as LocalNetwork;
+}
 
 async function getOutboxAddress(rollupAddress: Address, rpcUrl: string): Promise<Address> {
 	return publicClient(rpcUrl).readContract({
@@ -13,17 +33,15 @@ async function getOutboxAddress(rollupAddress: Address, rpcUrl: string): Promise
 	});
 }
 
-// Rollup addresses from deployment artifacts
-const L2_ROLLUP: Address = "0xD0B8D2BA3e2ac9AA58b8D9BB1887dC9F7649C5C8";
-const L3_ROLLUP: Address = "0x9D8DBFe48DeB6fe3254b44A52bD420f94E65Eda5";
+const network = readLocalNetwork();
 
 describe("withdrawal speed", () => {
 	it("L2→L1 ETH withdrawal completes within 30 seconds", async () => {
-		const outboxAddress = await getOutboxAddress(L2_ROLLUP, "http://127.0.0.1:8545");
+		const outboxAddress = await getOutboxAddress(network.l2Network.ethBridge.rollup, L1_RPC_URL);
 
 		const result = await executeWithdrawal({
-			childRpcUrl: "http://127.0.0.1:8547",
-			parentRpcUrl: "http://127.0.0.1:8545",
+			childRpcUrl: L2_RPC_URL,
+			parentRpcUrl: L1_RPC_URL,
 			privateKey: accounts.funnel.privateKey,
 			amount: parseEther("0.01"),
 			outboxAddress,
@@ -35,12 +53,13 @@ describe("withdrawal speed", () => {
 		console.log(`L2→L1 withdrawal completed in ${result.durationMs}ms`);
 	});
 
-	it("L3→L2 ETH withdrawal completes within 30 seconds", async () => {
-		const outboxAddress = await getOutboxAddress(L3_ROLLUP, "http://127.0.0.1:8547");
+	it.skipIf(!network.l3Network)("L3→L2 ETH withdrawal completes within 30 seconds", async () => {
+		const rollup = network.l3Network?.ethBridge.rollup as Address;
+		const outboxAddress = await getOutboxAddress(rollup, L2_RPC_URL);
 
 		const result = await executeWithdrawal({
-			childRpcUrl: "http://127.0.0.1:8549",
-			parentRpcUrl: "http://127.0.0.1:8547",
+			childRpcUrl: L3_RPC_URL,
+			parentRpcUrl: L2_RPC_URL,
 			privateKey: accounts.funnel.privateKey,
 			amount: parseEther("0.001"),
 			outboxAddress,

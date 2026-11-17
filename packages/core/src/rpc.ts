@@ -70,7 +70,11 @@ export const rollupAbi = parseAbi([
 	"function outbox() view returns (address)",
 	"function rollupEventInbox() view returns (address)",
 	"function challengeManager() view returns (address)",
+	"function isValidator(address) view returns (bool)",
+	"function setValidator(address[], bool[])",
 ]);
+
+export const upgradeExecutorAbi = parseAbi(["function executeCall(address, bytes) payable"]);
 
 export const arbOwnerAbi = parseAbi([
 	"function addChainOwner(address)",
