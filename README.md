@@ -88,8 +88,9 @@ Start exports config under `outputDir/config` and boots these host RPCs:
 
 ### Docker image configuration
 
-Set `TESTNODE_PARENT_CHAIN_POLL_INTERVAL` to a Go duration to override Nitro's parent-chain
-polling interval when the container starts:
+Nitro polls its parent chain every 250ms in the testnode, instead of Nitro's 15s default, so an
+assertion is posted as soon as its batch lands. Set `TESTNODE_PARENT_CHAIN_POLL_INTERVAL` to a
+Go duration to use another interval:
 
 ```bash
 docker run \
@@ -101,8 +102,7 @@ The value is applied to `node.parent-chain-reader.poll-interval`,
 `execution.parent-chain-reader.poll-interval`, and
 `node.delayed-sequencer.rescan-interval` in every runtime config included in the image. Both
 L2-only and L2+L3 images are supported. Values such as `100ms`, `1s`, and `2.5s` are accepted;
-Nitro validates the value when it starts. When the variable is unset, the bundled runtime configs
-and existing polling behavior are unchanged.
+Nitro validates the value when it starts. `15s` restores Nitro's default.
 
 ### Fast Feed
 

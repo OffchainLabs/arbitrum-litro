@@ -39,11 +39,11 @@ echo "state file: $DATA_ROOT/anvil-state"
 ls -la "$DATA_ROOT/anvil-state" 2>&1 || echo "state file missing!"
 echo "variant: $VARIANT"
 
-if [ "${TESTNODE_PARENT_CHAIN_POLL_INTERVAL+x}" = "x" ]; then
-	node /usr/local/bin/configure-parent-chain-poll-interval.mjs \
-		"$CONFIG_ROOT" \
-		"$TESTNODE_PARENT_CHAIN_POLL_INTERVAL"
-fi
+# Nitro's 15s default is sized for Ethereum's 12s blocks. Here anvil makes a block every second and
+# the L2 several, so at 15s each staker sees a new batch up to 15s late.
+node /usr/local/bin/configure-parent-chain-poll-interval.mjs \
+	"$CONFIG_ROOT" \
+	"${TESTNODE_PARENT_CHAIN_POLL_INTERVAL:-250ms}"
 
 . "$TESTNODE_BIN/sequencer-features.sh"
 . "$TESTNODE_BIN/observability.sh"
