@@ -13,6 +13,7 @@ env:
 
 jobs:
   build:
+    if: false
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -83,7 +84,6 @@ jobs:
           done
 
   boot:
-    needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -92,9 +92,12 @@ jobs:
       fail-fast: false
       matrix:
         variant: [l2, l3-eth]
-        image: [gzip, zstd, nowait, slim]
+        image: [slim]
+        poll: ['1', '0.2']
         trial: [1, 2, 3]
-    name: boot (${{ matrix.variant }}, ${{ matrix.image }}, ${{ matrix.trial }})
+    name: boot (${{ matrix.variant }}, poll-${{ matrix.poll }}, ${{ matrix.trial }})
+    env:
+      BENCH_POLL_SECONDS: ${{ matrix.poll }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -133,3 +136,6 @@ jobs:
               -d '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber","params":[]}' "$url"; echo
           done
           docker exec "$CONTAINER" ps -eo comm 2>/dev/null | sort | uniq -c || docker top "$CONTAINER"
+          docker inspect --format 'started={{.State.StartedAt}}' "$CONTAINER"
+          echo '--- container log (timestamped)'
+          docker logs -t "$CONTAINER" 2>&1 | grep -E 'variant:|anvil ready|waiting|wait done|starting L3|HTTP server started|WebSocket enabled|ERROR|error' | head -60

@@ -719,7 +719,7 @@ function pollUntil(check, timeoutMs, failure) {
 		if (check()) {
 			return;
 		}
-		execFileSync("sleep", ["1"], { stdio: "ignore" });
+		execFileSync("sleep", [process.env["BENCH_POLL_SECONDS"] || "1"], { stdio: "ignore" });
 	}
 	throw new Error(failure);
 }
