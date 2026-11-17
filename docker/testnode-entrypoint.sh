@@ -63,6 +63,12 @@ STYLUS_ARGS=""
 if nitro_supports "--execution.stylus-target.allow-offchain-activation"; then
 	STYLUS_ARGS="--execution.stylus-target.allow-offchain-activation"
 fi
+# A BoLD staker asserts only batches its parent chain has finalized. anvil reports a block final
+# 64 blocks (about a minute) after it is mined and never reorgs, so the wait buys nothing here.
+STAKER_ARGS=""
+if nitro_supports "--node.bold.state-provider-config.check-batch-finality"; then
+	STAKER_ARGS="--node.bold.state-provider-config.check-batch-finality=false"
+fi
 
 start_background /usr/local/bin/anvil \
 	--host 0.0.0.0 \
@@ -121,6 +127,7 @@ start_background env HOME="$DATA_ROOT/validator" /usr/local/bin/nitro \
 	--node.bold.assertion-scanning-interval=100ms \
 	--node.bold.minimum-gap-to-parent-assertion=100ms \
 	--node.bold.parent-chain-block-time=100ms \
+	$STAKER_ARGS \
 	--http.addr=0.0.0.0 \
 	--http.port=8647 \
 	--http.api=net,web3,eth \
@@ -141,6 +148,7 @@ if [ "$VARIANT" != "l2" ]; then
 		--node.dangerous.disable-blob-reader \
 		--node.bold.check-staker-switch-interval=1s \
 		--node.staker.dangerous.without-block-validator \
+		$STAKER_ARGS \
 		--http.addr=0.0.0.0 \
 		--http.port=8549 \
 		--http.api=net,web3,eth,txpool,debug \
