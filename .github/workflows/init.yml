@@ -77,7 +77,9 @@ jobs:
         run: |
           set -uo pipefail
           for attempt in 1 2 3; do
+            set +e
             timeout 1500 pnpm dev init --capture-id "$SNAPSHOT_ID" --rebuild --skip-post-capture-verify
+            set -e
             if [ -f "config/snapshots/$SNAPSHOT_ID/manifest.json" ] &&
               [ -s "config/snapshots/$SNAPSHOT_ID/anvil-state/state.json" ]; then
               echo "snapshot captured on attempt $attempt"
