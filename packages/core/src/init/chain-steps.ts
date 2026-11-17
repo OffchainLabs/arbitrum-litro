@@ -817,7 +817,9 @@ function createL3Steps(
 				tokenBridgeDir: tokenBridgeSource.path,
 			});
 
-			setL3StakerEnabled(runtime, false);
+			// The L3 node runs without its staker while the token bridge deploys; the restart below
+			// brings it back with the staker on, so L3-to-L2 withdrawals confirm.
+			setL3StakerEnabled(runtime, true);
 
 			await sendZeroAddressTransfer(L2_RPC);
 			await sendZeroAddressTransfer(L2_RPC);
