@@ -65,6 +65,7 @@ async function runInitLoop(
 		timeboostEnabled?: boolean | undefined;
 		nitroContractsSource: ReturnType<typeof resolveNitroContractsSource>;
 		tokenBridgeSource: ReturnType<typeof prepareTokenBridgeSource>;
+		nitroContractsVersion?: string | undefined;
 	},
 ): Promise<{
 	success: boolean;
@@ -78,6 +79,7 @@ async function runInitLoop(
 		feeTokenDecimals: options.feeTokenDecimals,
 		nitroContractsSource: options.nitroContractsSource,
 		tokenBridgeSource: options.tokenBridgeSource,
+		nitroContractsVersion: options.nitroContractsVersion,
 	});
 	const steps = getInitSteps({ timeboostEnabled: options.timeboostEnabled });
 	const timings: Record<string, number> = {};
@@ -126,6 +128,7 @@ export interface InitCommandOptions {
 	captureId?: string | undefined;
 	feeTokenDecimals?: number | undefined;
 	foreground?: boolean | undefined;
+	nitroContractsVersion?: string | undefined;
 	rebuild?: boolean | undefined;
 	skipPostCaptureVerify?: boolean | undefined;
 	snapshotVersion?: string | undefined;
@@ -153,6 +156,9 @@ export async function runInitCommand(options: InitCommandOptions, context: InitC
 	const runtime = createInitRuntime(context);
 	const { feeTokenDecimals } = options;
 	assertValidFeeTokenDecimals(feeTokenDecimals);
+	if (![undefined, "v2.1", "v3.2"].includes(options.nitroContractsVersion)) {
+		throw new Error("--nitro-contracts-version must be v2.1 or v3.2");
+	}
 	const snapshotId = resolveInitSnapshotId(options);
 
 	if (options.background && !options.foreground) {
@@ -160,6 +166,7 @@ export async function runInitCommand(options: InitCommandOptions, context: InitC
 			snapshotVersion: options.snapshotVersion,
 			feeTokenDecimals,
 			timeboostEnabled: options.timeboostEnabled,
+			nitroContractsVersion: options.nitroContractsVersion,
 		});
 	}
 
@@ -184,6 +191,7 @@ async function runInitForeground(
 	runtime: InitRuntime,
 	options: {
 		foreground?: boolean | undefined;
+		nitroContractsVersion?: string | undefined;
 		rebuild?: boolean | undefined;
 		skipPostCaptureVerify?: boolean | undefined;
 		snapshotVersion?: string | undefined;
@@ -228,6 +236,7 @@ async function runInitForeground(
 		timeboostEnabled: options.timeboostEnabled,
 		nitroContractsSource,
 		tokenBridgeSource,
+		nitroContractsVersion: options.nitroContractsVersion,
 	});
 	const totalElapsed = Date.now() - totalStart;
 	logInitTimeline(result.timings, totalElapsed);
@@ -242,7 +251,7 @@ async function runInitForeground(
 		totalStart,
 		result.steps,
 		options.skipPostCaptureVerify,
-		nitroContractsSource.family,
+		options.nitroContractsVersion ?? nitroContractsSource.family,
 	);
 }
 
@@ -285,6 +294,7 @@ function startBackgroundInit(
 		snapshotVersion: string | undefined;
 		feeTokenDecimals: number | undefined;
 		timeboostEnabled: boolean | undefined;
+		nitroContractsVersion: string | undefined;
 	},
 ) {
 	const extraArgs = [
@@ -293,6 +303,9 @@ function startBackgroundInit(
 			? ["--fee-token-decimals", String(params.feeTokenDecimals)]
 			: []),
 		...(params.timeboostEnabled ? ["--timeboost-enabled"] : []),
+		...(params.nitroContractsVersion
+			? ["--nitro-contracts-version", params.nitroContractsVersion]
+			: []),
 	];
 	const run = startDetachedInitRun(runtime.configDir, runtime.projectRoot, extraArgs);
 	return {
