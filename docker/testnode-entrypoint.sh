@@ -55,7 +55,13 @@ if nitro_supports "--node.batch-poster.max-calldata-batch-size"; then
 else
 	RENAME_BATCH_MAX_SIZE=false
 fi
-node "$TESTNODE_BIN/configure-sequencer.mjs" "$CONFIG_ROOT" "$RENAME_BATCH_MAX_SIZE" "${TESTNODE_L2_MAX_BLOCK_SPEED:-}"
+# An nc2.1 (AnyTrust) L3 config carries data-availability L1 keys that Nitro >= v3.10 rejects.
+if nitro_supports "--node.data-availability.parent-chain-node-url"; then
+	DROP_DA_L1_KEYS=false
+else
+	DROP_DA_L1_KEYS=true
+fi
+node "$TESTNODE_BIN/configure-sequencer.mjs" "$CONFIG_ROOT" "$RENAME_BATCH_MAX_SIZE" "${TESTNODE_L2_MAX_BLOCK_SPEED:-}" "$DROP_DA_L1_KEYS"
 sequencer_feature_args
 # Recent Nitro rejects Stylus activation inside eth_call/eth_estimateGas unless this is set; contracts
 # that activate programs in their constructor (e.g. StylusDeployer) need it to estimate gas.
