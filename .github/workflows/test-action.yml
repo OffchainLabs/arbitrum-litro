@@ -303,6 +303,9 @@ jobs:
         id: nitro
         run: |
           image="$(grep -m1 -oE 'offchainlabs/nitro-node:[^[:space:]]+' docker/testnode.Dockerfile)"
+          # The slim-stripped tag lacks the curl, jq and python3 a rebase base must have (see
+          # testnode-rebase.Dockerfile); rebase onto the full image of the same build, as Nitro PRs do.
+          image="${image%-slim-stripped}"
           test -n "$image"
           echo "image=$image" >> "$GITHUB_OUTPUT"
 
