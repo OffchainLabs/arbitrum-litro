@@ -104,6 +104,10 @@ The value is applied to `node.parent-chain-reader.poll-interval`,
 L2-only and L2+L3 images are supported. Values such as `100ms`, `1s`, and `2.5s` are accepted;
 Nitro validates the value when it starts. `15s` restores Nitro's default.
 
+anvil mines an L1 block every second. The GitHub action sets `TESTNODE_L1_BLOCK_TIME=0.25`, which
+confirms an L2 transaction in about 3s instead of 9s; anvil's memory then grows about four times
+faster, so `start` and plain `docker run` keep 1s. Pass the variable to `docker run` for short CI jobs.
+
 ### Fast Feed
 
 The [Fast Feed](https://docs.arbitrum.io/how-arbitrum-works/priority-gas-auction/fast-feed) streams

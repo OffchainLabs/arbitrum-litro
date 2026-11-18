@@ -73,7 +73,7 @@ fi
 start_background /usr/local/bin/anvil \
 	--host 0.0.0.0 \
 	--port 8545 \
-	--block-time 1 \
+	--block-time "${TESTNODE_L1_BLOCK_TIME:-1}" \
 	--chain-id 1337 \
 	--mnemonic "indoor dish desk flag debris potato excuse depart ticket judge file exit" \
 	--state "$DATA_ROOT/anvil-state/state.json" \
