@@ -120,6 +120,8 @@ describe("buildStartTestnodeState", () => {
 		expect(args).toEqual(expect.arrayContaining(["TESTNODE_VARIANT=l2"]));
 		expect(args).toContain("ghcr.io/acme/testnode:custom");
 		expect(args).toEqual(expect.arrayContaining(["--label", `${START_CONTAINER_LABEL}=l2`]));
+		// Developer chains keep the image's 1s L1 blocks; only the action shortens them.
+		expect(args.join(" ")).not.toContain("TESTNODE_L1_BLOCK_TIME");
 	});
 
 	it("uses the existing l3-enabled option with an image-ref", () => {

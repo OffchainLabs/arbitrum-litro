@@ -344,6 +344,15 @@ describe("buildActionTestnodeState", () => {
 		expect(state.rpcUrls.l3).toBe("http://127.0.0.1:3347");
 	});
 
+	it("runs CI testnodes with 250ms L1 blocks", () => {
+		const state = buildActionTestnodeState({
+			l3Enabled: "true",
+			runnerTemp: "/tmp/runner",
+			version: "v1.2.3",
+		});
+		expect(testnodeDockerRunArgs(state)).toContain("TESTNODE_L1_BLOCK_TIME=0.25");
+	});
+
 	it("omits l3-specific outputs for l2", () => {
 		const state = buildActionTestnodeState({
 			contractsVersion: "v3.2",
