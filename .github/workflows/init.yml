@@ -139,6 +139,16 @@ jobs:
           nitro-contracts-version: ${{ matrix.nitro-contracts-version }}
           version: ${{ github.sha }}
 
+      # The action prints the last 80 log lines, which a stuck L2 validator's retries fill.
+      - name: Dump the testnode log on failure
+        if: failure()
+        run: |
+          for c in $(docker ps -a --filter name=arbitrum-testnode --format '{{.Names}}'); do
+            echo "::group::$c"
+            docker logs "$c" 2>&1 | grep -vE 'EXPECTED_ASSERTION_SEEN|Could not submit latest assertion|Posting assertion for batch|rpc (request|response)' | tail -300
+            echo "::endgroup::"
+          done
+
       - name: Validators are whitelisted and rollups confirm after 1 block
         env:
           CT: ${{ steps.action.outputs.container-name }}
