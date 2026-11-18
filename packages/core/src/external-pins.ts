@@ -13,6 +13,9 @@ export const DEFAULT_TOKEN_BRIDGE_COMMIT = "5975d8f7360816341be7f94fd333ef240f4a
 export const NITRO_CONTRACTS_REPOSITORY = "https://github.com/OffchainLabs/nitro-contracts.git";
 export const DEFAULT_NITRO_CONTRACTS_RELEASE = "v3.2.0";
 export const DEFAULT_NITRO_CONTRACTS_COMMIT = "2695e7b3e3f460531e2b77fed48a60561c54d90e";
+/** The legacy (pre-BoLD) contracts the nc2.1 images deploy their L3 rollup with. */
+export const NITRO_CONTRACTS_V21_RELEASE = "v2.1.3";
+export const NITRO_CONTRACTS_V21_COMMIT = "f9cd1aa4b5bba209211e8df9993e0eba89eaedda";
 
 /** A commit-pinned git build context, as `--build-context` takes it. */
 export function gitBuildContext(repository: string, commit: string): string {

@@ -28,6 +28,18 @@ describe("init chain steps deploy rollups through a local RollupCreator", () => 
 		expect(initSource).toContain("stakeToken: rollupCreatorDeployment.stakeToken");
 	});
 
+	it("creates a v2.1 L3 as AnyTrust with the v2.1 RollupCreator and no fee token pricer", () => {
+		expect(initSource).toContain('const isV21 = nitroContractsVersion === "v2.1";');
+		expect(initSource).toContain("...(isV21 ? { dataAvailabilityCommittee: true } : {}),");
+		expect(initSource).toContain("...(isV21 ? { imageSpec: V21_DEPLOYER_IMAGE_SPEC } : {}),");
+		expect(initSource).toContain(
+			'nitroContractsVersion: isV21 ? "v2.1" : nitroContractsSource.family,',
+		);
+		expect(initSource).toMatch(
+			/deployCustomFeeToken\(\s*runtime\.configDir,\s*feeTokenDecimals,\s*!isV21,/,
+		);
+	});
+
 	it("deploys the Timeboost auction after L2 is available", () => {
 		expect(initSource).toContain("deployTimeboostAuctionViaDocker");
 		expect(initSource).toContain('"deploy-timeboost-auction"');

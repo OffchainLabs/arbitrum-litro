@@ -1,10 +1,11 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Address } from "viem";
-import { parseEther } from "viem";
+import { encodeFunctionData, parseEther } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { accounts } from "../accounts.js";
 import { writeChainConfig } from "../chain-config.js";
+import { FAST_PARENT_ROLLUP_CONFIG } from "../chain-spec.js";
 import { clampDepositAmount } from "../deposit-amount.js";
 import { composeRestart, composeUp, waitForRpc } from "../docker.js";
 import { exec, execOrThrow } from "../exec.js";
@@ -13,7 +14,7 @@ import { deployFeeTokenPricer } from "../fee-token-pricer.js";
 import { deployTestErc20, testErc20Abi } from "../fee-token.js";
 import { ZERO_ADDRESS } from "../init-helpers.js";
 import { patchGeneratedL2NodeConfig, patchGeneratedL3NodeConfig } from "../node-config-patches.js";
-import { inboxAbi, publicClient, rollupAbi, walletClient } from "../rpc.js";
+import { inboxAbi, publicClient, rollupAbi, upgradeExecutorAbi, walletClient } from "../rpc.js";
 import { startL1Container } from "../runtime.js";
 import { deployRollupViaSdk, prepareNodeConfigFromDeployment } from "../sdk-chain.js";
 import type { InitState } from "../state.js";
@@ -26,11 +27,15 @@ import {
 	getL2ChildWeth,
 	transferL3OwnershipToOrbitUpgradeExecutor,
 } from "../token-bridge.js";
-import { ensureValidatorWalletStaked } from "../validator-wallet.js";
+import {
+	ensureValidatorWalletStaked,
+	ensureValidatorWalletWhitelisted,
+} from "../validator-wallet.js";
 import type { InitRuntime } from "./context.js";
 import {
 	type DeployerImageSpec,
 	type NitroContractsSource,
+	V21_DEPLOYER_IMAGE_SPEC,
 	resolveDeployerImageSpec,
 } from "./nitro-contracts-source.js";
 
@@ -141,11 +146,12 @@ async function deployRollupCreatorViaDocker(
 		deployerKey: string;
 		maxDataSize: string;
 		nitroContractsSource: NitroContractsSource;
+		imageSpec?: DeployerImageSpec;
 		retryAfterImageRebuild?: boolean;
 	},
 ): Promise<RollupCreatorDeployment> {
 	const retryAfterImageRebuild = params.retryAfterImageRebuild ?? true;
-	const spec = resolveDeployerImageSpec(params.nitroContractsSource);
+	const spec = params.imageSpec ?? resolveDeployerImageSpec(params.nitroContractsSource);
 	const image = spec.image;
 	await ensureContractDeployerImage(runtime, spec);
 	await waitForRpc(params.hostParentRpc);
@@ -543,6 +549,7 @@ async function fundL3DeployerAccounts(): Promise<void> {
 async function deployCustomFeeToken(
 	configDir: string,
 	feeTokenDecimals?: number,
+	deployPricer = true,
 ): Promise<{ feeTokenAddress?: string; feeTokenPricerAddress?: string }> {
 	if (feeTokenDecimals === undefined) {
 		return {};
@@ -580,6 +587,10 @@ async function deployCustomFeeToken(
 	console.log(
 		`[init] Custom fee token ${l1FeeToken} on L1, ${feeTokenAddress} on L2, ${feeTokenDecimals} decimals`,
 	);
+	if (!deployPricer) {
+		// v2.1 AnyTrust custom-gas rollups have no feeTokenPricer parameter.
+		return { feeTokenAddress };
+	}
 	// Custom-gas Rollup chains require a non-zero feeTokenPricer.
 	// Deploy a constant-rate pricer on the parent chain (L2), using
 	// the same deployer key the rollup uses.
@@ -626,23 +637,59 @@ async function depositFeeTokenToL3Inbox(nativeToken: Address, inbox: Address): P
 	await l2Pub.waitForTransactionReceipt({ hash: depositHash });
 }
 
+/**
+ * v2.1's RollupAdminLogic.initialize hard-codes minimumAssertionPeriod = 75 and its createRollup
+ * Config has no such field, so the legacy staker could assert only every 75 parent blocks. Set the
+ * FAST_PARENT_ROLLUP_CONFIG value the v3.2 rollup gets at creation.
+ */
+export async function setV21MinimumAssertionPeriod(
+	rollup: Address,
+	upgradeExecutor: Address,
+): Promise<void> {
+	const owner = walletClient(L2_RPC, accounts.l3owner.privateKey);
+	const hash = await owner.writeContract({
+		account: privateKeyToAccount(accounts.l3owner.privateKey),
+		address: upgradeExecutor,
+		abi: upgradeExecutorAbi,
+		functionName: "executeCall",
+		args: [
+			rollup,
+			encodeFunctionData({
+				abi: rollupAbi,
+				functionName: "setMinimumAssertionPeriod",
+				args: [BigInt(FAST_PARENT_ROLLUP_CONFIG.minimumAssertionPeriod)],
+			}),
+		],
+	});
+	const receipt = await publicClient(L2_RPC).waitForTransactionReceipt({ hash });
+	if (receipt.status !== "success") {
+		throw new Error(`Setting minimumAssertionPeriod on ${rollup} reverted in ${hash}`);
+	}
+	console.log(
+		`[init] Set minimumAssertionPeriod=${FAST_PARENT_ROLLUP_CONFIG.minimumAssertionPeriod} on v2.1 rollup ${rollup}`,
+	);
+}
+
 async function deployL3Rollup(
 	state: InitState,
 	runtime: InitRuntime,
 	feeTokenDecimals: number | undefined,
 	nitroContractsSource: NitroContractsSource,
+	isV21: boolean,
 ): Promise<InitState> {
 	await fundL3DeployerAccounts();
 	writeChainConfig(runtime.configDir, "l3_chain_config.json", {
 		chainId: 333333,
 		owner: accounts.l3owner.address,
+		...(isV21 ? { dataAvailabilityCommittee: true } : {}),
 	});
 	await applyGasEstimationWorkaround();
 
-	// If custom fee token is requested, deploy an L1 ERC20, bridge it to L2, and deploy a pricer on L2.
+	// If custom fee token is requested, deploy an L1 ERC20, bridge it to L2, and (v3.2) deploy a pricer on L2.
 	const { feeTokenAddress, feeTokenPricerAddress } = await deployCustomFeeToken(
 		runtime.configDir,
 		feeTokenDecimals,
+		!isV21,
 	);
 
 	const rollupCreatorDeployment = await deployRollupCreatorViaDocker(runtime, {
@@ -651,6 +698,7 @@ async function deployL3Rollup(
 		deployerKey: accounts.l3owner.privateKey,
 		maxDataSize: "104857",
 		nitroContractsSource,
+		...(isV21 ? { imageSpec: V21_DEPLOYER_IMAGE_SPEC } : {}),
 	});
 	await deployRollupViaSdk({
 		chainConfigPath: resolve(runtime.configDir, "l3_chain_config.json"),
@@ -672,13 +720,19 @@ async function deployL3Rollup(
 		rawNodeConfigOutputPath: resolve(runtime.configDir, "l3-nodeConfig.raw.json"),
 		rollupCreatorAddress: rollupCreatorDeployment.rollupCreator,
 		stakeToken: rollupCreatorDeployment.stakeToken,
-		nitroContractsVersion: nitroContractsSource.family,
+		nitroContractsVersion: isV21 ? "v2.1" : nitroContractsSource.family,
 		...(feeTokenAddress ? { nativeToken: feeTokenAddress as `0x${string}` } : {}),
 		...(feeTokenPricerAddress ? { feeTokenPricer: feeTokenPricerAddress as `0x${string}` } : {}),
 	});
 
 	copyConfigFile(runtime, "l3_deployment.json", "l3deployment.json");
 	const deployment = readDeployment(runtime, "l3_deployment.json");
+	if (isV21) {
+		await setV21MinimumAssertionPeriod(
+			deployment["rollup"] as Address,
+			deployment["upgrade-executor"] as Address,
+		);
+	}
 	return markStepDone(state, "deploy-l3-rollup", {
 		rollup: deployment["rollup"],
 		inbox: deployment["inbox"],
@@ -697,10 +751,12 @@ function createL3Steps(
 	feeTokenDecimals: number | undefined,
 	nitroContractsSource: NitroContractsSource,
 	tokenBridgeSource: TokenBridgeSource,
+	nitroContractsVersion?: string,
 ): Record<string, StepRunner> {
+	const isV21 = nitroContractsVersion === "v2.1";
 	return {
 		"deploy-l3-rollup": (state) =>
-			deployL3Rollup(state, runtime, feeTokenDecimals, nitroContractsSource),
+			deployL3Rollup(state, runtime, feeTokenDecimals, nitroContractsSource, isV21),
 		"generate-l3-config": async (state) => {
 			const rollupData = state.steps["deploy-l3-rollup"]?.data;
 			if (!rollupData) {
@@ -760,6 +816,17 @@ function createL3Steps(
 					validatorKey: accounts.validator.privateKey,
 					funderKey: accounts.funnel.privateKey,
 					requiredStakeWei,
+					upgradeExecutor: rollupData["upgradeExecutor"] as `0x${string}`,
+					ownerKey: accounts.l3owner.privateKey,
+				});
+			} else if (isV21 && validatorWalletCreator && validatorWalletCreator !== ZERO_ADDRESS) {
+				await ensureValidatorWalletWhitelisted({
+					parentRpc: L2_RPC,
+					creatorAddress: validatorWalletCreator as `0x${string}`,
+					rollupAddress: rollupData["rollup"] as `0x${string}`,
+					stakeTokenAddress: ZERO_ADDRESS,
+					validatorAddress: accounts.validator.address,
+					validatorKey: accounts.validator.privateKey,
 					upgradeExecutor: rollupData["upgradeExecutor"] as `0x${string}`,
 					ownerKey: accounts.l3owner.privateKey,
 				});
@@ -868,6 +935,7 @@ export function makeStepRunners(
 		feeTokenDecimals?: number | undefined;
 		nitroContractsSource: NitroContractsSource;
 		tokenBridgeSource: TokenBridgeSource;
+		nitroContractsVersion?: string | undefined;
 	},
 ): Record<string, StepRunner> {
 	return {
@@ -879,6 +947,7 @@ export function makeStepRunners(
 			options.feeTokenDecimals,
 			options.nitroContractsSource,
 			options.tokenBridgeSource,
+			options.nitroContractsVersion,
 		),
 	};
 }

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
 	configureSequencer,
+	dropDataAvailabilityL1Keys,
 	renameBatchMaxSize,
 	setMaxBlockSpeed,
 } from "../docker/configure-sequencer.mjs";
@@ -67,5 +68,55 @@ describe("configureSequencer", () => {
 		expect(setMaxBlockSpeed({}, "250ms")).toEqual({
 			execution: { sequencer: { "max-block-speed": "250ms" } },
 		});
+	});
+});
+
+describe("dropDataAvailabilityL1Keys", () => {
+	const aggregators = {
+		"rest-aggregator": { enable: true, urls: ["http://localhost:9877"] },
+		"rpc-aggregator": { enable: true, "assumed-honest": 1, backends: "[]" },
+	};
+	const anyTrust = {
+		node: {
+			"batch-poster": { enable: true },
+			"data-availability": {
+				enable: true,
+				"sequencer-inbox-address": "0x00000000000000000000000000000000000000aa",
+				"parent-chain-node-url": "http://sequencer:8547",
+				...aggregators,
+			},
+		},
+	};
+
+	it("drops only the keys Nitro >= v3.10 rejects", () => {
+		expect(dropDataAvailabilityL1Keys(anyTrust)).toEqual({
+			node: {
+				"batch-poster": { enable: true },
+				"data-availability": { enable: true, ...aggregators },
+			},
+		});
+	});
+
+	it("leaves a config without data-availability alone", () => {
+		const config = { node: { sequencer: true } };
+		expect(dropDataAvailabilityL1Keys(config)).toBe(config);
+	});
+
+	it("drops them from the L3 config only when asked", () => {
+		const root = mkdtempSync(join(tmpdir(), "configure-sequencer-"));
+		const write = () => {
+			writeFileSync(join(root, "l2-nodeConfig.json"), JSON.stringify({ node: {} }));
+			writeFileSync(join(root, "l3-nodeConfig.json"), JSON.stringify(anyTrust));
+		};
+		const da = () =>
+			JSON.parse(readFileSync(join(root, "l3-nodeConfig.json"), "utf8")).node["data-availability"];
+
+		write();
+		configureSequencer(root, { renameBatchMaxSize: false });
+		expect(da()).toEqual(anyTrust.node["data-availability"]);
+
+		write();
+		configureSequencer(root, { renameBatchMaxSize: false, dropDataAvailabilityL1Keys: true });
+		expect(da()).toEqual({ enable: true, ...aggregators });
 	});
 });

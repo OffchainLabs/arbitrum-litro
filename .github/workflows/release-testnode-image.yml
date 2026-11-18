@@ -1,7 +1,7 @@
 name: Publish Testnode
 
 # On a version tag (or manual dispatch), publish a testnode image for every
-# current supported variant. Each image's chain state is
+# variant x nitro-contracts-version we support. Each image's chain state is
 # GENERATED inline in CI by running `init` (no pre-built snapshot release
 # bundles, nothing to publish out of band). The intended (variant x version)
 # matrix and the init flags per combo come from runtime.mjs resolvePublishMatrix.
@@ -33,6 +33,15 @@ on:
           - l3-custom-16
           - l3-custom-18
           - l3-custom-20
+      nitro-contracts-version:
+        description: "Nitro contracts version (or all)"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all
+          - v2.1
+          - v3.2
 
 jobs:
   resolve-publish-matrix:
@@ -72,12 +81,15 @@ jobs:
       - name: Build publish matrix
         id: matrix
         env:
-          # New releases are built from the current Nitro contracts family.
+          # On tag push: every variant x every supported version. On dispatch:
+          # the chosen filters. resolvePublishMatrix only emits supported combos
+          # (e.g. no v2.1 for L2-only variants).
           VARIANT_FILTER: ${{ github.ref_type == 'tag' && 'all' || (github.event_name == 'workflow_dispatch' && inputs.variant || 'all') }}
+          VERSION_FILTER: ${{ github.ref_type == 'tag' && 'all' || (github.event_name == 'workflow_dispatch' && inputs.nitro-contracts-version || 'all') }}
         run: >-
           node --input-type=module -e
           "import { resolvePublishMatrix } from './packages/testnode/src/runtime.mjs';
-          const include = resolvePublishMatrix(process.env.VARIANT_FILTER, 'v3.2');
+          const include = resolvePublishMatrix(process.env.VARIANT_FILTER, process.env.VERSION_FILTER);
           if (!include.length) throw new Error('empty publish matrix');
           console.error('publish matrix:', JSON.stringify(include));
           const { appendFileSync } = await import('node:fs');
@@ -174,6 +186,7 @@ jobs:
       - name: Generate snapshot (init, retry until captured)
         env:
           SNAPSHOT_ID: ${{ matrix.snapshotId }}
+          NC_VERSION: ${{ matrix.contractsVersion }}
           DECIMALS: ${{ matrix.feeTokenDecimals }}
           TIMEBOOST: ${{ matrix.timeboostEnabled }}
         run: |
@@ -238,6 +251,7 @@ jobs:
             # `docker compose ... down -v` below so a timed-out attempt recovers.
             set +e
             timeout 1500 pnpm dev init \
+              --nitro-contracts-version "$NC_VERSION" \
               $EXTRA \
               --capture-id "$SNAPSHOT_ID" \
               --rebuild \
@@ -270,6 +284,7 @@ jobs:
           node scripts/ci/prepare-testnode-context.mjs
           --variant "${{ matrix.variant }}"
           --snapshot-id "${{ matrix.snapshotId }}"
+          --nitro-contracts-version "${{ matrix.contractsVersion }}"
 
       # The arm64 job bakes this context rather than regenerating it: snapshot
       # state is architecture-neutral, so a second `init` would only risk the two

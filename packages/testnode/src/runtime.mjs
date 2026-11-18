@@ -505,9 +505,7 @@ function buildPublishRow(def, contractsVersion) {
  */
 function publishRowsForVariant(def, versionFilter) {
 	const versions = (def.supportedContractsVersions ?? []).filter(
-		(version) =>
-			version === DEFAULT_NITRO_CONTRACTS_VERSION &&
-			(versionFilter === "all" || version === versionFilter),
+		(version) => versionFilter === "all" || version === versionFilter,
 	);
 	return versions.map((version) => buildPublishRow(def, version));
 }

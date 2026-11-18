@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveInitSnapshotId } from "../src/init/runner.js";
+import { createInitContext, resolveInitSnapshotId, runInitCommand } from "../src/init/runner.js";
 
 describe("resolveInitSnapshotId", () => {
 	it("defaults to the default snapshot id", () => {
@@ -18,5 +18,13 @@ describe("resolveInitSnapshotId", () => {
 
 	it("captureId overrides the default id", () => {
 		expect(resolveInitSnapshotId({ captureId: "l2" })).toBe("l2");
+	});
+});
+
+describe("runInitCommand --nitro-contracts-version", () => {
+	it("rejects a version other than v2.1 or v3.2 before starting anything", async () => {
+		await expect(
+			runInitCommand({ nitroContractsVersion: "v2.2" }, createInitContext("/nonexistent")),
+		).rejects.toThrow("--nitro-contracts-version must be v2.1 or v3.2");
 	});
 });

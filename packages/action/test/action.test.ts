@@ -136,6 +136,15 @@ describe("published bundle metadata", () => {
 		expect(dockerfile).toContain("io.arbitrum.testnode.token-bridge.commit");
 	});
 
+	it("builds each row's snapshot with that row's Nitro contracts version", () => {
+		expect(workflow).toContain(
+			"resolvePublishMatrix(process.env.VARIANT_FILTER, process.env.VERSION_FILTER)",
+		);
+		expect(workflow).toContain("NC_VERSION: ${{ matrix.contractsVersion }}");
+		expect(workflow).toContain('--nitro-contracts-version "$NC_VERSION"');
+		expect(workflow).toContain('--nitro-contracts-version "${{ matrix.contractsVersion }}"');
+	});
+
 	it("persists Anvil state for derived bundle commits", () => {
 		expect(entrypoint).toContain('--state "$DATA_ROOT/anvil-state/state.json"');
 		expect(entrypoint).toContain("--state-interval 1");

@@ -72,6 +72,8 @@ export const rollupAbi = parseAbi([
 	"function challengeManager() view returns (address)",
 	"function isValidator(address) view returns (bool)",
 	"function setValidator(address[], bool[])",
+	"function minimumAssertionPeriod() view returns (uint256)",
+	"function setMinimumAssertionPeriod(uint256)",
 ]);
 
 export const upgradeExecutorAbi = parseAbi(["function executeCall(address, bytes) payable"]);
