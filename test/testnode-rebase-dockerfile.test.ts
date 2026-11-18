@@ -60,8 +60,9 @@ describe("testnode-rebase.Dockerfile", () => {
 		expect(testnodeDockerfile).toMatch(/^FROM \$\{NITRO_IMAGE\} AS nitro$/m);
 		expect(testnodeDockerfile).not.toMatch(/^FROM \$\{NITRO_IMAGE\}$/m);
 		expect(finalStage).toContain("COPY --from=nitro /usr/local/bin/nitro /usr/local/bin/nitro");
-		// The entrypoint's --validation.wasm.allowed-wasm-module-roots names dirs under /home/user.
-		expect(finalStage).toContain("COPY --from=nitro --chown=user:user /home/user /home/user");
+		// The WASM module roots under the Nitro image's /home/user are 144 MB of the compressed
+		// image and unused: the validators run without a block validator.
+		expect(finalStage).not.toContain("/home/user /home/user");
 	});
 
 	it("labels rebase outputs with the same label every GC command filters on", () => {

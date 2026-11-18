@@ -23,8 +23,8 @@ FROM ${FOUNDRY_IMAGE} AS foundry
 FROM ${NITRO_IMAGE} AS nitro
 
 # Not FROM ${NITRO_IMAGE}: that image carries ~1.2 GB of tools, contracts and
-# binaries the testnode never runs. Only the nitro binary and the WASM module
-# roots its --validation.wasm.allowed-wasm-module-roots flag names are taken.
+# binaries the testnode never runs. Only the nitro binary is taken: the validators
+# run without a block validator, so the WASM module roots (314 MB) go unused.
 FROM ${RUNTIME_IMAGE}
 
 ARG BUNDLE_VERSION
@@ -53,11 +53,10 @@ RUN apt-get update \
 	&& apt-get install -y --no-install-recommends libatomic1 libstdc++6 \
 	&& apt-get install -y --no-install-recommends ca-certificates curl jq procps python3 \
 	&& rm -rf /var/lib/apt/lists/* \
-	&& useradd -s /bin/bash user \
+	&& useradd -m -s /bin/bash user \
 	&& mkdir -p /tokenbridge-data && chown user:user /tokenbridge-data
 
 COPY --from=nitro /usr/local/bin/nitro /usr/local/bin/nitro
-COPY --from=nitro --chown=user:user /home/user /home/user
 COPY --from=foundry /usr/local/bin/anvil /usr/local/bin/anvil
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
 COPY --chmod=755 docker/testnode-entrypoint.sh /usr/local/bin/arbitrum-testnode
