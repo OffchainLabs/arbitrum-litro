@@ -46,6 +46,7 @@ export function actionStateOptionsFromEnv(env) {
 			fastFeedEnabled: env["INPUT_FAST_FEED_ENABLED"],
 			l2MaxBlockSpeed: env["INPUT_L2_MAX_BLOCK_SPEED"],
 			pgaRoundsPerBlock: env["INPUT_PGA_ROUNDS_PER_BLOCK"],
+			arbosVersion: env["INPUT_ARBOS_VERSION"],
 		},
 		timeboostEnabled: env["INPUT_TIMEBOOST_ENABLED"],
 		version: env["INPUT_VERSION"],

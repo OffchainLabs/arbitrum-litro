@@ -254,7 +254,7 @@ export const LITRO_CHAINS = {
 		{
 			title: "ArbOS version",
 			description:
-				"ArbOS version each Arbitrum chain runs; 60 once --pga-rounds-per-block has upgraded it.",
+				"ArbOS version each Arbitrum chain runs. The image upgrades the L2 to 61 at boot (or to --arbos-version); the L3 stays on the snapshot's 40.",
 			kind: "stat",
 			width: 4,
 			queries: [{ expr: QUESTIONS.arbosVersion(CHAIN), legend: "{{chain}}" }],

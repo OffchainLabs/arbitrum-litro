@@ -59,8 +59,13 @@ export interface SequencerOptions {
 	fastFeedEnabled?: boolean | string | undefined;
 	/** Go duration overriding the L2 sequencer's max-block-speed, e.g. `250ms`. */
 	l2MaxBlockSpeed?: string | undefined;
-	/** PGA rounds per L2 block; the chain is upgraded to ArbOS 60 and collects tips. */
+	/** PGA rounds per L2 block; the chain needs ArbOS 60+ and is set to collect tips. */
 	pgaRoundsPerBlock?: number | string | undefined;
+	/**
+	 * ArbOS version to upgrade the L2 to at boot. Unset, the image's default applies: the newest
+	 * its Nitro runs (61), or none on an image rebased onto another Nitro.
+	 */
+	arbosVersion?: number | string | undefined;
 }
 
 export interface FastFeedState {
@@ -81,6 +86,7 @@ export interface SequencerState {
 	fastFeed: FastFeedState | undefined;
 	l2MaxBlockSpeed: string | undefined;
 	pgaRoundsPerBlock: number | undefined;
+	arbosVersion: number | undefined;
 }
 
 /** One Fast Feed message, as the public "Use the Fast Feed" guide documents it. */
