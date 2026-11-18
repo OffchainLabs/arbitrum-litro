@@ -1,10 +1,11 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Address } from "viem";
-import { parseEther } from "viem";
+import { encodeFunctionData, parseEther } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { accounts } from "../accounts.js";
 import { writeChainConfig } from "../chain-config.js";
+import { FAST_PARENT_ROLLUP_CONFIG } from "../chain-spec.js";
 import { clampDepositAmount } from "../deposit-amount.js";
 import { composeRestart, composeUp, waitForRpc } from "../docker.js";
 import { exec, execOrThrow } from "../exec.js";
@@ -13,7 +14,7 @@ import { deployFeeTokenPricer } from "../fee-token-pricer.js";
 import { deployTestErc20, testErc20Abi } from "../fee-token.js";
 import { ZERO_ADDRESS } from "../init-helpers.js";
 import { patchGeneratedL2NodeConfig, patchGeneratedL3NodeConfig } from "../node-config-patches.js";
-import { inboxAbi, publicClient, rollupAbi, walletClient } from "../rpc.js";
+import { inboxAbi, publicClient, rollupAbi, upgradeExecutorAbi, walletClient } from "../rpc.js";
 import { startL1Container } from "../runtime.js";
 import { deployRollupViaSdk, prepareNodeConfigFromDeployment } from "../sdk-chain.js";
 import type { InitState } from "../state.js";
@@ -636,6 +637,39 @@ async function depositFeeTokenToL3Inbox(nativeToken: Address, inbox: Address): P
 	await l2Pub.waitForTransactionReceipt({ hash: depositHash });
 }
 
+/**
+ * v2.1's RollupAdminLogic.initialize hard-codes minimumAssertionPeriod = 75 and its createRollup
+ * Config has no such field, so the legacy staker could assert only every 75 parent blocks. Set the
+ * FAST_PARENT_ROLLUP_CONFIG value the v3.2 rollup gets at creation.
+ */
+export async function setV21MinimumAssertionPeriod(
+	rollup: Address,
+	upgradeExecutor: Address,
+): Promise<void> {
+	const owner = walletClient(L2_RPC, accounts.l3owner.privateKey);
+	const hash = await owner.writeContract({
+		account: privateKeyToAccount(accounts.l3owner.privateKey),
+		address: upgradeExecutor,
+		abi: upgradeExecutorAbi,
+		functionName: "executeCall",
+		args: [
+			rollup,
+			encodeFunctionData({
+				abi: rollupAbi,
+				functionName: "setMinimumAssertionPeriod",
+				args: [BigInt(FAST_PARENT_ROLLUP_CONFIG.minimumAssertionPeriod)],
+			}),
+		],
+	});
+	const receipt = await publicClient(L2_RPC).waitForTransactionReceipt({ hash });
+	if (receipt.status !== "success") {
+		throw new Error(`Setting minimumAssertionPeriod on ${rollup} reverted in ${hash}`);
+	}
+	console.log(
+		`[init] Set minimumAssertionPeriod=${FAST_PARENT_ROLLUP_CONFIG.minimumAssertionPeriod} on v2.1 rollup ${rollup}`,
+	);
+}
+
 async function deployL3Rollup(
 	state: InitState,
 	runtime: InitRuntime,
@@ -693,6 +727,12 @@ async function deployL3Rollup(
 
 	copyConfigFile(runtime, "l3_deployment.json", "l3deployment.json");
 	const deployment = readDeployment(runtime, "l3_deployment.json");
+	if (isV21) {
+		await setV21MinimumAssertionPeriod(
+			deployment["rollup"] as Address,
+			deployment["upgrade-executor"] as Address,
+		);
+	}
 	return markStepDone(state, "deploy-l3-rollup", {
 		rollup: deployment["rollup"],
 		inbox: deployment["inbox"],
