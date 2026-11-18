@@ -24,6 +24,8 @@ interface EnsureValidatorWalletStakedParams {
 	ownerKey: `0x${string}`;
 }
 
+type WalletParams = Omit<EnsureValidatorWalletStakedParams, "funderKey" | "requiredStakeWei">;
+
 /** ABI fragments only needed for encodeFunctionData (batched wallet calls). */
 const stakeAbi = parseAbi([
 	"function approve(address, uint256) returns (bool)",
@@ -34,9 +36,7 @@ const stakeAbi = parseAbi([
 const walletCreatedEvent = validatorWalletCreatorAbi[1];
 
 /** Find or create a validator wallet via the WalletCreator contract. */
-async function resolveWalletAddress(
-	params: EnsureValidatorWalletStakedParams,
-): Promise<`0x${string}`> {
+async function resolveWalletAddress(params: WalletParams): Promise<`0x${string}`> {
 	const pub = publicClient(params.parentRpc);
 	const validatorAccount = privateKeyToAccount(params.validatorKey);
 	const validator = walletClient(params.parentRpc, params.validatorKey);
@@ -211,12 +211,24 @@ export async function ensureValidatorWalletStaked(
 }
 
 /**
+ * A v2.1 (pre-BoLD) rollup stakes ETH, which the legacy staker sends itself, so it only needs the
+ * wallet to exist and be whitelisted. Nitro finds the wallet by its WalletCreated log.
+ */
+export async function ensureValidatorWalletWhitelisted(
+	params: WalletParams,
+): Promise<`0x${string}`> {
+	const walletAddress = await resolveWalletAddress(params);
+	await ensureWalletWhitelisted(params, walletAddress);
+	return walletAddress;
+}
+
+/**
  * The validator node acts through its smart-contract wallet (use-smart-contract-wallet), so the
  * rollup must whitelist the wallet, not only the validator's own address, or every assertion
  * reverts with NOT_VALIDATOR.
  */
 async function ensureWalletWhitelisted(
-	params: EnsureValidatorWalletStakedParams,
+	params: WalletParams,
 	walletAddress: `0x${string}`,
 ): Promise<void> {
 	const pub = publicClient(params.parentRpc);

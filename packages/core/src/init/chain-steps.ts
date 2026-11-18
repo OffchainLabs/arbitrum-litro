@@ -26,7 +26,10 @@ import {
 	getL2ChildWeth,
 	transferL3OwnershipToOrbitUpgradeExecutor,
 } from "../token-bridge.js";
-import { ensureValidatorWalletStaked } from "../validator-wallet.js";
+import {
+	ensureValidatorWalletStaked,
+	ensureValidatorWalletWhitelisted,
+} from "../validator-wallet.js";
 import type { InitRuntime } from "./context.js";
 import {
 	type DeployerImageSpec,
@@ -773,6 +776,17 @@ function createL3Steps(
 					validatorKey: accounts.validator.privateKey,
 					funderKey: accounts.funnel.privateKey,
 					requiredStakeWei,
+					upgradeExecutor: rollupData["upgradeExecutor"] as `0x${string}`,
+					ownerKey: accounts.l3owner.privateKey,
+				});
+			} else if (isV21 && validatorWalletCreator && validatorWalletCreator !== ZERO_ADDRESS) {
+				await ensureValidatorWalletWhitelisted({
+					parentRpc: L2_RPC,
+					creatorAddress: validatorWalletCreator as `0x${string}`,
+					rollupAddress: rollupData["rollup"] as `0x${string}`,
+					stakeTokenAddress: ZERO_ADDRESS,
+					validatorAddress: accounts.validator.address,
+					validatorKey: accounts.validator.privateKey,
 					upgradeExecutor: rollupData["upgradeExecutor"] as `0x${string}`,
 					ownerKey: accounts.l3owner.privateKey,
 				});
