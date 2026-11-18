@@ -1,8 +1,9 @@
 name: Init
 
-# Generates l3-eth and l3-custom-18 snapshots with `init`, the way Publish Testnode
-# does, then boots each through the action. l3-eth completes a withdrawal on each
-# rollup; l3-custom-18 checks the L3 fee token on L2 is bridged from an L1 token. The
+# Generates l3-eth and l3-custom-18 (nc3.2 and nc2.1) snapshots with `init`, the way
+# Publish Testnode does, then boots each through the action. l3-eth and the nc2.1 row
+# complete a withdrawal on each rollup; l3-custom-18 checks the L3 fee token on L2 is
+# bridged from an L1 token. The
 # other workflows boot a pre-built snapshot, so only this one catches a change
 # to init that leaves published images unable to confirm assertions.
 on:
@@ -27,8 +28,14 @@ jobs:
         include:
           - variant: l3-eth
             fee-token-decimals: ""
+            nitro-contracts-version: v3.2
           - variant: l3-custom-18
             fee-token-decimals: "18"
+            nitro-contracts-version: v3.2
+          # The nc2.1 images: a legacy (pre-BoLD) v2.1 AnyTrust L3 on the v3.2 L2.
+          - variant: l3-custom-18
+            fee-token-decimals: "18"
+            nitro-contracts-version: v2.1
     env:
       TOKEN_BRIDGE_LOCAL_DIR: ${{ github.workspace }}/../token-bridge-contracts
       NITRO_CONTRACTS_LOCAL_DIR: ${{ github.workspace }}/../nitro-contracts
@@ -85,13 +92,14 @@ jobs:
       - name: Generate snapshot (init, retry until captured)
         env:
           DECIMALS: ${{ matrix.fee-token-decimals }}
+          NC_VERSION: ${{ matrix.nitro-contracts-version }}
         run: |
           set -uo pipefail
           EXTRA=""
           if [ -n "$DECIMALS" ]; then EXTRA="--fee-token-decimals $DECIMALS"; fi
           for attempt in 1 2 3; do
             set +e
-            timeout 1500 pnpm dev init --capture-id "$SNAPSHOT_ID" --rebuild --skip-post-capture-verify $EXTRA
+            timeout 1500 pnpm dev init --nitro-contracts-version "$NC_VERSION" --capture-id "$SNAPSHOT_ID" --rebuild --skip-post-capture-verify $EXTRA
             set -e
             if [ -f "config/snapshots/$SNAPSHOT_ID/manifest.json" ] &&
               [ -s "config/snapshots/$SNAPSHOT_ID/anvil-state/state.json" ]; then
@@ -105,7 +113,7 @@ jobs:
           docker compose -f docker/docker-compose.yaml -p arbitrum-testnode down -v || true
 
       - name: Prepare testnode context
-        run: node scripts/ci/prepare-testnode-context.mjs --variant ${{ matrix.variant }} --snapshot-id "$SNAPSHOT_ID"
+        run: node scripts/ci/prepare-testnode-context.mjs --variant ${{ matrix.variant }} --snapshot-id "$SNAPSHOT_ID" --nitro-contracts-version ${{ matrix.nitro-contracts-version }}
 
       - name: Build local testnode image
         run: >-
@@ -118,7 +126,7 @@ jobs:
           --build-arg TOKENBRIDGE_REF=${{ env.TOKEN_BRIDGE_REF }}
           --build-arg TOKENBRIDGE_COMMIT=${{ env.TOKEN_BRIDGE_COMMIT }}
           -f docker/testnode.Dockerfile
-          -t local/arbitrum-testnode:${{ github.sha }}-nc3.2-${{ matrix.variant }}
+          -t local/arbitrum-testnode:${{ github.sha }}-nc${{ matrix.nitro-contracts-version == 'v2.1' && '2.1' || '3.2' }}-${{ matrix.variant }}
           .
 
       - name: Run action
@@ -128,7 +136,7 @@ jobs:
           image-repository: local/arbitrum-testnode
           l3-enabled: true
           fee-token-decimals: ${{ matrix.fee-token-decimals }}
-          nitro-contracts-version: v3.2
+          nitro-contracts-version: ${{ matrix.nitro-contracts-version }}
           version: ${{ github.sha }}
 
       - name: Validators are whitelisted and rollups confirm after 1 block
@@ -161,7 +169,7 @@ jobs:
           ! docker logs "$CT" 2>&1 | grep -q NOT_VALIDATOR
 
       - name: Withdrawals complete on L2 and L3
-        if: matrix.variant == 'l3-eth'
+        if: matrix.variant == 'l3-eth' || matrix.nitro-contracts-version == 'v2.1'
         run: pnpm exec vitest run -c vitest.integration.config.ts packages/core/test/integration/withdrawal.test.ts
 
       - name: The L3 fee token on L2 is bridged from L1
