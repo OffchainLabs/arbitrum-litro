@@ -1,6 +1,7 @@
 ARG NODE_IMAGE=node:26-bookworm-slim
 ARG FOUNDRY_IMAGE=ghcr.io/foundry-rs/foundry:v1.3.5
-ARG NITRO_IMAGE=offchainlabs/nitro-node:v3.12.2-5f02f3f
+# slim-stripped: the same nitro build without debug symbols, 30 MB compressed instead of 98 MB.
+ARG NITRO_IMAGE=offchainlabs/nitro-node:v3.12.2-5f02f3f-slim-stripped
 # Must match the Debian release NITRO_IMAGE is built on: the copied nitro binary
 # links its glibc.
 ARG RUNTIME_IMAGE=debian:bookworm-slim
