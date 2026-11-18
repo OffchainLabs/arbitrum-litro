@@ -519,18 +519,21 @@ async function fundL3DeployerAccounts(): Promise<void> {
 		});
 		console.log(`[init] Funded ${label} on L2 with ${amount} wei`);
 	}
-	// Also fund deployer accounts on L1
+	// Also fund deployer accounts on L1. The custom fee token is deployed on L1 right
+	// after this, so wait for each funding transaction to be mined.
 	const funnelAccount = privateKeyToAccount(accounts.funnel.privateKey);
 	const l1Client = walletClient(L1_RPC, accounts.funnel.privateKey);
+	const l1Pub = publicClient(L1_RPC);
 	for (const { address, label } of [
 		{ address: accounts.userTokenBridgeDeployer.address, label: "userTokenBridgeDeployer" },
 		{ address: accounts.userFeeTokenDeployer.address, label: "userFeeTokenDeployer" },
 	]) {
-		await l1Client.sendTransaction({
+		const hash = await l1Client.sendTransaction({
 			account: funnelAccount,
 			to: address,
 			value: parseEther("100"),
 		});
+		await l1Pub.waitForTransactionReceipt({ hash });
 		console.log(`[init] Funded ${label} on L1 with 100ether`);
 	}
 }
