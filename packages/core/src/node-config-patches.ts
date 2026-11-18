@@ -152,6 +152,15 @@ export function patchGeneratedL3NodeConfig(
 	Object.assign(staker, FAST_STAKER_CONFIG);
 	Object.assign(bold, FAST_BOLD_CONFIG);
 	dangerous["disable-blob-reader"] = true;
+	// The chain SDK writes these for an AnyTrust (v2.1) chain. A node never reads them (it uses its
+	// own parent-chain connection and SequencerInbox), and Nitro v3.10+ rejects them as unknown keys.
+	const dataAvailability = node["data-availability"] as JsonObject | undefined;
+	if (dataAvailability) {
+		// biome-ignore lint/performance/noDelete: nitro rejects a present key, even an undefined one
+		delete dataAvailability["parent-chain-node-url"];
+		// biome-ignore lint/performance/noDelete: nitro rejects a present key, even an undefined one
+		delete dataAvailability["sequencer-inbox-address"];
+	}
 	delayedSequencer["finalize-distance"] = 0;
 	execution["forwarding-target"] = "null";
 	Object.assign(getOrCreateJsonObject(execution, "sequencer"), L3_EXECUTION_SEQUENCER_CONFIG);

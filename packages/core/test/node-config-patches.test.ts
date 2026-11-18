@@ -191,4 +191,34 @@ describe("patchGeneratedL3NodeConfig", () => {
 		expect(result["persistent"]).toEqual({ chain: "local" });
 		expect(result["ws"]).toEqual({ addr: "0.0.0.0" });
 	});
+
+	it("drops the AnyTrust keys Nitro v3.10+ rejects and keeps the aggregators", () => {
+		const aggregators = {
+			"rest-aggregator": { enable: true, urls: ["http://localhost:9877"] },
+			"rpc-aggregator": { enable: true, "assumed-honest": 1, backends: "[]" },
+		};
+		const input = {
+			chain: { "info-json": "[]" },
+			"parent-chain": { connection: { url: "http://host.docker.internal:8547" } },
+			node: {
+				"batch-poster": {},
+				dangerous: {},
+				"delayed-sequencer": {},
+				"data-availability": {
+					enable: true,
+					"sequencer-inbox-address": "0x00000000000000000000000000000000000000aa",
+					"parent-chain-node-url": "http://host.docker.internal:8547",
+					...aggregators,
+				},
+			},
+			execution: {},
+		};
+
+		const node = patchGeneratedL3NodeConfig(input, "http://sequencer:8547")["node"] as Record<
+			string,
+			unknown
+		>;
+
+		expect(node["data-availability"]).toEqual({ enable: true, ...aggregators });
+	});
 });
