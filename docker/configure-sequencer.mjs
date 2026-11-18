@@ -38,6 +38,29 @@ export function renameBatchMaxSize(config) {
 }
 
 /**
+ * The chain SDK writes data-availability.parent-chain-node-url and sequencer-inbox-address for an
+ * AnyTrust (nc2.1) L3, and the Nitro the snapshot is made on dials the former. Nitro >= v3.10
+ * removed both (a node uses its own parent-chain connection) and rejects them as invalid keys.
+ *
+ * @param {NodeConfig} config
+ * @returns {NodeConfig}
+ */
+export function dropDataAvailabilityL1Keys(config) {
+	const dataAvailability = /** @type {Record<string, unknown> | undefined} */ (
+		config.node?.["data-availability"]
+	);
+	if (!dataAvailability) {
+		return config;
+	}
+	const {
+		"parent-chain-node-url": _url,
+		"sequencer-inbox-address": _inbox,
+		...rest
+	} = dataAvailability;
+	return { ...config, node: { ...config.node, "data-availability": rest } };
+}
+
+/**
  * @param {NodeConfig} config
  * @param {string} maxBlockSpeed Go duration, e.g. 250ms
  * @returns {NodeConfig}
@@ -56,7 +79,7 @@ export function setMaxBlockSpeed(config, maxBlockSpeed) {
  * Rewrite the runtime node configs in `configRoot` for this boot.
  *
  * @param {string} configRoot
- * @param {{ renameBatchMaxSize: boolean; l2MaxBlockSpeed?: string | undefined }} options
+ * @param {{ renameBatchMaxSize: boolean; l2MaxBlockSpeed?: string | undefined; dropDataAvailabilityL1Keys?: boolean | undefined }} options
  */
 export function configureSequencer(configRoot, options) {
 	for (const filename of NODE_CONFIG_FILENAMES) {
@@ -68,6 +91,9 @@ export function configureSequencer(configRoot, options) {
 		if (options.renameBatchMaxSize) {
 			config = renameBatchMaxSize(config);
 		}
+		if (options.dropDataAvailabilityL1Keys) {
+			config = dropDataAvailabilityL1Keys(config);
+		}
 		if (options.l2MaxBlockSpeed && filename === "l2-nodeConfig.json") {
 			config = setMaxBlockSpeed(config, options.l2MaxBlockSpeed);
 		}
@@ -76,16 +102,20 @@ export function configureSequencer(configRoot, options) {
 }
 
 function main() {
-	const [configRoot, renameFlag, l2MaxBlockSpeed] = process.argv.slice(2);
+	const [configRoot, renameFlag, l2MaxBlockSpeed, dropDaFlag] = process.argv.slice(2);
 	if (!configRoot || (renameFlag !== "true" && renameFlag !== "false")) {
 		console.error(
-			"Usage: configure-sequencer.mjs <config-root> <rename-batch-max-size:true|false> [l2-max-block-speed]",
+			"Usage: configure-sequencer.mjs <config-root> <rename-batch-max-size:true|false> [l2-max-block-speed] [drop-data-availability-l1-keys:true|false]",
 		);
 		process.exitCode = 2;
 		return;
 	}
 	try {
-		configureSequencer(configRoot, { renameBatchMaxSize: renameFlag === "true", l2MaxBlockSpeed });
+		configureSequencer(configRoot, {
+			renameBatchMaxSize: renameFlag === "true",
+			l2MaxBlockSpeed,
+			dropDataAvailabilityL1Keys: dropDaFlag === "true",
+		});
 		if (l2MaxBlockSpeed) {
 			process.stdout.write(`l2 max-block-speed: ${l2MaxBlockSpeed}\n`);
 		}

@@ -16,6 +16,7 @@ import {
 } from "@arbitrum/chain-sdk";
 import type { Address } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import { FAST_PARENT_ROLLUP_CONFIG } from "./chain-spec.js";
 import { ZERO_ADDRESS } from "./init-helpers.js";
 import { publicClient } from "./rpc.js";
 
@@ -176,6 +177,11 @@ export async function deployRollupViaSdk(params: DeployRollupViaSdkParams): Prom
 			chainId: BigInt(params.chainId),
 			owner: params.ownerAddress,
 			chainConfig: chainConfig as PrepareNodeConfigParams["chainConfig"],
+			// The SDK's defaults for these are sized for public parent chains (150 and 75 blocks), so
+			// every withdrawal would wait minutes for confirmation. The exported network files record
+			// the same values.
+			confirmPeriodBlocks: BigInt(FAST_PARENT_ROLLUP_CONFIG.confirmPeriodBlocks),
+			minimumAssertionPeriod: BigInt(FAST_PARENT_ROLLUP_CONFIG.minimumAssertionPeriod),
 			...(params.wasmModuleRoot ? { wasmModuleRoot: params.wasmModuleRoot } : {}),
 			...(params.stakeToken ? { stakeToken: params.stakeToken } : {}),
 		},

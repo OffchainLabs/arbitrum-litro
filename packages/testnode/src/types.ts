@@ -140,6 +140,8 @@ export interface TestnodeState {
 	timeboostEnabled: boolean;
 	variant: string;
 	variantDefinition: VariantDefinition;
+	/** anvil --block-time in seconds; unset keeps the image's 1s. */
+	l1BlockTime?: string;
 }
 
 export interface BaseStateOptions {

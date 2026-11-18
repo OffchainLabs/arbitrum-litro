@@ -19,12 +19,16 @@ services:
       - --host=0.0.0.0
       - --port=8545
       - --block-time=1
+      # Same as the image's entrypoint: at 30M, anvil drops a sender's later tx after one that
+      # does not fit the block.
+      - --gas-limit=100000000
       - --accounts=10
       - --balance=1000000
       - --mnemonic=indoor dish desk flag debris potato excuse depart ticket judge file exit
       - --chain-id=1337
       - --state=/state/state.json
       - --state-interval=1
+      - --max-persisted-states=128
     volumes:
       - ../config/anvil-state:/state
 
@@ -69,6 +73,9 @@ services:
     command:
       - --conf.file=/config/l3-nodeConfig.json
       - --node.dangerous.disable-blob-reader
+      # init turns the L3 staker on before capturing; like the validator above and the
+      # image's entrypoint, it runs without a block validator.
+      - --node.staker.dangerous.without-block-validator
       - --http.addr=0.0.0.0
       - --http.port=8547
       - --http.api=net,web3,eth,txpool,debug

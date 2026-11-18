@@ -1,0 +1,203 @@
+name: Init
+
+# Generates l3-eth and l3-custom-18 (nc3.2 and nc2.1) snapshots with `init`, the way
+# Publish Testnode does, then boots each through the action. l3-eth and the nc2.1 row
+# complete a withdrawal on each rollup; l3-custom-18 checks the L3 fee token on L2 is
+# bridged from an L1 token. The
+# other workflows boot a pre-built snapshot, so only this one catches a change
+# to init that leaves published images unable to confirm assertions.
+on:
+  pull_request:
+    paths:
+      - "packages/core/src/**"
+      - "packages/testnode/src/**"
+      - "apps/cli/src/commands/init.ts"
+      - "docker/**"
+      - ".github/workflows/init.yml"
+  workflow_dispatch:
+
+jobs:
+  init-withdrawals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: l3-eth
+            fee-token-decimals: ""
+            nitro-contracts-version: v3.2
+          - variant: l3-custom-18
+            fee-token-decimals: "18"
+            nitro-contracts-version: v3.2
+          # The nc2.1 images: a legacy (pre-BoLD) v2.1 AnyTrust L3 on the v3.2 L2.
+          - variant: l3-custom-18
+            fee-token-decimals: "18"
+            nitro-contracts-version: v2.1
+    env:
+      TOKEN_BRIDGE_LOCAL_DIR: ${{ github.workspace }}/../token-bridge-contracts
+      NITRO_CONTRACTS_LOCAL_DIR: ${{ github.workspace }}/../nitro-contracts
+      SNAPSHOT_ID: init-ci
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 26
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve external contracts pins
+        run: pnpm exec tsx scripts/ci/resolve-external-pins.ts
+
+      - name: Install Foundry (forge for token-bridge build)
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Install yarn (classic)
+        run: npm install -g yarn@1.22.22
+
+      - name: Prepare token-bridge-contracts host checkout
+        run: |
+          set -euxo pipefail
+          mkdir -p "$TOKEN_BRIDGE_LOCAL_DIR"
+          cd "$TOKEN_BRIDGE_LOCAL_DIR"
+          git init .
+          git remote add origin "$TOKEN_BRIDGE_REPOSITORY"
+          git fetch --depth 1 origin "$TOKEN_BRIDGE_COMMIT"
+          git checkout --detach FETCH_HEAD
+          git submodule update --init --recursive --depth 1
+          yarn install --frozen-lockfile
+          yarn build
+
+      - name: Prepare Nitro contracts checkout
+        run: |
+          set -euxo pipefail
+          mkdir -p "$NITRO_CONTRACTS_LOCAL_DIR"
+          cd "$NITRO_CONTRACTS_LOCAL_DIR"
+          git init .
+          git remote add origin "$NITRO_CONTRACTS_REPOSITORY"
+          git fetch --depth 1 origin "$NITRO_CONTRACTS_COMMIT"
+          git checkout --detach FETCH_HEAD
+          git submodule update --init --recursive --depth 1
+
+      # Same retry as Publish Testnode: init intermittently exits before capturing.
+      - name: Generate snapshot (init, retry until captured)
+        env:
+          DECIMALS: ${{ matrix.fee-token-decimals }}
+          NC_VERSION: ${{ matrix.nitro-contracts-version }}
+        run: |
+          set -uo pipefail
+          EXTRA=""
+          if [ -n "$DECIMALS" ]; then EXTRA="--fee-token-decimals $DECIMALS"; fi
+          for attempt in 1 2 3; do
+            set +e
+            timeout 1500 pnpm dev init --nitro-contracts-version "$NC_VERSION" --capture-id "$SNAPSHOT_ID" --rebuild --skip-post-capture-verify $EXTRA
+            set -e
+            if [ -f "config/snapshots/$SNAPSHOT_ID/manifest.json" ] &&
+              [ -s "config/snapshots/$SNAPSHOT_ID/anvil-state/state.json" ]; then
+              echo "snapshot captured on attempt $attempt"
+              break
+            fi
+            docker compose -f docker/docker-compose.yaml -p arbitrum-testnode logs --tail=80 || true
+            docker compose -f docker/docker-compose.yaml -p arbitrum-testnode down -v || true
+          done
+          test -f "config/snapshots/$SNAPSHOT_ID/manifest.json"
+          docker compose -f docker/docker-compose.yaml -p arbitrum-testnode down -v || true
+
+      - name: Prepare testnode context
+        run: node scripts/ci/prepare-testnode-context.mjs --variant ${{ matrix.variant }} --snapshot-id "$SNAPSHOT_ID" --nitro-contracts-version ${{ matrix.nitro-contracts-version }}
+
+      - name: Build local testnode image
+        run: >-
+          docker build
+          --build-context tokenbridge=${{ env.TOKEN_BRIDGE_DOCKER_CONTEXT }}
+          --build-arg BUNDLE_VERSION=${{ github.sha }}
+          --build-arg BUNDLE_VARIANT=${{ matrix.variant }}
+          --build-arg NITRO_CONTRACTS_REF=${{ env.NITRO_CONTRACTS_REF }}
+          --build-arg NITRO_CONTRACTS_COMMIT=${{ env.NITRO_CONTRACTS_COMMIT }}
+          --build-arg TOKENBRIDGE_REF=${{ env.TOKEN_BRIDGE_REF }}
+          --build-arg TOKENBRIDGE_COMMIT=${{ env.TOKEN_BRIDGE_COMMIT }}
+          -f docker/testnode.Dockerfile
+          -t local/arbitrum-testnode:${{ github.sha }}-nc${{ matrix.nitro-contracts-version == 'v2.1' && '2.1' || '3.2' }}-${{ matrix.variant }}
+          .
+
+      - name: Run action
+        id: action
+        uses: ./
+        with:
+          image-repository: local/arbitrum-testnode
+          l3-enabled: true
+          fee-token-decimals: ${{ matrix.fee-token-decimals }}
+          nitro-contracts-version: ${{ matrix.nitro-contracts-version }}
+          version: ${{ github.sha }}
+
+      # The action prints the last 80 log lines, which a stuck L2 validator's retries fill.
+      - name: Dump the testnode log on failure
+        if: failure()
+        run: |
+          for c in $(docker ps -a --filter name=arbitrum-testnode --format '{{.Names}}'); do
+            echo "::group::$c"
+            docker logs "$c" 2>&1 | grep -vE 'EXPECTED_ASSERTION_SEEN|Could not submit latest assertion|Posting assertion for batch|rpc (request|response)' | tail -300
+            echo "::endgroup::"
+          done
+
+      - name: Validators are whitelisted and rollups confirm after 1 block
+        env:
+          CT: ${{ steps.action.outputs.container-name }}
+          NET: ${{ steps.action.outputs.local-network-path }}
+          L1: ${{ steps.action.outputs.l1-rpc-url }}
+          L2: ${{ steps.action.outputs.l2-rpc-url }}
+        run: |
+          set -euo pipefail
+          # Both validators run with the same key, so they can act as the same wallet address.
+          test "$(docker logs "$CT" 2>&1 | grep -c 'running as validator')" -ge 2
+          wallets=$(docker logs "$CT" 2>&1 | grep -oE 'actingAsWallet=0x[0-9a-fA-F]{40}' | cut -d= -f2 | sort -u)
+          echo "validator wallets: $wallets"
+          check() { # <name> <rollup> <parent rpc>
+            echo "$1 rollup $2"
+            test "$(cast call "$2" 'confirmPeriodBlocks()(uint64)' --rpc-url "$3")" = 1
+            test "$(cast call "$2" 'minimumAssertionPeriod()(uint256)' --rpc-url "$3")" = 1
+            for w in $wallets; do
+              if [ "$(cast call "$2" 'isValidator(address)(bool)' "$w" --rpc-url "$3")" = true ]; then
+                echo "  $w is whitelisted"
+                return 0
+              fi
+            done
+            echo "  no validator wallet is whitelisted" >&2
+            return 1
+          }
+          check L2 "$(jq -r .l2Network.ethBridge.rollup "$NET")" "$L1"
+          check L3 "$(jq -r .l3Network.ethBridge.rollup "$NET")" "$L2"
+          ! docker logs "$CT" 2>&1 | grep -q NOT_VALIDATOR
+
+      - name: Withdrawals complete on L2 and L3
+        if: matrix.variant == 'l3-eth' || matrix.nitro-contracts-version == 'v2.1'
+        run: pnpm exec vitest run -c vitest.integration.config.ts packages/core/test/integration/withdrawal.test.ts
+
+      - name: The L3 fee token on L2 is bridged from L1
+        if: matrix.fee-token-decimals != ''
+        env:
+          NET: ${{ steps.action.outputs.local-network-path }}
+          L1: ${{ steps.action.outputs.l1-rpc-url }}
+          L2: ${{ steps.action.outputs.l2-rpc-url }}
+          DECIMALS: ${{ matrix.fee-token-decimals }}
+        run: |
+          set -euo pipefail
+          l2_token=$(jq -r .l3Network.nativeToken "$NET")
+          l1_token=$(cast call "$l2_token" 'l1Address()(address)' --rpc-url "$L2")
+          echo "L3 fee token: $l2_token on L2, $l1_token on L1"
+          test "$(cast code "$l1_token" --rpc-url "$L1")" != 0x
+          test "$(cast call "$l1_token" 'decimals()(uint8)' --rpc-url "$L1")" = "$DECIMALS"
+          test "$(cast call "$l2_token" 'decimals()(uint8)' --rpc-url "$L2")" = "$DECIMALS"
+          router=$(jq -r .l2Network.tokenBridge.parentGatewayRouter "$NET")
+          test "$(cast call "$router" 'calculateL2TokenAddress(address)(address)' "$l1_token" --rpc-url "$L1" | tr A-F a-f)" = "$(echo "$l2_token" | tr A-F a-f)"
+          # The key arbitrum-sdk's L1-to-L3 tests fund from holds fee tokens on L1.
+          test "$(cast call "$l1_token" 'balanceOf(address)(uint256)' 0x9205AE47eC1982d06a4C57753060B763850b3Cd3 --rpc-url "$L1" | cut -d' ' -f1)" != 0

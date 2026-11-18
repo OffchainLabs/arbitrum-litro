@@ -18,6 +18,10 @@ export const initCli = Cli.create("init", {
 			.optional()
 			.describe("Deploy a custom fee token ERC20 on L2 with this many decimals (6, 16, 18, or 20)"),
 		foreground: z.boolean().optional().describe("Internal worker mode for detached init runs"),
+		nitroContractsVersion: z
+			.string()
+			.optional()
+			.describe("Nitro contracts version for the L3 rollup (v2.1 or v3.2). Default v3.2."),
 		rebuild: z
 			.boolean()
 			.optional()

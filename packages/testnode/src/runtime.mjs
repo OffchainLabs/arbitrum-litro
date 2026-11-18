@@ -501,9 +501,7 @@ function buildPublishRow(def, contractsVersion) {
  */
 function publishRowsForVariant(def, versionFilter) {
 	const versions = (def.supportedContractsVersions ?? []).filter(
-		(version) =>
-			version === DEFAULT_NITRO_CONTRACTS_VERSION &&
-			(versionFilter === "all" || version === versionFilter),
+		(version) => versionFilter === "all" || version === versionFilter,
 	);
 	return versions.map((version) => buildPublishRow(def, version));
 }
@@ -645,12 +643,17 @@ function buildTestnodeState({
 
 /** @param {ActionStateOptions} options */
 export function buildActionTestnodeState({ outputDir, runnerTemp, workspace, ...options }) {
-	return buildTestnodeState({
-		...options,
-		outputDir: outputDir ? resolve(workspace || process.cwd(), outputDir) : undefined,
-		defaultOutputDir: ({ variant, version }) =>
-			defaultActionOutputDir({ runnerTemp, variant, version }),
-	});
+	return {
+		...buildTestnodeState({
+			...options,
+			outputDir: outputDir ? resolve(workspace || process.cwd(), outputDir) : undefined,
+			defaultOutputDir: ({ variant, version }) =>
+				defaultActionOutputDir({ runnerTemp, variant, version }),
+		}),
+		// CI only: 250ms L1 blocks confirm an L2 transaction in ~3s instead of ~9s. anvil's memory
+		// grows ~4x faster with them, so `start` keeps the image's 1s for long-running chains.
+		l1BlockTime: "0.25",
+	};
 }
 
 /** @param {StartStateOptions} options */
@@ -695,6 +698,9 @@ export function testnodeDockerRunArgs(state) {
 		args.push("-e", "TESTNODE_TIMEBOOST_REDIS_URL");
 		args.push("-e", "TESTNODE_TIMEBOOST_AUCTION_CONTRACT_ADDRESS");
 	}
+	if (state.l1BlockTime) {
+		args.push("-e", `TESTNODE_L1_BLOCK_TIME=${state.l1BlockTime}`);
+	}
 	args.push(...sequencerDockerArgs(state.sequencer));
 	args.push(...observabilityDockerArgs(state.observability, state.variantDefinition.l3Enabled));
 	args.push(state.imageRef);
@@ -702,7 +708,7 @@ export function testnodeDockerRunArgs(state) {
 }
 
 /**
- * Call `check` once a second until it returns true or `timeoutMs` passes. An error thrown by
+ * Call `check` every 250ms until it returns true or `timeoutMs` passes. An error thrown by
  * `check` ends the wait at once.
  *
  * @param {() => boolean} check
@@ -715,7 +721,7 @@ function pollUntil(check, timeoutMs, failure) {
 		if (check()) {
 			return;
 		}
-		execFileSync("sleep", ["1"], { stdio: "ignore" });
+		execFileSync("sleep", ["0.25"], { stdio: "ignore" });
 	}
 	throw new Error(failure);
 }

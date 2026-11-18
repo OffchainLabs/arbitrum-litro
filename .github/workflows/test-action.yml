@@ -112,6 +112,9 @@ jobs:
       - name: Validate config server index
         run: curl -sf http://127.0.0.1:8080/
 
+      - name: Withdrawals complete on L2 and L3
+        run: pnpm exec vitest run -c vitest.integration.config.ts packages/core/test/integration/withdrawal.test.ts
+
   # Boots the action with the Fast Feed and PGA rounds on and talks to the feed the way
   # a client written against the public Fast Feed docs does.
   test-fast-feed-action:
@@ -300,6 +303,9 @@ jobs:
         id: nitro
         run: |
           image="$(grep -m1 -oE 'offchainlabs/nitro-node:[^[:space:]]+' docker/testnode.Dockerfile)"
+          # The slim-stripped tag lacks the curl, jq and python3 a rebase base must have (see
+          # testnode-rebase.Dockerfile); rebase onto the full image of the same build, as Nitro PRs do.
+          image="${image%-slim-stripped}"
           test -n "$image"
           echo "image=$image" >> "$GITHUB_OUTPUT"
 

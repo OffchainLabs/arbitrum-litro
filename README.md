@@ -88,8 +88,9 @@ Start exports config under `outputDir/config` and boots these host RPCs:
 
 ### Docker image configuration
 
-Set `TESTNODE_PARENT_CHAIN_POLL_INTERVAL` to a Go duration to override Nitro's parent-chain
-polling interval when the container starts:
+Nitro polls its parent chain every 250ms in the testnode, instead of Nitro's 15s default, so an
+assertion is posted as soon as its batch lands. Set `TESTNODE_PARENT_CHAIN_POLL_INTERVAL` to a
+Go duration to use another interval:
 
 ```bash
 docker run \
@@ -101,8 +102,11 @@ The value is applied to `node.parent-chain-reader.poll-interval`,
 `execution.parent-chain-reader.poll-interval`, and
 `node.delayed-sequencer.rescan-interval` in every runtime config included in the image. Both
 L2-only and L2+L3 images are supported. Values such as `100ms`, `1s`, and `2.5s` are accepted;
-Nitro validates the value when it starts. When the variable is unset, the bundled runtime configs
-and existing polling behavior are unchanged.
+Nitro validates the value when it starts. `15s` restores Nitro's default.
+
+anvil mines an L1 block every second. The GitHub action sets `TESTNODE_L1_BLOCK_TIME=0.25`, which
+confirms an L2 transaction in about 3s instead of 9s; anvil's memory then grows about four times
+faster, so `start` and plain `docker run` keep 1s. Pass the variable to `docker run` for short CI jobs.
 
 ### ArbOS version
 
@@ -237,9 +241,9 @@ Prometheus keeps one day of samples, and `litro stop` removes them. `start --kee
 ### GitHub Action
 
 ```yaml
-- uses: OffchainLabs/arbitrum-litro@v0.5.0
+- uses: OffchainLabs/arbitrum-litro@v0.6.7
   with:
-    version: v0.5.0
+    version: v0.6.7
     l3-enabled: true
     timeboost-enabled: false
 ```
@@ -290,10 +294,10 @@ under the testnode's flags and config:
     context: .
     tags: nitro-node-dev:latest
 
-- uses: OffchainLabs/arbitrum-litro@v0.5.0
+- uses: OffchainLabs/arbitrum-litro@v0.6.7
   id: testnode
   with:
-    version: v0.5.0
+    version: v0.6.7
     nitro-image: nitro-node-dev:latest
 ```
 
@@ -342,10 +346,10 @@ The published testnode image also contains a prebuilt `token-bridge-contracts` w
 consumers can run scripts from that workspace without another image or build step:
 
 ```yaml
-- uses: OffchainLabs/arbitrum-litro@v0.5.0
+- uses: OffchainLabs/arbitrum-litro@v0.6.7
   id: testnode
   with:
-    version: v0.5.0
+    version: v0.6.7
 
 - name: Run contract deployment command
   run: |
@@ -453,7 +457,7 @@ job — log in before invoking it:
     username: ${{ github.actor }}
     password: ${{ secrets.GITHUB_TOKEN }}
 
-- uses: OffchainLabs/arbitrum-litro/bake@v0.5.0
+- uses: OffchainLabs/arbitrum-litro/bake@v0.6.7
   with:
     setup-command: ./scripts/deploy-and-seed.sh
     image-ref: ghcr.io/acme/arbitrum-testnode:governance
@@ -481,12 +485,60 @@ pnpm dev start --image-ref ghcr.io/acme/arbitrum-testnode:governance
 In CI:
 
 ```yaml
-- uses: OffchainLabs/arbitrum-litro@v0.5.0
+- uses: OffchainLabs/arbitrum-litro@v0.6.7
   with:
     image-ref: ghcr.io/acme/arbitrum-testnode:governance
     l3-enabled: false
     github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
+
+### Prebaked test image
+
+A custom snapshot bakes chain state. A test job also spends time installing its toolchain and
+packages and compiling. Bake those into an image built `FROM` a litro image, publish it on every push
+to the default branch, and run the tests inside the booted container. The image keeps litro's
+entrypoint, so the chains start when the container does.
+
+nitro-contracts did this ([OffchainLabs/nitro-contracts#484](https://github.com/OffchainLabs/nitro-contracts/pull/484)):
+its e2e jobs went from 621-879s on nitro-testnode to 14-40s.
+
+```dockerfile
+FROM node:26-bookworm-slim AS node
+FROM ghcr.io/offchainlabs/arbitrum-litro:v0.5.1-nc3.2-l3-eth
+# litro's image runs node but carries no package manager.
+COPY --from=node /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
+USER root
+RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm
+USER user
+WORKDIR /home/user/app
+COPY --chown=user:user package.json package-lock.json ./
+RUN npm ci && sha256sum package.json package-lock.json > /home/user/deps.sha256
+COPY --chown=user:user . .
+RUN npm run build
+```
+
+Boot it with the action and run the job in the container it names:
+
+```yaml
+- uses: OffchainLabs/arbitrum-litro@v0.6.7
+  id: litro
+  with:
+    image-ref: ghcr.io/acme/app-litro-tests:main
+    l3-enabled: true
+- run: |
+    git ls-files | tar -cf - -T - | docker exec -i -w /home/user/app "$CT" tar -xf -
+    docker exec -w /home/user/app "$CT" sh -c \
+      'sha256sum package.json package-lock.json | cmp -s - /home/user/deps.sha256 || npm ci; npm run build && npm test'
+  env:
+    CT: ${{ steps.litro.outputs.container-name }}
+```
+
+- Copy only the checkout's source over the image's copy. Installed packages and build output stay,
+  so hardhat and forge recompile only the files that changed.
+- Reinstall packages only when the lockfile hash differs from the baked one.
+- If the image can't be pulled (a fork, a first run), build it in the job. The result is the same,
+  only slower.
+- A stale image costs time, never correctness: the job always builds and tests the checkout.
 
 ## Architecture
 

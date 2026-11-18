@@ -4,6 +4,7 @@ import {
 	erc20Abi,
 	publicClient,
 	rollupAbi,
+	upgradeExecutorAbi,
 	validatorWalletAbi,
 	validatorWalletCreatorAbi,
 	walletClient,
@@ -18,7 +19,12 @@ interface EnsureValidatorWalletStakedParams {
 	validatorKey: `0x${string}`;
 	funderKey: `0x${string}`;
 	requiredStakeWei: bigint;
+	/** The rollup's UpgradeExecutor and a key it accepts calls from, to whitelist the wallet. */
+	upgradeExecutor: `0x${string}`;
+	ownerKey: `0x${string}`;
 }
+
+type WalletParams = Omit<EnsureValidatorWalletStakedParams, "funderKey" | "requiredStakeWei">;
 
 /** ABI fragments only needed for encodeFunctionData (batched wallet calls). */
 const stakeAbi = parseAbi([
@@ -30,9 +36,7 @@ const stakeAbi = parseAbi([
 const walletCreatedEvent = validatorWalletCreatorAbi[1];
 
 /** Find or create a validator wallet via the WalletCreator contract. */
-async function resolveWalletAddress(
-	params: EnsureValidatorWalletStakedParams,
-): Promise<`0x${string}`> {
+async function resolveWalletAddress(params: WalletParams): Promise<`0x${string}`> {
 	const pub = publicClient(params.parentRpc);
 	const validatorAccount = privateKeyToAccount(params.validatorKey);
 	const validator = walletClient(params.parentRpc, params.validatorKey);
@@ -142,6 +146,7 @@ export async function ensureValidatorWalletStaked(
 	const validator = walletClient(params.parentRpc, params.validatorKey);
 
 	const walletAddress = await resolveWalletAddress(params);
+	await ensureWalletWhitelisted(params, walletAddress);
 	await ensureWalletFunded(params, walletAddress);
 
 	const currentStake = await pub.readContract({
@@ -196,7 +201,67 @@ export async function ensureValidatorWalletStaked(
 		],
 		gas: 800000n,
 	});
-	await pub.waitForTransactionReceipt({ hash: txHash });
+	// The gas limit is fixed, so a revert is only visible in the receipt.
+	const receipt = await pub.waitForTransactionReceipt({ hash: txHash });
+	if (receipt.status !== "success") {
+		throw new Error(`Staking validator wallet ${walletAddress} reverted in ${txHash}`);
+	}
 
 	return walletAddress;
+}
+
+/**
+ * A v2.1 (pre-BoLD) rollup stakes ETH, which the legacy staker sends itself, so it only needs the
+ * wallet to exist and be whitelisted. Nitro finds the wallet by its WalletCreated log.
+ */
+export async function ensureValidatorWalletWhitelisted(
+	params: WalletParams,
+): Promise<`0x${string}`> {
+	const walletAddress = await resolveWalletAddress(params);
+	await ensureWalletWhitelisted(params, walletAddress);
+	return walletAddress;
+}
+
+/**
+ * The validator node acts through its smart-contract wallet (use-smart-contract-wallet), so the
+ * rollup must whitelist the wallet, not only the validator's own address, or every assertion
+ * reverts with NOT_VALIDATOR.
+ */
+async function ensureWalletWhitelisted(
+	params: WalletParams,
+	walletAddress: `0x${string}`,
+): Promise<void> {
+	const pub = publicClient(params.parentRpc);
+	const isValidator = await pub.readContract({
+		address: params.rollupAddress,
+		abi: rollupAbi,
+		functionName: "isValidator",
+		args: [walletAddress],
+	});
+	if (isValidator) {
+		return;
+	}
+	const ownerAccount = privateKeyToAccount(params.ownerKey);
+	const owner = walletClient(params.parentRpc, params.ownerKey);
+	const txHash = await owner.writeContract({
+		account: ownerAccount,
+		address: params.upgradeExecutor,
+		abi: upgradeExecutorAbi,
+		functionName: "executeCall",
+		args: [
+			params.rollupAddress,
+			encodeFunctionData({
+				abi: rollupAbi,
+				functionName: "setValidator",
+				args: [[walletAddress], [true]],
+			}),
+		],
+	});
+	const receipt = await pub.waitForTransactionReceipt({ hash: txHash });
+	if (receipt.status !== "success") {
+		throw new Error(`Whitelisting validator wallet ${walletAddress} reverted in ${txHash}`);
+	}
+	console.log(
+		`[init] Whitelisted validator wallet ${walletAddress} on rollup ${params.rollupAddress}`,
+	);
 }

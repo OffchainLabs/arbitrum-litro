@@ -2,11 +2,16 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { NITRO_CONTRACTS_REPOSITORY, gitBuildContext } from "../src/external-pins.js";
+import {
+	NITRO_CONTRACTS_REPOSITORY,
+	NITRO_CONTRACTS_V21_COMMIT,
+	gitBuildContext,
+} from "../src/external-pins.js";
 import { ensureContractDeployerImage } from "../src/init/chain-steps.js";
 import {
 	DEFAULT_NITRO_CONTRACTS_COMMIT,
 	DEFAULT_NITRO_CONTRACTS_RELEASE,
+	V21_DEPLOYER_IMAGE_SPEC,
 	resolveDeployerImageSpec,
 	resolveNitroContractsSource,
 	validateNitroContractsWorkspace,
@@ -167,6 +172,46 @@ describe("contract deployer Dockerfile", () => {
 		expect(contents).not.toContain("NITRO_CONTRACTS_BRANCH");
 		expect(contents).not.toContain("NITRO_CONTRACTS_SOURCE");
 		expect(contents).not.toContain("github.com/OffchainLabs/nitro-contracts");
-		expect(fs.existsSync(path.resolve("docker/contract-deployer-v2.1.Dockerfile"))).toBe(false);
+	});
+});
+
+describe("v2.1 contract deployer", () => {
+	const contents = fs.readFileSync(
+		path.resolve("docker/contract-deployer-v2.1.Dockerfile"),
+		"utf8",
+	);
+
+	it("builds the pinned v2.1.3 commit as a reusable image", () => {
+		expect(V21_DEPLOYER_IMAGE_SPEC).toEqual({
+			image: `nitro-testnode-contract-deployer-v2.1:v2.1.3-${NITRO_CONTRACTS_V21_COMMIT.slice(0, 12)}`,
+			dockerfile: "docker/contract-deployer-v2.1.Dockerfile",
+			buildContext: gitBuildContext(NITRO_CONTRACTS_REPOSITORY, NITRO_CONTRACTS_V21_COMMIT),
+			reuseImage: true,
+		});
+	});
+
+	it("consumes the named context and installs the v2.1 RollupCreator script", () => {
+		expect(contents).toContain("FROM scratch AS nitrocontracts");
+		expect(contents).toContain("COPY --from=nitrocontracts . /workspace/nitro-contracts");
+		expect(contents).not.toContain("github.com/OffchainLabs/nitro-contracts");
+		expect(contents).toContain(
+			"COPY deploy-rollup-creator-v2.1.ts /workspace/nitro-contracts/scripts/local-deployment/deployRollupCreatorOnly.ts",
+		);
+	});
+
+	it("passes the v2.1 build context and Dockerfile to docker build", async () => {
+		const { root } = makeProject();
+		const exec = vi.fn(() => ({ exitCode: 1 }));
+		const execOrThrow = vi.fn();
+		const commands = { exec: exec as never, execOrThrow: execOrThrow as never };
+		await ensureContractDeployerImage(
+			{ projectRoot: root } as never,
+			V21_DEPLOYER_IMAGE_SPEC,
+			false,
+			commands,
+		);
+		const args = execOrThrow.mock.calls[0]?.[1] as string[];
+		expect(args).toContain(`nitrocontracts=${V21_DEPLOYER_IMAGE_SPEC.buildContext}`);
+		expect(args).toContain(path.join(root, "docker/contract-deployer-v2.1.Dockerfile"));
 	});
 });

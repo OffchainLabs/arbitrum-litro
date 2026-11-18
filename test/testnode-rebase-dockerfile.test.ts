@@ -36,7 +36,12 @@ function isCovered(path: string, destinations: string[]): boolean {
 }
 
 describe("testnode-rebase.Dockerfile", () => {
-	const sourceArtifacts = copyDestinations(finalStageLines(testnodeDockerfile), () => true);
+	// Copies from the `nitro` stage are Nitro itself, which the rebase takes from
+	// the NITRO_IMAGE it is given instead.
+	const sourceArtifacts = copyDestinations(
+		finalStageLines(testnodeDockerfile),
+		(line) => !line.includes("--from=nitro"),
+	);
 	const rebaseArtifacts = copyDestinations(finalStageLines(rebaseDockerfile), (line) =>
 		line.includes("--from=testnode"),
 	);
@@ -47,6 +52,17 @@ describe("testnode-rebase.Dockerfile", () => {
 		expect(rebaseArtifacts.length).toBeGreaterThan(0);
 		expect(sourceArtifacts).toContain("/usr/local/bin/anvil");
 		expect(sourceArtifacts).toContain("/opt/arbitrum-testnode/runtime-config");
+		expect(sourceArtifacts).not.toContain("/usr/local/bin/nitro");
+	});
+
+	it("takes nitro from the Nitro image rather than shipping its base", () => {
+		const finalStage = finalStageLines(testnodeDockerfile).join("\n");
+		expect(testnodeDockerfile).toMatch(/^FROM \$\{NITRO_IMAGE\} AS nitro$/m);
+		expect(testnodeDockerfile).not.toMatch(/^FROM \$\{NITRO_IMAGE\}$/m);
+		expect(finalStage).toContain("COPY --from=nitro /usr/local/bin/nitro /usr/local/bin/nitro");
+		// The WASM module roots under the Nitro image's /home/user are 144 MB of the compressed
+		// image and unused: the validators run without a block validator.
+		expect(finalStage).not.toContain("/home/user /home/user");
 	});
 
 	it("labels rebase outputs with the same label every GC command filters on", () => {
@@ -87,9 +103,7 @@ describe("testnode-rebase.Dockerfile", () => {
 	});
 
 	it("reproduces the filesystem setup the entrypoint depends on", () => {
-		// yarn is a symlink created at build time, so it is not COPY-able; the
-		// entrypoint symlinks network files into /tokenbridge-data at boot.
-		expect(rebaseDockerfile).toContain("ln -sf /opt/yarn-v1.22.22/bin/yarn /usr/local/bin/yarn");
+		// The entrypoint symlinks network files into /tokenbridge-data at boot.
 		expect(rebaseDockerfile).toContain("mkdir -p /tokenbridge-data");
 	});
 

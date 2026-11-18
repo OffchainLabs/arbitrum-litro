@@ -6,6 +6,8 @@ import {
 	DEFAULT_NITRO_CONTRACTS_COMMIT,
 	DEFAULT_NITRO_CONTRACTS_RELEASE,
 	NITRO_CONTRACTS_REPOSITORY,
+	NITRO_CONTRACTS_V21_COMMIT,
+	NITRO_CONTRACTS_V21_RELEASE,
 } from "../external-pins.js";
 
 export { DEFAULT_NITRO_CONTRACTS_COMMIT, DEFAULT_NITRO_CONTRACTS_RELEASE };
@@ -150,3 +152,14 @@ export function resolveDeployerImageSpec(source: NitroContractsSource): Deployer
 		reuseImage: source.kind === "release",
 	};
 }
+
+/**
+ * The v2.1 RollupCreator for an nc2.1 L3. The L2 keeps the v3.2 contracts from
+ * resolveNitroContractsSource; only the L3 rollup is created with v2.1.
+ */
+export const V21_DEPLOYER_IMAGE_SPEC: DeployerImageSpec = {
+	image: `nitro-testnode-contract-deployer-v2.1:${NITRO_CONTRACTS_V21_RELEASE}-${NITRO_CONTRACTS_V21_COMMIT.slice(0, 12)}`,
+	dockerfile: "docker/contract-deployer-v2.1.Dockerfile",
+	buildContext: `${NITRO_CONTRACTS_REPOSITORY}#${NITRO_CONTRACTS_V21_COMMIT}`,
+	reuseImage: true,
+};

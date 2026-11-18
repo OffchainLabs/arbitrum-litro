@@ -136,9 +136,19 @@ describe("published bundle metadata", () => {
 		expect(dockerfile).toContain("io.arbitrum.testnode.token-bridge.commit");
 	});
 
+	it("builds each row's snapshot with that row's Nitro contracts version", () => {
+		expect(workflow).toContain(
+			"resolvePublishMatrix(process.env.VARIANT_FILTER, process.env.VERSION_FILTER)",
+		);
+		expect(workflow).toContain("NC_VERSION: ${{ matrix.contractsVersion }}");
+		expect(workflow).toContain('--nitro-contracts-version "$NC_VERSION"');
+		expect(workflow).toContain('--nitro-contracts-version "${{ matrix.contractsVersion }}"');
+	});
+
 	it("persists Anvil state for derived bundle commits", () => {
 		expect(entrypoint).toContain('--state "$DATA_ROOT/anvil-state/state.json"');
 		expect(entrypoint).toContain("--state-interval 1");
+		expect(entrypoint).toContain("--max-persisted-states 128");
 	});
 
 	it("publishes latest aliases only after every release image succeeds", () => {
@@ -341,6 +351,15 @@ describe("buildActionTestnodeState", () => {
 		expect(state.rpcUrls.l1).toBe("http://127.0.0.1:8545");
 		expect(state.rpcUrls.l2).toBe("http://127.0.0.1:8547");
 		expect(state.rpcUrls.l3).toBe("http://127.0.0.1:3347");
+	});
+
+	it("runs CI testnodes with 250ms L1 blocks", () => {
+		const state = buildActionTestnodeState({
+			l3Enabled: "true",
+			runnerTemp: "/tmp/runner",
+			version: "v1.2.3",
+		});
+		expect(testnodeDockerRunArgs(state)).toContain("TESTNODE_L1_BLOCK_TIME=0.25");
 	});
 
 	it("omits l3-specific outputs for l2", () => {

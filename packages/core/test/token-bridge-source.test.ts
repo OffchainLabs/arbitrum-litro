@@ -115,9 +115,9 @@ describe("Token Bridge Docker sources", () => {
 	const deployer = fs.readFileSync(path.resolve("docker/contract-deployer.Dockerfile"), "utf8");
 
 	it("uses named contexts instead of fetching independent refs", () => {
+		expect(tokenbridge).toContain("FROM scratch AS tokenbridge");
+		expect(tokenbridge).toContain("COPY --from=tokenbridge . /workspace");
 		for (const contents of [tokenbridge, testnode]) {
-			expect(contents).toContain("FROM scratch AS tokenbridge");
-			expect(contents).toContain("COPY --from=tokenbridge . /workspace");
 			expect(contents).not.toContain("github.com/OffchainLabs/token-bridge-contracts");
 		}
 	});
