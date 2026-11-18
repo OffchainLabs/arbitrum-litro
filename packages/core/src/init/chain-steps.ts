@@ -8,6 +8,7 @@ import { writeChainConfig } from "../chain-config.js";
 import { clampDepositAmount } from "../deposit-amount.js";
 import { composeRestart, composeUp, waitForRpc } from "../docker.js";
 import { exec, execOrThrow } from "../exec.js";
+import { bridgeL1TokenToL2, readParentGatewayRouter } from "../fee-token-bridge.js";
 import { deployFeeTokenPricer } from "../fee-token-pricer.js";
 import { deployTestErc20, testErc20Abi } from "../fee-token.js";
 import { ZERO_ADDRESS } from "../init-helpers.js";
@@ -534,28 +535,47 @@ async function fundL3DeployerAccounts(): Promise<void> {
 	}
 }
 
+// The fee token lives on L1 and is bridged to L2 through the standard gateway, so the L3's
+// native token on L2 has an L1 counterpart that L1-to-L3 bridging can use.
 async function deployCustomFeeToken(
+	configDir: string,
 	feeTokenDecimals?: number,
 ): Promise<{ feeTokenAddress?: string; feeTokenPricerAddress?: string }> {
 	if (feeTokenDecimals === undefined) {
 		return {};
 	}
 	const mintAmount = 10n ** BigInt(feeTokenDecimals) * 1_000_000_000n;
-	const feeTokenAddress = await deployTestErc20({
-		rpcUrl: L2_RPC,
+	const holders = [
+		accounts.userFeeTokenDeployer.address,
+		accounts.funnel.address,
+		accounts.l3owner.address,
+	];
+	const l1FeeToken = await deployTestErc20({
+		rpcUrl: L1_RPC,
 		deployerKey: accounts.userFeeTokenDeployer.privateKey,
 		name: `TestCustomFeeToken${feeTokenDecimals}`,
 		symbol: `FEE${feeTokenDecimals}`,
 		decimals: feeTokenDecimals,
 		initialMintAddresses: [
+			...holders,
+			// Funds the L2 copies below.
 			accounts.userFeeTokenDeployer.address,
-			accounts.funnel.address,
-			accounts.l3owner.address,
+			accounts.userFeeTokenDeployer.address,
+			accounts.userFeeTokenDeployer.address,
 		],
 		mintAmountPerAddress: mintAmount,
 	});
+	const feeTokenAddress = await bridgeL1TokenToL2({
+		l1RpcUrl: L1_RPC,
+		l2RpcUrl: L2_RPC,
+		parentGatewayRouter: readParentGatewayRouter(configDir),
+		l1Token: l1FeeToken,
+		senderKey: accounts.userFeeTokenDeployer.privateKey,
+		recipients: holders,
+		amountPerRecipient: mintAmount,
+	});
 	console.log(
-		`[init] Custom fee token deployed at ${feeTokenAddress} with ${feeTokenDecimals} decimals`,
+		`[init] Custom fee token ${l1FeeToken} on L1, ${feeTokenAddress} on L2, ${feeTokenDecimals} decimals`,
 	);
 	// Custom-gas Rollup chains require a non-zero feeTokenPricer.
 	// Deploy a constant-rate pricer on the parent chain (L2), using
@@ -616,8 +636,11 @@ async function deployL3Rollup(
 	});
 	await applyGasEstimationWorkaround();
 
-	// If custom fee token is requested, deploy an ERC20 and pricer on L2.
-	const { feeTokenAddress, feeTokenPricerAddress } = await deployCustomFeeToken(feeTokenDecimals);
+	// If custom fee token is requested, deploy an L1 ERC20, bridge it to L2, and deploy a pricer on L2.
+	const { feeTokenAddress, feeTokenPricerAddress } = await deployCustomFeeToken(
+		runtime.configDir,
+		feeTokenDecimals,
+	);
 
 	const rollupCreatorDeployment = await deployRollupCreatorViaDocker(runtime, {
 		hostParentRpc: L2_RPC,

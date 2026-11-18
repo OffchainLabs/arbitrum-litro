@@ -1,7 +1,8 @@
 name: Init
 
-# Generates an l3-eth snapshot with `init`, the way Publish Testnode does, then
-# boots it through the action and completes a withdrawal on each rollup. The
+# Generates l3-eth and l3-custom-18 snapshots with `init`, the way Publish Testnode
+# does, then boots each through the action. l3-eth completes a withdrawal on each
+# rollup; l3-custom-18 checks the L3 fee token on L2 is bridged from an L1 token. The
 # other workflows boot a pre-built snapshot, so only this one catches a change
 # to init that leaves published images unable to confirm assertions.
 on:
@@ -20,6 +21,14 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: l3-eth
+            fee-token-decimals: ""
+          - variant: l3-custom-18
+            fee-token-decimals: "18"
     env:
       TOKEN_BRIDGE_LOCAL_DIR: ${{ github.workspace }}/../token-bridge-contracts
       NITRO_CONTRACTS_LOCAL_DIR: ${{ github.workspace }}/../nitro-contracts
@@ -74,11 +83,15 @@ jobs:
 
       # Same retry as Publish Testnode: init intermittently exits before capturing.
       - name: Generate snapshot (init, retry until captured)
+        env:
+          DECIMALS: ${{ matrix.fee-token-decimals }}
         run: |
           set -uo pipefail
+          EXTRA=""
+          if [ -n "$DECIMALS" ]; then EXTRA="--fee-token-decimals $DECIMALS"; fi
           for attempt in 1 2 3; do
             set +e
-            timeout 1500 pnpm dev init --capture-id "$SNAPSHOT_ID" --rebuild --skip-post-capture-verify
+            timeout 1500 pnpm dev init --capture-id "$SNAPSHOT_ID" --rebuild --skip-post-capture-verify $EXTRA
             set -e
             if [ -f "config/snapshots/$SNAPSHOT_ID/manifest.json" ] &&
               [ -s "config/snapshots/$SNAPSHOT_ID/anvil-state/state.json" ]; then
@@ -92,20 +105,20 @@ jobs:
           docker compose -f docker/docker-compose.yaml -p arbitrum-testnode down -v || true
 
       - name: Prepare testnode context
-        run: node scripts/ci/prepare-testnode-context.mjs --variant l3-eth --snapshot-id "$SNAPSHOT_ID"
+        run: node scripts/ci/prepare-testnode-context.mjs --variant ${{ matrix.variant }} --snapshot-id "$SNAPSHOT_ID"
 
       - name: Build local testnode image
         run: >-
           docker build
           --build-context tokenbridge=${{ env.TOKEN_BRIDGE_DOCKER_CONTEXT }}
           --build-arg BUNDLE_VERSION=${{ github.sha }}
-          --build-arg BUNDLE_VARIANT=l3-eth
+          --build-arg BUNDLE_VARIANT=${{ matrix.variant }}
           --build-arg NITRO_CONTRACTS_REF=${{ env.NITRO_CONTRACTS_REF }}
           --build-arg NITRO_CONTRACTS_COMMIT=${{ env.NITRO_CONTRACTS_COMMIT }}
           --build-arg TOKENBRIDGE_REF=${{ env.TOKEN_BRIDGE_REF }}
           --build-arg TOKENBRIDGE_COMMIT=${{ env.TOKEN_BRIDGE_COMMIT }}
           -f docker/testnode.Dockerfile
-          -t local/arbitrum-testnode:${{ github.sha }}-nc3.2-l3-eth
+          -t local/arbitrum-testnode:${{ github.sha }}-nc3.2-${{ matrix.variant }}
           .
 
       - name: Run action
@@ -114,6 +127,7 @@ jobs:
         with:
           image-repository: local/arbitrum-testnode
           l3-enabled: true
+          fee-token-decimals: ${{ matrix.fee-token-decimals }}
           nitro-contracts-version: v3.2
           version: ${{ github.sha }}
 
@@ -147,4 +161,25 @@ jobs:
           ! docker logs "$CT" 2>&1 | grep -q NOT_VALIDATOR
 
       - name: Withdrawals complete on L2 and L3
+        if: matrix.variant == 'l3-eth'
         run: pnpm exec vitest run -c vitest.integration.config.ts packages/core/test/integration/withdrawal.test.ts
+
+      - name: The L3 fee token on L2 is bridged from L1
+        if: matrix.fee-token-decimals != ''
+        env:
+          NET: ${{ steps.action.outputs.local-network-path }}
+          L1: ${{ steps.action.outputs.l1-rpc-url }}
+          L2: ${{ steps.action.outputs.l2-rpc-url }}
+          DECIMALS: ${{ matrix.fee-token-decimals }}
+        run: |
+          set -euo pipefail
+          l2_token=$(jq -r .l3Network.nativeToken "$NET")
+          l1_token=$(cast call "$l2_token" 'l1Address()(address)' --rpc-url "$L2")
+          echo "L3 fee token: $l2_token on L2, $l1_token on L1"
+          test "$(cast code "$l1_token" --rpc-url "$L1")" != 0x
+          test "$(cast call "$l1_token" 'decimals()(uint8)' --rpc-url "$L1")" = "$DECIMALS"
+          test "$(cast call "$l2_token" 'decimals()(uint8)' --rpc-url "$L2")" = "$DECIMALS"
+          router=$(jq -r .l2Network.tokenBridge.parentGatewayRouter "$NET")
+          test "$(cast call "$router" 'calculateL2TokenAddress(address)(address)' "$l1_token" --rpc-url "$L1" | tr A-F a-f)" = "$(echo "$l2_token" | tr A-F a-f)"
+          # The key arbitrum-sdk's L1-to-L3 tests fund from holds fee tokens on L1.
+          test "$(cast call "$l1_token" 'balanceOf(address)(uint256)' 0x9205AE47eC1982d06a4C57753060B763850b3Cd3 --rpc-url "$L1" | cut -d' ' -f1)" != 0
