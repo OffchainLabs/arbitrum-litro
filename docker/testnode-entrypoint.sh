@@ -84,6 +84,17 @@ echo "waiting for anvil on port 8545..."
 wait_for_listen 2161 anvil
 echo "anvil ready"
 
+# anvil's block builder skips a transaction that does not fit the block's remaining gas, then drops
+# a later transaction from the same sender for its nonce gap. At 30M, a burst of deploys from one
+# account (arbitrum-chain-sdk's token bridge creator, ~36M) loses its last one. 100M avoids that.
+# Set by RPC: anvil keeps the gas limit saved in the loaded state and ignores --gas-limit.
+curl -sf -H 'content-type: application/json' \
+	-d '{"jsonrpc":"2.0","id":1,"method":"evm_setBlockGasLimit","params":["0x5f5e100"]}' \
+	http://127.0.0.1:8545 >/dev/null || {
+	echo "anvil: evm_setBlockGasLimit failed" >&2
+	exit 1
+}
+
 start_background env HOME="$DATA_ROOT/sequencer" /usr/local/bin/nitro \
 	--validation.wasm.allowed-wasm-module-roots "$NITRO_WASM_ROOTS" \
 	--conf.file="$CONFIG_ROOT/l2-nodeConfig.json" \
