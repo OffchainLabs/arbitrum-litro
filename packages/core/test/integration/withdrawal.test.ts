@@ -46,7 +46,6 @@ describe("withdrawal speed", () => {
 			privateKey: accounts.funnel.privateKey,
 			amount: parseEther("0.01"),
 			outboxAddress,
-			pollIntervalMs: 1000,
 			timeoutMs: 30_000,
 		});
 
@@ -66,7 +65,6 @@ describe("withdrawal speed", () => {
 				privateKey: accounts.funnel.privateKey,
 				amount: parseEther("0.001"),
 				outboxAddress,
-				pollIntervalMs: 1000,
 				timeoutMs: 30_000,
 			});
 

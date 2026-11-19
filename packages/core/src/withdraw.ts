@@ -20,7 +20,7 @@ export async function executeWithdrawal(params: {
 		privateKey,
 		amount,
 		outboxAddress,
-		pollIntervalMs = 1000,
+		pollIntervalMs = 250,
 		timeoutMs = 30_000,
 	} = params;
 
@@ -40,8 +40,11 @@ export async function executeWithdrawal(params: {
 		value: amount,
 	});
 
+	// viem polls every 4s by default (these chains declare no block time); the testnode answers
+	// in under a second, so the default dominated the measured withdrawal time.
 	const withdrawReceipt = await childPublic.waitForTransactionReceipt({
 		hash: withdrawHash,
+		pollingInterval: pollIntervalMs,
 	});
 
 	// 2. Parse L2ToL1Tx event
@@ -111,7 +114,10 @@ export async function executeWithdrawal(params: {
 
 	// 6. Execute the withdrawal on parent chain
 	const executeTxHash = await parentWallet.writeContract(executeArgs);
-	await parentPublic.waitForTransactionReceipt({ hash: executeTxHash });
+	await parentPublic.waitForTransactionReceipt({
+		hash: executeTxHash,
+		pollingInterval: pollIntervalMs,
+	});
 
 	return {
 		durationMs: Date.now() - startMs,
