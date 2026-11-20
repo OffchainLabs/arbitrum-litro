@@ -158,6 +158,11 @@ jobs:
         run: |
           set -euo pipefail
           # Both validators run with the same key, so they can act as the same wallet address.
+          # The action returns once the RPCs answer; the validators can log a moment later.
+          for _ in $(seq 60); do
+            [ "$(docker logs "$CT" 2>&1 | grep -c 'running as validator')" -ge 2 ] && break
+            sleep 1
+          done
           test "$(docker logs "$CT" 2>&1 | grep -c 'running as validator')" -ge 2
           wallets=$(docker logs "$CT" 2>&1 | grep -oE 'actingAsWallet=0x[0-9a-fA-F]{40}' | cut -d= -f2 | sort -u)
           echo "validator wallets: $wallets"
