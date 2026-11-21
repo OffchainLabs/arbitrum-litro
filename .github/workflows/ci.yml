@@ -4,6 +4,8 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Nitro Release dispatches this on the branches it opens.
+  workflow_dispatch:
 
 permissions:
   contents: read

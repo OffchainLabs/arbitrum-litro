@@ -1,0 +1,81 @@
+name: Nitro Release
+
+# Daily: when OffchainLabs/nitro has a stable release newer than the
+# NITRO_IMAGE default in docker/testnode.Dockerfile, open a PR that moves the
+# pin and run CI and Test Action on it. One PR per Nitro version; a version
+# whose branch already exists is skipped.
+on:
+  schedule:
+    - cron: "17 13 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: nitro-release
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+
+      - name: Check for a newer Nitro release
+        id: bump
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/ci/bump-nitro.mjs
+
+      - name: Skip versions that already have a branch
+        id: branch
+        if: steps.bump.outputs.changed == 'true'
+        run: |
+          branch="ci/nitro-${{ steps.bump.outputs.latest }}"
+          echo "name=$branch" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --heads origin "$branch" > /dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "$branch already exists; nothing to do"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open the PR
+        if: steps.bump.outputs.changed == 'true' && steps.branch.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.branch.outputs.name }}
+          CURRENT: ${{ steps.bump.outputs.current }}
+          LATEST: ${{ steps.bump.outputs.latest }}
+          IMAGE: ${{ steps.bump.outputs.image }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$BRANCH"
+          git commit -am "chore: move the testnode image to Nitro $LATEST"
+          git push origin "$BRANCH"
+          gh pr create --base main --head "$BRANCH" \
+            --title "chore: move the testnode image to Nitro $LATEST" \
+            --body "Moves the \`NITRO_IMAGE\` default in \`docker/testnode.Dockerfile\` from $CURRENT to \`$IMAGE\`.
+
+          Release notes: https://github.com/OffchainLabs/nitro/releases/tag/$LATEST
+
+          Opened by the Nitro Release workflow. A push with the workflow token starts no \`pull_request\` runs, so the workflow dispatched CI and Test Action on this branch; their results show on the head commit."
+
+      # GITHUB_TOKEN pushes trigger no pull_request workflows; dispatch is the
+      # one event that token may start.
+      - name: Run CI and Test Action on the branch
+        if: steps.bump.outputs.changed == 'true' && steps.branch.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.branch.outputs.name }}
+        run: |
+          gh workflow run ci.yml --ref "$BRANCH"
+          gh workflow run test-action.yml --ref "$BRANCH"
