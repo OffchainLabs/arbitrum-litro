@@ -8,6 +8,7 @@ import {
 	buildStartTestnodeState,
 	collectContainerDiagnostics,
 	describeContainerState,
+	describeRpcFailure,
 	diagnosticLines,
 	exportTestnodeConfig,
 	filterContainerLogs,
@@ -253,6 +254,8 @@ describe("waitForTestnodeReady", () => {
 			version: "v1.2.3",
 		});
 	const l2 = stateFor({ l3Enabled: false });
+	const REFUSED = "curl: (7) Failed to connect to 127.0.0.1 port 8547: Connection refused";
+	const answered = (ok: boolean) => (ok ? undefined : REFUSED);
 
 	afterEach(() => {
 		vi.useRealTimers();
@@ -262,7 +265,7 @@ describe("waitForTestnodeReady", () => {
 		const probed: string[] = [];
 		const probe = (url: string) => {
 			probed.push(url);
-			return true;
+			return undefined;
 		};
 
 		waitForTestnodeReady(l2, 1000, { inspect: running, probe, sleep: vi.fn() });
@@ -287,7 +290,7 @@ describe("waitForTestnodeReady", () => {
 		expect(() =>
 			waitForTestnodeReady(l2, 120_000, {
 				inspect: () => exited(137),
-				probe: (url) => url.endsWith(":8545"),
+				probe: (url) => answered(url.endsWith(":8545")),
 				sleep,
 			}),
 		).toThrow(
@@ -300,7 +303,7 @@ describe("waitForTestnodeReady", () => {
 		expect(() =>
 			waitForTestnodeReady(l2, 0, {
 				inspect: () => exited(139),
-				probe: () => false,
+				probe: () => REFUSED,
 				sleep: vi.fn(),
 			}),
 		).toThrow(/stopped while waiting/);
@@ -318,10 +321,10 @@ describe("waitForTestnodeReady", () => {
 		expect(() =>
 			waitForTestnodeReady(l2, 3000, {
 				inspect: running,
-				probe: (url) => url.endsWith(":8545") && ++l1Probes >= 3,
+				probe: (url) => answered(url.endsWith(":8545") && ++l1Probes >= 3),
 				sleep,
 			}),
-		).toThrow("RPC at http://127.0.0.1:8547 not ready after 3000ms");
+		).toThrow(`RPC at http://127.0.0.1:8547 not ready after 3000ms; last attempt: ${REFUSED}`);
 		expect(sleep).toHaveBeenCalledTimes(3);
 	});
 
@@ -331,11 +334,21 @@ describe("waitForTestnodeReady", () => {
 
 		waitForTestnodeReady(stateFor({ l3Enabled: false, fastFeedEnabled: true }), 120_000, {
 			inspect: () => containerState({ health: health.shift() ?? "healthy" }),
-			probe: () => true,
+			probe: () => undefined,
 			sleep,
 		});
 
 		expect(health).toEqual([]);
+	});
+
+	it("names the health status when the healthcheck never passes", () => {
+		expect(() =>
+			waitForTestnodeReady(stateFor({ l3Enabled: false, fastFeedEnabled: true }), 0, {
+				inspect: () => containerState({ health: "unhealthy" }),
+				probe: () => undefined,
+				sleep: vi.fn(),
+			}),
+		).toThrow("the container healthcheck not ready after 0ms; last attempt: health is unhealthy");
 	});
 
 	it("keeps waiting through a transient inspect failure", () => {
@@ -351,7 +364,7 @@ describe("waitForTestnodeReady", () => {
 				l1Up = true;
 				return containerState();
 			},
-			probe: () => l1Up,
+			probe: () => answered(l1Up),
 			sleep: vi.fn(),
 		});
 
@@ -364,7 +377,7 @@ describe("waitForTestnodeReady", () => {
 		});
 
 		expect(() =>
-			waitForTestnodeReady(l2, 120_000, { inspect, probe: () => false, sleep: vi.fn() }),
+			waitForTestnodeReady(l2, 120_000, { inspect, probe: () => REFUSED, sleep: vi.fn() }),
 		).toThrow(
 			"cannot inspect container arbitrum-testnode-l2 while waiting for RPC at http://127.0.0.1:8545: Cannot connect to the Docker daemon",
 		);
@@ -383,11 +396,34 @@ describe("waitForTestnodeReady", () => {
 				}
 				return containerState();
 			},
-			probe: () => passes >= 6,
+			probe: () => answered(passes >= 6),
 			sleep: vi.fn(),
 		});
 
 		expect(outcomes).toEqual([]);
+	});
+});
+
+describe("describeRpcFailure", () => {
+	it("gives curl's own error", () => {
+		const error = Object.assign(new Error("Command failed: curl"), {
+			status: 22,
+			stderr: "curl: (22) The requested URL returned error: 503\n",
+		});
+
+		expect(describeRpcFailure(error)).toBe("curl: (22) The requested URL returned error: 503");
+	});
+
+	it("falls back to curl's exit code when it wrote nothing", () => {
+		expect(describeRpcFailure(Object.assign(new Error("x"), { status: 7, stderr: "" }))).toBe(
+			"curl exited with code 7",
+		);
+	});
+
+	it("says the probe timed out", () => {
+		expect(describeRpcFailure(Object.assign(new Error("x"), { code: "ETIMEDOUT" }))).toBe(
+			"no answer within 5s",
+		);
 	});
 });
 

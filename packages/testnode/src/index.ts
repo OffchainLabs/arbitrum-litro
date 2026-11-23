@@ -32,6 +32,7 @@ export {
 	IMAGE_PULL_TIMEOUT_MS,
 	defaultActionOutputDir,
 	defaultStartOutputDir,
+	describeRpcFailure,
 	exportTestnodeConfig,
 	FAST_FEED_HOST_PORT,
 	findAsset,

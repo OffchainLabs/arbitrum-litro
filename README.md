@@ -723,7 +723,9 @@ knowing:
 - **`startup-timeout-seconds` is one budget for readiness**: the chain RPCs in
   order, then the container healthcheck when Fast Feed or PGA rounds are on.
   Each wait gets what the previous ones left. Pulling the image, starting the
-  container and exporting config have their own limits.
+  container and exporting config have their own limits. A timeout says why the
+  last attempt failed, for example
+  `RPC at http://127.0.0.1:8547 not ready after 360000ms; last attempt: curl: (7) Failed to connect …`.
 - **A config-export failure still fails the step, even though the node is
   healthy.** The error says `config export failed after successful boot` and the
   container's logs are deliberately not dumped; the container state is still

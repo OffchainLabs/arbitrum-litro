@@ -58,6 +58,7 @@ const DOCKER_QUERY_TIMEOUT_MS = 10_000;
 export const IMAGE_PULL_TIMEOUT_MS = 900_000;
 
 const MAX_CONSECUTIVE_INSPECT_FAILURES = 3;
+const RPC_PROBE_TIMEOUT_MS = 5000;
 
 const CONFIG_EXPORT_FAILED = "CONFIG_EXPORT_FAILED";
 
@@ -761,16 +762,33 @@ function daemonBuilderEnv() {
 	}
 }
 
-/** @param {string} url */
-function rpcAnswers(url) {
+/**
+ * Why one probe got no answer, from the error `execFileSync("curl", …)` threw for it.
+ *
+ * @param {unknown} error
+ */
+export function describeRpcFailure(error) {
+	const { code, status, stderr } =
+		/** @type {{ code?: string; status?: number | null; stderr?: string }} */ (error ?? {});
+	if (code === "ETIMEDOUT") {
+		return `no answer within ${RPC_PROBE_TIMEOUT_MS / 1000}s`;
+	}
+	return (typeof stderr === "string" && stderr.trim()) || `curl exited with code ${status}`;
+}
+
+/**
+ * @param {string} url
+ * @returns {string | undefined} why the RPC did not answer, or undefined when it did
+ */
+function rpcFailure(url) {
 	const body = JSON.stringify({ id: 1, jsonrpc: "2.0", method: "eth_chainId", params: [] });
 	try {
 		execFileSync(
 			"curl",
-			["-sf", "-X", "POST", "-H", "Content-Type: application/json", "-d", body, url],
-			{ stdio: ["ignore", "pipe", "pipe"], timeout: 5000 },
+			["-sSf", "-X", "POST", "-H", "Content-Type: application/json", "-d", body, url],
+			{ encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: RPC_PROBE_TIMEOUT_MS },
 		);
-		return true;
+		return undefined;
 	} catch (error) {
 		// curl's own verdict leaves `code` unset. Any other spawn error but ETIMEDOUT means
 		// probing itself is broken, which no amount of waiting fixes.
@@ -778,8 +796,25 @@ function rpcAnswers(url) {
 		if (typeof code === "string" && code !== "ETIMEDOUT") {
 			throw new Error(`cannot probe ${url}: curl failed to run (${code})`);
 		}
-		return false;
+		return describeRpcFailure(error);
 	}
+}
+
+/**
+ * @param {string} containerName
+ * @param {typeof inspectContainer} inspect
+ */
+function healthFailure(containerName, inspect) {
+	let health;
+	try {
+		health = inspect(containerName).health;
+	} catch (error) {
+		return `inspect failed: ${error instanceof Error ? error.message : String(error)}`;
+	}
+	if (health === "healthy") {
+		return undefined;
+	}
+	return health ? `health is ${health}` : "no health status yet";
 }
 
 function sleepBriefly() {
@@ -789,7 +824,7 @@ function sleepBriefly() {
 /**
  * @typedef {{
  *   inspect?: typeof inspectContainer;
- *   probe?: (url: string) => boolean;
+ *   probe?: (url: string) => string | undefined;
  *   sleep?: () => void;
  * }} ReadinessHooks
  */
@@ -799,24 +834,18 @@ function sleepBriefly() {
  *
  * @param {TestnodeState} state
  * @param {Required<ReadinessHooks>} hooks
- * @returns {Array<{ what: string; ready: () => boolean }>}
+ * @returns {Array<{ what: string; failure: () => string | undefined }>}
  */
 function readinessChecks(state, { inspect, probe }) {
 	const rpcs = [state.rpcUrls.l1, state.rpcUrls.l2];
 	if (state.variantDefinition.l3Enabled) {
 		rpcs.push(state.rpcUrls.l3);
 	}
-	const checks = rpcs.map((url) => ({ what: `RPC at ${url}`, ready: () => probe(url) }));
+	const checks = rpcs.map((url) => ({ what: `RPC at ${url}`, failure: () => probe(url) }));
 	if (needsHealthyContainer(state.sequencer)) {
 		checks.push({
 			what: "the container healthcheck",
-			ready: () => {
-				try {
-					return inspect(state.containerName).health === "healthy";
-				} catch {
-					return false;
-				}
-			},
+			failure: () => healthFailure(state.containerName, inspect),
 		});
 	}
 	return checks;
@@ -834,17 +863,14 @@ function readinessChecks(state, { inspect, probe }) {
 export function waitForTestnodeReady(state, timeoutMs, hooks = {}) {
 	const resolved = {
 		inspect: hooks.inspect ?? inspectContainer,
-		probe: hooks.probe ?? rpcAnswers,
+		probe: hooks.probe ?? rpcFailure,
 		sleep: hooks.sleep ?? sleepBriefly,
 	};
 	const deadline = Date.now() + timeoutMs;
 	const pending = readinessChecks(state, resolved);
 	const assertRunning = livenessCheck(state.containerName, resolved.inspect);
 	for (;;) {
-		while (pending[0]?.ready()) {
-			pending.shift();
-		}
-		const [waiting] = pending;
+		const waiting = firstUnready(pending);
 		if (!waiting) {
 			return;
 		}
@@ -852,9 +878,30 @@ export function waitForTestnodeReady(state, timeoutMs, hooks = {}) {
 		// a timeout, even on the last pass.
 		assertRunning(waiting.what);
 		if (Date.now() >= deadline) {
-			throw new Error(`${waiting.what} not ready after ${timeoutMs}ms`);
+			throw new Error(
+				`${waiting.what} not ready after ${timeoutMs}ms; last attempt: ${waiting.failure}`,
+			);
 		}
 		resolved.sleep();
+	}
+}
+
+/**
+ * Drops the leading checks that now pass and returns the first that does not, with why.
+ *
+ * @param {Array<{ what: string; failure: () => string | undefined }>} pending
+ */
+function firstUnready(pending) {
+	for (;;) {
+		const [check] = pending;
+		if (!check) {
+			return undefined;
+		}
+		const failure = check.failure();
+		if (failure !== undefined) {
+			return { what: check.what, failure };
+		}
+		pending.shift();
 	}
 }
 
