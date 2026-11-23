@@ -31,7 +31,6 @@ import {
 	rollupAbi,
 	walletClient,
 } from "./rpc.js";
-import { resolveTokenBridgeSource } from "./token-bridge-source.js";
 
 const ARB_OWNER = "0x0000000000000000000000000000000000000070" as const;
 const TOKEN_BRIDGE_CREATOR_SCRIPT = "./scripts/deployment/deployTokenBridgeCreator.ts";
@@ -218,19 +217,6 @@ async function readAddressOrZero(
 	rpcUrl: string,
 ): Promise<string> {
 	return readContractOrZero(contractAddress, rollupAbi, functionName, rpcUrl);
-}
-
-/**
- * The deploy path shells out to the resolved checkout's `ts-node`. Suites gate on
- * this so a machine without it reports skips rather than permanent red.
- */
-export function hasTokenBridgeDeps(): boolean {
-	try {
-		assertTokenBridgeDepsPresent(resolveTokenBridgeSource(process.cwd()).path);
-		return true;
-	} catch {
-		return false;
-	}
 }
 
 /**

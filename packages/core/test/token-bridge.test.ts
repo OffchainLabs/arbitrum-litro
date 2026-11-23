@@ -13,7 +13,6 @@ import {
 	assertTokenBridgeDepsPresent,
 	deployL2L3TokenBridge,
 	getL2ChildWeth,
-	hasTokenBridgeDeps,
 	parseTokenBridgeCreatorAddress,
 	transferL3OwnershipToOrbitUpgradeExecutor,
 } from "../src/token-bridge.js";
@@ -201,8 +200,7 @@ describe("parseTokenBridgeCreatorAddress", () => {
 	});
 });
 
-// Needs the sibling token-bridge-contracts checkout; see hasTokenBridgeDeps.
-describe.skipIf(!hasTokenBridgeDeps())("deployL2L3TokenBridge", () => {
+describe("deployL2L3TokenBridge", () => {
 	let tmpDir: string;
 	let previousSdkPath: string | undefined;
 	let previousPortalPath: string | undefined;
