@@ -10,18 +10,6 @@ nitro_supports() {
 	printf "%s" "$NITRO_HELP" | grep -q -- "$1"
 }
 
-# A process started with start_background that has exited cannot make anything ready, so a wait
-# stops at once instead of at its deadline, and the container exits with that process's error as
-# the last lines of its log.
-exit_if_a_process_exited() {
-	for pid in ${PIDS:-}; do
-		if ! kill -0 "$pid" 2>/dev/null; then
-			echo "$1: process $pid exited while waiting for it" >&2
-			exit 1
-		fi
-	done
-}
-
 # Port numbers are matched in /proc/net/tcp as hex, in the LISTEN state (0A), so a client that is
 # only connecting to the port does not count.
 wait_for_listen() {
@@ -116,7 +104,7 @@ sequencer_feature_args() {
 # ready, so the config server (and with it the container healthcheck) starts only after them.
 start_sequencer_features() {
 	if [ "${TESTNODE_FAST_FEED:-}" = "true" ]; then
-		start_background node "$FAST_FEED_RELAY"
+		start_background fast-feed-relay node "$FAST_FEED_RELAY"
 		# 9646 = 0x25AE
 		wait_for_listen 25AE "fast feed relay"
 	fi

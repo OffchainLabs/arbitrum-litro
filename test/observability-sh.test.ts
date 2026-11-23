@@ -35,7 +35,9 @@ describe("observability.sh", () => {
 		expect(nitroArgs({ TESTNODE_METRICS: "true" })).toBe(
 			"--metrics --metrics-server.addr=0.0.0.0 --metrics-server.port=6072",
 		);
-		expect(started({ TESTNODE_METRICS: "true" })).toBe("node /bin-dir/chain-exporter.mjs");
+		expect(started({ TESTNODE_METRICS: "true" })).toBe(
+			"chain-exporter node /bin-dir/chain-exporter.mjs",
+		);
 	});
 
 	it("serves pprof on its own port, alone or beside metrics", () => {

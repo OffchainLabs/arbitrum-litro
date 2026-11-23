@@ -5,35 +5,10 @@ CONFIG_ROOT="/opt/arbitrum-testnode/runtime-config"
 DATA_ROOT="/opt/arbitrum-testnode/runtime"
 VARIANT="${TESTNODE_VARIANT:-l2}"
 NITRO_WASM_ROOTS="/home/user/nitro-legacy/machines,/home/user/target/machines"
-PIDS=""
 SEQUENCER_HTTP_API="net,web3,eth,txpool,debug"
 TESTNODE_BIN="/opt/arbitrum-testnode/bin"
 
-start_background() {
-	"$@" &
-	PIDS="$PIDS $!"
-}
-
-cleanup() {
-	for pid in $PIDS; do
-		kill "$pid" 2>/dev/null || true
-	done
-	wait || true
-}
-
-monitor_pids() {
-	while true; do
-		for pid in $PIDS; do
-			if ! kill -0 "$pid" 2>/dev/null; then
-				wait "$pid" || true
-				exit 1
-			fi
-		done
-		sleep 1
-	done
-}
-
-trap cleanup EXIT INT TERM
+. "$TESTNODE_BIN/processes.sh"
 
 echo "state file: $DATA_ROOT/anvil-state"
 ls -la "$DATA_ROOT/anvil-state" 2>&1 || echo "state file missing!"
@@ -76,7 +51,7 @@ if nitro_supports "--node.bold.state-provider-config.check-batch-finality"; then
 	STAKER_ARGS="--node.bold.state-provider-config.check-batch-finality=false"
 fi
 
-start_background /usr/local/bin/anvil \
+start_background anvil /usr/local/bin/anvil \
 	--host 0.0.0.0 \
 	--port 8545 \
 	--block-time "${TESTNODE_L1_BLOCK_TIME:-1}" \
@@ -102,7 +77,7 @@ curl -sf -H 'content-type: application/json' \
 	exit 1
 }
 
-start_background env HOME="$DATA_ROOT/sequencer" /usr/local/bin/nitro \
+start_background sequencer env HOME="$DATA_ROOT/sequencer" /usr/local/bin/nitro \
 	--validation.wasm.allowed-wasm-module-roots "$NITRO_WASM_ROOTS" \
 	--conf.file="$CONFIG_ROOT/l2-nodeConfig.json" \
 	--node.feed.output.enable \
@@ -123,7 +98,7 @@ start_background env HOME="$DATA_ROOT/sequencer" /usr/local/bin/nitro \
 
 start_sequencer_features
 
-start_background env HOME="$DATA_ROOT/validator" /usr/local/bin/nitro \
+start_background validator env HOME="$DATA_ROOT/validator" /usr/local/bin/nitro \
 	--validation.wasm.allowed-wasm-module-roots "$NITRO_WASM_ROOTS" \
 	--conf.file="$CONFIG_ROOT/l2-nodeConfig.json" \
 	--node.sequencer=false \
@@ -160,7 +135,7 @@ if [ "$VARIANT" != "l2" ]; then
 	wait_for_rpc http://127.0.0.1:8547
 	echo "L2 wait done, starting L3 node"
 
-	start_background env HOME="$DATA_ROOT/l3node" /usr/local/bin/nitro \
+	start_background l3 env HOME="$DATA_ROOT/l3node" /usr/local/bin/nitro \
 		--validation.wasm.allowed-wasm-module-roots "$NITRO_WASM_ROOTS" \
 		--conf.file="$CONFIG_ROOT/l3-nodeConfig.json" \
 		--node.dangerous.disable-blob-reader \
@@ -187,6 +162,6 @@ ln -sf /opt/arbitrum-testnode/export-config/l2l3_network.json /tokenbridge-data/
 start_observability
 
 # Serve config files and health endpoint over HTTP for service container consumers
-start_background python3 /usr/local/bin/config-server.py 8080
+start_background config-server python3 /usr/local/bin/config-server.py 8080
 
 monitor_pids

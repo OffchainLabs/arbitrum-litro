@@ -717,7 +717,9 @@ knowing:
 - **A crash fails fast, not at the timeout.** The wait checks the container on
   every pass, so a Nitro that dies during startup reports as
   `container <name> stopped while waiting for <what> (exited exit=N oom=false)`
-  on the next poll rather than at the timeout.
+  on the next poll rather than at the timeout. `N` is the exit status of the
+  process that stopped, and the logs end with a line naming it, such as
+  `testnode: sequencer (pid 42) exited with status 2`.
 - **`startup-timeout-seconds` is one budget for readiness**: the chain RPCs in
   order, then the container healthcheck when Fast Feed or PGA rounds are on.
   Each wait gets what the previous ones left. Pulling the image, starting the
