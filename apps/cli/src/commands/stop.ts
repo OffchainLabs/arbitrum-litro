@@ -24,15 +24,19 @@ function stopInitStack() {
 	composeDown(checkout);
 }
 
-function removeContainers(names: string[]): string[] {
+export function removeContainers(
+	names: string[],
+	removers: Array<(name: string) => void> = [removeMetricsStack, removeContainer],
+): string[] {
 	const failures: string[] = [];
 	for (const name of names) {
 		console.log(`[stop] Removing ${name}...`);
-		try {
-			removeMetricsStack(name);
-			removeContainer(name);
-		} catch (error) {
-			failures.push(`${name}: ${error instanceof Error ? error.message : String(error)}`);
+		for (const remove of removers) {
+			try {
+				remove(name);
+			} catch (error) {
+				failures.push(`${name}: ${error instanceof Error ? error.message : String(error)}`);
+			}
 		}
 	}
 	return failures;
