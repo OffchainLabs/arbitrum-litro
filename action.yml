@@ -68,10 +68,14 @@ inputs:
     required: false
     default: ""
     description: "Optional Docker container name override"
+  config-server-port:
+    required: false
+    default: "8080"
+    description: "Host port to publish the container's config/health server on"
   startup-timeout-seconds:
     required: false
-    default: "120"
-    description: "Maximum time to wait for the testnode RPCs to become ready"
+    default: "360"
+    description: "Seconds to wait for readiness, shared by every chain RPC and, when Fast Feed or PGA is on, the healthcheck"
   network-config-path:
     required: false
     default: ""
@@ -140,6 +144,7 @@ runs:
     - id: resolve
       shell: bash
       env:
+        INPUT_CONFIG_SERVER_PORT: ${{ inputs.config-server-port }}
         INPUT_CONTAINER_NAME: ${{ inputs.container-name }}
         INPUT_FAST_FEED_API_KEY: ${{ inputs.fast-feed-api-key }}
         INPUT_FAST_FEED_AUTH: ${{ inputs.fast-feed-auth }}
@@ -166,13 +171,19 @@ runs:
         ${{ inputs.github-token != '' &&
             startsWith(steps.resolve.outputs.base-image-ref, 'ghcr.io/') }}
       shell: bash
+      # Via env: interpolation would write the secret into the generated script.
+      env:
+        GHCR_TOKEN: ${{ inputs.github-token }}
+        GHCR_USERNAME: ${{ github.actor }}
       run: |
-        echo "${{ inputs.github-token }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+        printf '%s' "$GHCR_TOKEN" | timeout 60 docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
 
     - name: Pull testnode image
       if: ${{ !startsWith(steps.resolve.outputs.base-image-ref, 'local/') }}
       shell: bash
-      run: docker pull "${{ steps.resolve.outputs.base-image-ref }}"
+      env:
+        BASE_IMAGE_REF: ${{ steps.resolve.outputs.base-image-ref }}
+      run: timeout 900 docker pull "$BASE_IMAGE_REF"
 
     # Prunes stale rebased images before building, then builds. Consumes the
     # resolve step's refs so it cannot disagree with it about variant or image.
@@ -193,7 +204,7 @@ runs:
       run: |
         set -euo pipefail
         label() {
-          docker inspect --format '{{json .Config.Labels}}' "$IMAGE_REF" | \
+          timeout 60 docker inspect --format '{{json .Config.Labels}}' "$IMAGE_REF" | \
             jq -r --arg key "$1" '.[$key] // ""'
         }
         echo "bundle-version=$(label io.arbitrum.testnode.bundle.version)" >> "$GITHUB_OUTPUT"
@@ -203,6 +214,7 @@ runs:
     - name: Boot testnode image
       shell: bash
       env:
+        INPUT_CONFIG_SERVER_PORT: ${{ inputs.config-server-port }}
         INPUT_CONTAINER_NAME: ${{ inputs.container-name }}
         INPUT_FAST_FEED_API_KEY: ${{ inputs.fast-feed-api-key }}
         INPUT_FAST_FEED_AUTH: ${{ inputs.fast-feed-auth }}

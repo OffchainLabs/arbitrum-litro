@@ -5,7 +5,9 @@ export {
 	NITRO_CONTRACTS_VERSIONS,
 	copyNetworkConfigPaths,
 	DEFAULT_NITRO_CONTRACTS_VERSION,
+	DEFAULT_STARTUP_TIMEOUT_SECONDS,
 	DEFAULT_TESTNODE_IMAGE_REPOSITORY,
+	isConfigExportFailure,
 	testnodeDockerRunArgs,
 	normalizeNitroContractsVersion,
 	pruneStaleRebasedImages,
@@ -13,10 +15,10 @@ export {
 	rebaseTestnodeImage,
 	resolveVariant,
 	VARIANTS,
-	waitForRpc,
 } from "../../testnode/src/runtime.mjs";
 export {
 	collectContainerDiagnostics,
+	diagnosticLines,
 	removeContainer,
 	runDocker,
 } from "../../testnode/src/containers.mjs";
@@ -30,6 +32,7 @@ export {
  */
 export function actionStateOptionsFromEnv(env) {
 	return {
+		configServerPort: env["INPUT_CONFIG_SERVER_PORT"],
 		containerName: env["INPUT_CONTAINER_NAME"],
 		contractsVersion: env["INPUT_NITRO_CONTRACTS_VERSION"],
 		feeTokenDecimals: env["INPUT_FEE_TOKEN_DECIMALS"],

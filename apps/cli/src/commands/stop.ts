@@ -24,6 +24,20 @@ function stopInitStack() {
 	composeDown(checkout);
 }
 
+function removeContainers(names: string[]): string[] {
+	const failures: string[] = [];
+	for (const name of names) {
+		console.log(`[stop] Removing ${name}...`);
+		try {
+			removeMetricsStack(name);
+			removeContainer(name);
+		} catch (error) {
+			failures.push(`${name}: ${error instanceof Error ? error.message : String(error)}`);
+		}
+	}
+	return failures;
+}
+
 export const stopCli = Cli.create("stop", {
 	description: "Stop the testnode: containers from start, and in a checkout the init stack",
 	options: z.object({
@@ -41,11 +55,7 @@ export const stopCli = Cli.create("stop", {
 		const targets = c.options.container
 			? [selectStartContainer(containers, c.options.container)]
 			: containers;
-		for (const container of targets) {
-			console.log(`[stop] Removing ${container.name}...`);
-			removeMetricsStack(container.name);
-			removeContainer(container.name);
-		}
+		const failures = removeContainers(targets.map((container) => container.name));
 		if (!c.options.container) {
 			// Also stacks whose testnode was removed some other way.
 			removeMetricsStack();
@@ -58,6 +68,9 @@ export const stopCli = Cli.create("stop", {
 			console.log(
 				`[stop] Kept metrics history in ${history.join(", ")} (--forget-history removes it)`,
 			);
+		}
+		if (failures.length > 0) {
+			throw new Error(`could not remove ${failures.join("; ")}`);
 		}
 		console.log("[stop] Done.");
 		return {

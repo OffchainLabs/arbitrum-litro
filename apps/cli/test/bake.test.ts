@@ -42,6 +42,23 @@ describe("runBundleBake", () => {
 		expect(deps.remove).toHaveBeenCalledOnce();
 	});
 
+	it("keeps a finished bake's result when removing its container fails", async () => {
+		const deps = dependencies([]);
+		deps.remove.mockImplementation(() => {
+			throw new Error("docker rm timed out after 60000ms");
+		});
+		const stderr = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		const result = await runBundleBake(
+			{ baseImageRef: "local/base:test", imageRef: "local/custom:test", setupCommand: "true" },
+			deps,
+		);
+
+		expect(result.success).toBe(true);
+		expect(stderr).toHaveBeenCalledWith(expect.stringContaining("docker rm timed out"));
+		stderr.mockRestore();
+	});
+
 	it("pulls the latest composed bundle by default", async () => {
 		const commands: string[][] = [];
 		const deps = dependencies(commands);

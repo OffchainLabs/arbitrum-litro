@@ -1,11 +1,14 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import {
+	DEFAULT_STARTUP_TIMEOUT_SECONDS,
 	actionStateOptionsFromEnv,
 	bootTestnode,
 	buildActionTestnodeState,
 	collectContainerDiagnostics,
 	copyNetworkConfigPaths,
+	diagnosticLines,
+	isConfigExportFailure,
 } from "./lib.mjs";
 
 /** @param {string} message */
@@ -29,7 +32,9 @@ const state = buildActionTestnodeState(actionStateOptionsFromEnv(process.env));
 log(`variant=${state.variant} image=${state.imageRef}`);
 log(`outputDir=${state.outputDir} configDir=${state.configDir}`);
 
-const timeoutSeconds = Number(process.env["INPUT_STARTUP_TIMEOUT_SECONDS"] || "120");
+const timeoutSeconds = Number(
+	process.env["INPUT_STARTUP_TIMEOUT_SECONDS"] || DEFAULT_STARTUP_TIMEOUT_SECONDS,
+);
 if (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0) {
 	throw new Error("startup-timeout-seconds must be a positive number");
 }
@@ -41,15 +46,11 @@ try {
 	log(`exported ${exported.length} entries: ${exported.join(", ")}`);
 } catch (error) {
 	log(`ERROR: ${error instanceof Error ? error.message : String(error)}`);
-	const diagnostics = collectContainerDiagnostics(state.containerName);
-	if (diagnostics.inspect) {
-		log(`container state: ${diagnostics.inspect}`);
-	}
-	if (diagnostics.logs) {
-		log(`container logs:\n${diagnostics.logs}`);
-	}
-	for (const diagnosticError of diagnostics.errors) {
-		log(diagnosticError);
+	const diagnostics = collectContainerDiagnostics(state.containerName, {
+		skipLogs: isConfigExportFailure(error),
+	});
+	for (const line of diagnosticLines(diagnostics)) {
+		log(line);
 	}
 	process.exit(1);
 }

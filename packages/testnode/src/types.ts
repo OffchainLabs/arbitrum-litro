@@ -113,6 +113,8 @@ export interface TestnodeState {
 	 */
 	baseImageRef: string;
 	configDir: string;
+	/** Host port the config/health server (container port 8080) is published on. */
+	configServerPort: number;
 	containerName: string;
 	contractsVersion: string;
 	/** The image to boot. */
@@ -139,6 +141,7 @@ export interface TestnodeState {
 }
 
 export interface BaseStateOptions {
+	configServerPort?: number | string | undefined;
 	containerName?: string | undefined;
 	contractsVersion?: string | undefined;
 	feeTokenDecimals?: number | string | undefined;
@@ -188,8 +191,31 @@ export interface StartContainer {
 	endpoints: Record<string, string>;
 }
 
+export interface ContainerState {
+	running: boolean;
+	status: string;
+	exitCode: number;
+	oomKilled: boolean;
+	/** healthy, unhealthy or starting; empty when the image has no healthcheck */
+	health: string;
+}
+
 export interface ContainerDiagnostics {
 	inspect?: string;
 	logs?: string;
 	errors: string[];
 }
+
+export interface LogCaptureResult {
+	error?: Error | undefined;
+	signal?: NodeJS.Signals | null | undefined;
+	status: number | null;
+	stderr: string | null | undefined;
+	stdout: string | null | undefined;
+}
+
+export type LogCaptureSpawn = (
+	file: string,
+	args: string[],
+	options: Record<string, unknown>,
+) => LogCaptureResult;

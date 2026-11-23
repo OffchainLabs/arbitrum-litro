@@ -7,12 +7,14 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import {
 	START_CONTAINER_LABEL,
+	describeContainerState,
+	dockerErrorText,
 	inspectContainer,
 	removeContainer,
 	runDocker,
 } from "./containers.mjs";
 import { endpointUrl } from "./endpoints.mjs";
-import { toBoolean } from "./inputs.mjs";
+import { toBoolean, toNumber } from "./inputs.mjs";
 import { observabilityDockerArgs, resolveObservabilityOptions } from "./observability.mjs";
 import {
 	needsHealthyContainer,
@@ -45,6 +47,25 @@ export const NITRO_CONTRACTS_VERSIONS = {
 };
 
 export const DEFAULT_NITRO_CONTRACTS_VERSION = "v3.2";
+
+export const DEFAULT_STARTUP_TIMEOUT_SECONDS = 360;
+
+export const DEFAULT_CONFIG_SERVER_PORT = 8080;
+
+const CONTAINER_RUN_TIMEOUT_MS = 120_000;
+const CONFIG_EXPORT_TIMEOUT_MS = 120_000;
+const DOCKER_QUERY_TIMEOUT_MS = 10_000;
+export const IMAGE_PULL_TIMEOUT_MS = 900_000;
+
+const MAX_CONSECUTIVE_INSPECT_FAILURES = 3;
+
+const CONFIG_EXPORT_FAILED = "CONFIG_EXPORT_FAILED";
+
+/** Child progress on fd 2: stdout carries the CLI's result, and in `--mcp` its JSON-RPC stream. */
+const PROGRESS_TO_STDERR = 2;
+
+/** How `docker cp` (and podman) report a path the container never created. */
+const MISSING_IN_CONTAINER = /could not find the file|no such file or directory/i;
 
 /** Relative path, from the project root, of the rebase Dockerfile. */
 const REBASE_DOCKERFILE = join("docker", "testnode-rebase.Dockerfile");
@@ -393,7 +414,8 @@ export function rebaseTestnodeImage(state, options = {}) {
 		options.runner ||
 		((args) => {
 			runDocker(args, {
-				stdio: ["ignore", "inherit", "inherit"],
+				env: daemonBuilderEnv(),
+				stdio: ["ignore", PROGRESS_TO_STDERR, "inherit"],
 				timeout: REBASE_BUILD_TIMEOUT_MS,
 			});
 		});
@@ -581,6 +603,7 @@ function buildStatePaths(configDir, l3Enabled) {
  * @returns {TestnodeState}
  */
 function buildTestnodeState({
+	configServerPort,
 	containerName,
 	contractsVersion,
 	feeTokenDecimals,
@@ -627,6 +650,7 @@ function buildTestnodeState({
 	return {
 		baseImageRef,
 		configDir,
+		configServerPort: resolveConfigServerPort(configServerPort),
 		containerName: resolvedContainerName,
 		contractsVersion: resolvedContractsVersion,
 		imageRef: resolvedNitroImage
@@ -643,6 +667,14 @@ function buildTestnodeState({
 		variant,
 		variantDefinition: definition,
 	};
+}
+
+/** @param {number | string | undefined} port */
+function resolveConfigServerPort(port) {
+	return (
+		toNumber(port, "config-server-port", { integer: true, min: 1, max: 65535 }) ??
+		DEFAULT_CONFIG_SERVER_PORT
+	);
 }
 
 /** @param {ActionStateOptions} options */
@@ -688,7 +720,7 @@ export function testnodeDockerRunArgs(state) {
 		"-p",
 		`127.0.0.1:${hostPorts.l2Ws}:8548`,
 		"-p",
-		"127.0.0.1:8080:8080",
+		`127.0.0.1:${state.configServerPort}:8080`,
 	];
 	if (state.variantDefinition.l3Enabled) {
 		if (hostPorts.l3 === undefined || hostPorts.l3Ws === undefined) {
@@ -712,22 +744,21 @@ export function testnodeDockerRunArgs(state) {
 }
 
 /**
- * Call `check` every 250ms until it returns true or `timeoutMs` passes. An error thrown by
- * `check` ends the wait at once.
- *
- * @param {() => boolean} check
- * @param {number} timeoutMs
- * @param {string} failure
+ * The environment for a build that must run on the current docker context's own builder: a
+ * docker-container buildx driver (setup-buildx-action selects one) cannot see daemon-local images
+ * for FROM, nor load its result into the daemon. Buildx names each context's builder after the
+ * context, and only that builder reaches the daemon `docker run` uses.
  */
-function pollUntil(check, timeoutMs, failure) {
-	const deadline = Date.now() + timeoutMs;
-	while (Date.now() < deadline) {
-		if (check()) {
-			return;
-		}
-		execFileSync("sleep", ["0.25"], { stdio: "ignore" });
+function daemonBuilderEnv() {
+	if (process.env["BUILDX_BUILDER"]) {
+		return process.env;
 	}
-	throw new Error(failure);
+	try {
+		const context = runDocker(["context", "show"], { timeout: DOCKER_QUERY_TIMEOUT_MS }).trim();
+		return { ...process.env, BUILDX_BUILDER: context };
+	} catch {
+		return process.env;
+	}
 }
 
 /** @param {string} url */
@@ -740,57 +771,213 @@ function rpcAnswers(url) {
 			{ stdio: ["ignore", "pipe", "pipe"], timeout: 5000 },
 		);
 		return true;
-	} catch {
+	} catch (error) {
+		// curl's own verdict leaves `code` unset. Any other spawn error but ETIMEDOUT means
+		// probing itself is broken, which no amount of waiting fixes.
+		const code = /** @type {{ code?: string }} */ (error)?.code;
+		if (typeof code === "string" && code !== "ETIMEDOUT") {
+			throw new Error(`cannot probe ${url}: curl failed to run (${code})`);
+		}
 		return false;
 	}
 }
 
-/**
- * @param {string} url
- * @param {number} timeoutMs
- */
-export function waitForRpc(url, timeoutMs) {
-	pollUntil(() => rpcAnswers(url), timeoutMs, `RPC at ${url} not ready after ${timeoutMs}ms`);
+function sleepBriefly() {
+	execFileSync("sleep", ["0.25"], { stdio: "ignore" });
 }
 
 /**
- * Poll `ready` while the container runs. A stopped container can never become ready, so it
- * fails the wait at once instead of at the timeout.
- *
- * @param {string} containerName
- * @param {() => boolean} ready
- * @param {number} timeoutMs
- * @param {string} what what is being waited for, for the error message
+ * @typedef {{
+ *   inspect?: typeof inspectContainer;
+ *   probe?: (url: string) => boolean;
+ *   sleep?: () => void;
+ * }} ReadinessHooks
  */
-function waitForContainer(containerName, ready, timeoutMs, what) {
-	pollUntil(
-		() => {
-			if (ready()) {
-				return true;
+
+/**
+ * In the order the testnode comes up, so each is waited on only once the previous one answers.
+ *
+ * @param {TestnodeState} state
+ * @param {Required<ReadinessHooks>} hooks
+ * @returns {Array<{ what: string; ready: () => boolean }>}
+ */
+function readinessChecks(state, { inspect, probe }) {
+	const rpcs = [state.rpcUrls.l1, state.rpcUrls.l2];
+	if (state.variantDefinition.l3Enabled) {
+		rpcs.push(state.rpcUrls.l3);
+	}
+	const checks = rpcs.map((url) => ({ what: `RPC at ${url}`, ready: () => probe(url) }));
+	if (needsHealthyContainer(state.sequencer)) {
+		checks.push({
+			what: "the container healthcheck",
+			ready: () => {
+				try {
+					return inspect(state.containerName).health === "healthy";
+				} catch {
+					return false;
+				}
+			},
+		});
+	}
+	return checks;
+}
+
+/**
+ * Wait for the testnode to be ready under one deadline shared by every check. A stopped container
+ * fails the wait at once; a failed inspect does not until it fails several times in a row, since
+ * a lost inspect is not evidence the container died.
+ *
+ * @param {TestnodeState} state
+ * @param {number} timeoutMs
+ * @param {ReadinessHooks} [hooks]
+ */
+export function waitForTestnodeReady(state, timeoutMs, hooks = {}) {
+	const resolved = {
+		inspect: hooks.inspect ?? inspectContainer,
+		probe: hooks.probe ?? rpcAnswers,
+		sleep: hooks.sleep ?? sleepBriefly,
+	};
+	const deadline = Date.now() + timeoutMs;
+	const pending = readinessChecks(state, resolved);
+	const assertRunning = livenessCheck(state.containerName, resolved.inspect);
+	for (;;) {
+		while (pending[0]?.ready()) {
+			pending.shift();
+		}
+		const [waiting] = pending;
+		if (!waiting) {
+			return;
+		}
+		// After the probes, so a container that died during them reports as a crash rather than
+		// a timeout, even on the last pass.
+		assertRunning(waiting.what);
+		if (Date.now() >= deadline) {
+			throw new Error(`${waiting.what} not ready after ${timeoutMs}ms`);
+		}
+		resolved.sleep();
+	}
+}
+
+/**
+ * @param {string} containerName
+ * @param {typeof inspectContainer} inspect
+ * @returns {(what: string) => void} throws once the container has stopped, or once inspect has
+ *   failed several times in a row
+ */
+function livenessCheck(containerName, inspect) {
+	let failures = 0;
+	/** @param {string} what */
+	const inspectTolerantly = (what) => {
+		try {
+			const container = inspect(containerName);
+			failures = 0;
+			return container;
+		} catch (error) {
+			failures += 1;
+			if (failures < MAX_CONSECUTIVE_INSPECT_FAILURES) {
+				return undefined;
 			}
-			if (!inspectContainer(containerName).running) {
-				throw new Error(`container ${containerName} stopped while waiting for ${what}`);
-			}
-			return false;
-		},
-		timeoutMs,
-		`${what} not ready after ${timeoutMs}ms`,
-	);
+			const reason = error instanceof Error ? error.message : String(error);
+			throw new Error(
+				`cannot inspect container ${containerName} while waiting for ${what}: ${reason}`,
+				{ cause: error },
+			);
+		}
+	};
+	return (what) => {
+		const container = inspectTolerantly(what);
+		if (container && !container.running) {
+			throw new Error(
+				`container ${containerName} stopped while waiting for ${what} (${describeContainerState(container)})`,
+			);
+		}
+	};
 }
 
 /** @param {TestnodeState} state */
-export function exportTestnodeConfig(state) {
+function copyExportedConfig(state) {
+	runDocker(
+		["cp", `${state.containerName}:/opt/arbitrum-testnode/export-config/.`, state.configDir],
+		{ timeout: CONFIG_EXPORT_TIMEOUT_MS },
+	);
+}
+
+/**
+ * Copy the config the booted container exported. A failure is tagged export-only (see
+ * isConfigExportFailure), which callers take as licence to skip the log dump, only when the
+ * container is still running and produced config: otherwise it is a node failure whose logs are
+ * the whole evidence.
+ *
+ * @param {TestnodeState} state
+ * @param {{ copy?: (state: TestnodeState) => void; inspect?: typeof inspectContainer }} [hooks]
+ * @returns {string[]}
+ */
+export function exportTestnodeConfig(state, hooks = {}) {
+	const { copy = copyExportedConfig, inspect = inspectContainer } = hooks;
 	mkdirSync(state.configDir, { recursive: true });
-	runDocker([
-		"cp",
-		`${state.containerName}:/opt/arbitrum-testnode/export-config/.`,
-		state.configDir,
-	]);
+	try {
+		copy(state);
+	} catch (error) {
+		const text = dockerErrorText(error).trim();
+		if (MISSING_IN_CONTAINER.test(text)) {
+			throw new Error(`config export failed: the container produced no config: ${text}`, {
+				cause: error,
+			});
+		}
+		let running = false;
+		try {
+			running = inspect(state.containerName).running;
+		} catch {
+			// Unknown state keeps the log dump.
+		}
+		if (!running) {
+			throw new Error(`config export failed: ${text}`, { cause: error });
+		}
+		throw Object.assign(
+			new Error(`config export failed after successful boot: ${text}`, { cause: error }),
+			{ code: CONFIG_EXPORT_FAILED },
+		);
+	}
 	const exported = readdirSync(state.configDir);
 	if (exported.length === 0) {
-		throw new Error(`No config files exported to ${state.configDir}`);
+		throw new Error(`config export failed: no config files exported to ${state.configDir}`);
 	}
 	return exported;
+}
+
+/**
+ * The node booted and only copying its config failed.
+ *
+ * @param {unknown} error
+ */
+export function isConfigExportFailure(error) {
+	return /** @type {{ code?: string }} */ (error)?.code === CONFIG_EXPORT_FAILED;
+}
+
+/**
+ * `docker run` pulls an absent image itself, but inside its own timeout and with the progress
+ * hidden, so a cold pull reads as a hung boot. Absent-only, as `docker run` would: a mutable tag
+ * keeps booting the image already on the host, and a cached image still boots offline.
+ *
+ * @param {TestnodeState} state
+ * @param {(args: string[], options?: import("node:child_process").ExecFileSyncOptions) => string} [run]
+ */
+export function pullMissingImage(state, run = runDocker) {
+	if (state.imageRef.startsWith("local/")) {
+		return;
+	}
+	try {
+		run(["image", "inspect", "--format", "{{.Id}}", state.imageRef], {
+			timeout: DOCKER_QUERY_TIMEOUT_MS,
+		});
+		return;
+	} catch {
+		// Any other inspect failure is a daemon problem, which the pull then reports itself.
+	}
+	run(["pull", state.imageRef], {
+		stdio: ["ignore", PROGRESS_TO_STDERR, "inherit"],
+		timeout: IMAGE_PULL_TIMEOUT_MS,
+	});
 }
 
 /**
@@ -801,22 +988,9 @@ export function bootTestnode(state, timeoutMs) {
 	removeContainer(state.containerName);
 	rmSync(state.outputDir, { force: true, recursive: true });
 	mkdirSync(state.outputDir, { recursive: true });
-	runDocker(testnodeDockerRunArgs(state));
-	const rpcs = [state.rpcUrls.l1, state.rpcUrls.l2];
-	if (state.variantDefinition.l3Enabled) {
-		rpcs.push(state.rpcUrls.l3);
-	}
-	for (const url of rpcs) {
-		waitForContainer(state.containerName, () => rpcAnswers(url), timeoutMs, `RPC at ${url}`);
-	}
-	if (needsHealthyContainer(state.sequencer)) {
-		waitForContainer(
-			state.containerName,
-			() => inspectContainer(state.containerName).health === "healthy",
-			timeoutMs,
-			"the container healthcheck",
-		);
-	}
+	pullMissingImage(state);
+	runDocker(testnodeDockerRunArgs(state), { timeout: CONTAINER_RUN_TIMEOUT_MS });
+	waitForTestnodeReady(state, timeoutMs);
 	return exportTestnodeConfig(state);
 }
 
