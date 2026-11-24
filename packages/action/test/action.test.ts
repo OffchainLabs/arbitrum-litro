@@ -38,6 +38,18 @@ describe("action metadata", () => {
 		expect(action).toContain("packages/action/src/rebase.mjs");
 	});
 
+	it("declares every input its steps reference", () => {
+		// An undeclared `inputs.x` renders empty rather than failing, so the
+		// input silently does nothing.
+		const declared = new Set(
+			[...inputs.matchAll(/^ {2}([a-z0-9-]+):$/gm)].map((match) => match[1]),
+		);
+		const referenced = new Set(
+			[...action.matchAll(/\binputs\.([a-z0-9-]+)/g)].map((match) => match[1]),
+		);
+		expect([...referenced].filter((name) => !declared.has(name))).toEqual([]);
+	});
+
 	it("re-exports the outputs the CI validation steps consume", () => {
 		// A composite action only surfaces what its outputs block re-exports;
 		// a step output alone expands to "" in consumers.
@@ -65,6 +77,19 @@ describe("action metadata", () => {
 		// The run step may carry boot-only extras on top of the shared set.
 		const bootOnly = ["INPUT_NETWORK_CONFIG_PATH", "INPUT_STARTUP_TIMEOUT_SECONDS"];
 		expect(inputKeys("run.mjs")).toEqual([...resolveKeys, ...bootOnly].sort());
+	});
+
+	it("reads every INPUT_* its steps hand to a script", () => {
+		// An env key no script reads is an input that silently does nothing.
+		const sharedReader = readFileSync("packages/action/src/lib.mjs", "utf-8");
+		for (const script of ["resolve.mjs", "run.mjs", "rebase.mjs"]) {
+			const own = readFileSync(`packages/action/src/${script}`, "utf-8");
+			const source = own.includes("actionStateOptionsFromEnv") ? own + sharedReader : own;
+			expect(
+				inputKeys(script).filter((key) => !source.includes(key)),
+				`${script} never reads`,
+			).toEqual([]);
+		}
 	});
 
 	it("builds the rebase from resolve's refs rather than re-deriving state", () => {

@@ -1,9 +1,19 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { DEFAULT_FAST_FEED_API_KEY, DEFAULT_TESTNODE_IMAGE_REPOSITORY } from "@arbitrum/testnode";
+import {
+	DEFAULT_FAST_FEED_API_KEY,
+	DEFAULT_STARTUP_TIMEOUT_SECONDS,
+	DEFAULT_TESTNODE_IMAGE_REPOSITORY,
+	exportTestnodeConfig,
+} from "@arbitrum/testnode";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_START_IMAGE_VERSION, resolveStartInput, runStart } from "../src/commands/start.js";
+import {
+	DEFAULT_START_IMAGE_VERSION,
+	resolveStartInput,
+	runStart,
+	startFailureMessage,
+} from "../src/commands/start.js";
 
 describe("resolveStartInput", () => {
 	it("uses start defaults without a config file", () => {
@@ -14,7 +24,7 @@ describe("resolveStartInput", () => {
 		expect(resolved.configPath).toBeUndefined();
 		expect(resolved.l3Enabled).toBe(true);
 		expect(resolved.timeboostEnabled).toBe(false);
-		expect(resolved.startupTimeoutSeconds).toBe(120);
+		expect(resolved.startupTimeoutSeconds).toBe(DEFAULT_STARTUP_TIMEOUT_SECONDS);
 		expect(resolved.networkConfigPaths).toEqual([]);
 		expect(resolved.version).toBe(DEFAULT_START_IMAGE_VERSION);
 	});
@@ -154,6 +164,100 @@ describe("runStart", () => {
 		vi.restoreAllMocks();
 	});
 
+	const l2Input = (cwd: string) => ({
+		configPath: undefined,
+		configServerPort: undefined,
+		containerName: undefined,
+		cwd,
+		feeTokenDecimals: undefined,
+		imageRef: undefined,
+		imageRepository: undefined,
+		l3Enabled: false,
+		networkConfigPaths: [],
+		nitroContractsVersion: undefined,
+		nitroImage: undefined,
+		outputDir: undefined,
+		observability: {},
+		sequencer: {},
+		startupTimeoutSeconds: 120,
+		timeboostEnabled: false,
+		version: "v1.2.3",
+	});
+	const failingBoot = (error: Error) => ({
+		bootTestnode: vi.fn((): string[] => {
+			throw error;
+		}),
+		collectContainerDiagnostics: vi.fn(() => ({ errors: [], inspect: "running exit=0 oom=false" })),
+		copyNetworkConfigPaths: vi.fn(),
+		pruneStaleRebasedImages: vi.fn(),
+		rebaseTestnodeImage: vi.fn(),
+	});
+
+	it("skips only the log dump when the config export failed on a healthy node", () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "start-run-export-fail-"));
+		const deps = failingBoot(new Error("unused"));
+		deps.bootTestnode.mockImplementation(() =>
+			exportTestnodeConfig({ configDir: cwd, containerName: "arbitrum-testnode-l2" } as never, {
+				copy: () => {
+					throw Object.assign(new Error("Command failed: docker cp"), { stderr: "cp denied" });
+				},
+				inspect: () => ({
+					running: true,
+					status: "running",
+					exitCode: 0,
+					oomKilled: false,
+					health: "",
+				}),
+			}),
+		);
+
+		const result = runStart(l2Input(cwd), deps);
+
+		expect(deps.collectContainerDiagnostics).toHaveBeenCalledWith("arbitrum-testnode-l2", {
+			skipLogs: true,
+		});
+		expect(result).toMatchObject({
+			success: false,
+			diagnostics: { inspect: "running exit=0 oom=false" },
+		});
+	});
+
+	it("passes the config server port through to the boot", () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "start-run-port-"));
+		const deps = failingBoot(new Error("stop here"));
+
+		runStart({ ...l2Input(cwd), configServerPort: 9091 }, deps);
+
+		expect(deps.bootTestnode).toHaveBeenCalledWith(
+			expect.objectContaining({ configServerPort: 9091 }),
+			120_000,
+		);
+	});
+
+	it("carries the diagnostics in the failure message, caveats before logs", () => {
+		expect(
+			startFailureMessage({
+				success: false,
+				error: "container stopped",
+				diagnostics: { inspect: "exited exit=2 oom=false", errors: ["truncated"], logs: "panic" },
+			}),
+		).toBe(
+			"container stopped\ncontainer state: exited exit=2 oom=false\ntruncated\ncontainer logs:\npanic",
+		);
+		expect(startFailureMessage({ success: false, error: "rebase failed" })).toBe("rebase failed");
+	});
+
+	it("keeps the log dump for any other boot failure", () => {
+		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "start-run-boot-fail-"));
+		const deps = failingBoot(new Error("container arbitrum-testnode-l2 stopped while waiting"));
+
+		runStart(l2Input(cwd), deps);
+
+		expect(deps.collectContainerDiagnostics).toHaveBeenCalledWith("arbitrum-testnode-l2", {
+			skipLogs: false,
+		});
+	});
+
 	it("boots the testnode image and copies localNetwork.json to requested paths", () => {
 		const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "start-run-"));
 		const bootTestnode = vi.fn(() => ["localNetwork.json", "l1l2_network.json"]);
@@ -163,6 +267,7 @@ describe("runStart", () => {
 		const result = runStart(
 			{
 				configPath: undefined,
+				configServerPort: undefined,
 				containerName: undefined,
 				cwd,
 				feeTokenDecimals: undefined,
@@ -228,6 +333,7 @@ describe("runStart", () => {
 		const result = runStart(
 			{
 				configPath: undefined,
+				configServerPort: undefined,
 				containerName: undefined,
 				cwd,
 				feeTokenDecimals: undefined,
@@ -280,6 +386,7 @@ describe("runStart", () => {
 		const result = runStart(
 			{
 				configPath: undefined,
+				configServerPort: undefined,
 				containerName: undefined,
 				cwd,
 				feeTokenDecimals: undefined,
@@ -321,6 +428,7 @@ describe("runStart", () => {
 		const result = runStart(
 			{
 				configPath: undefined,
+				configServerPort: undefined,
 				containerName: undefined,
 				cwd,
 				feeTokenDecimals: undefined,
@@ -387,7 +495,10 @@ describe("runStart", () => {
 			l2MaxBlockSpeed: undefined,
 			pgaRoundsPerBlock: 2,
 		};
-		expect(bootTestnode).toHaveBeenCalledWith(expect.objectContaining({ sequencer }), 120_000);
+		expect(bootTestnode).toHaveBeenCalledWith(
+			expect.objectContaining({ sequencer }),
+			DEFAULT_STARTUP_TIMEOUT_SECONDS * 1000,
+		);
 		expect(result).toEqual(expect.objectContaining({ sequencer, success: true }));
 	});
 
@@ -420,6 +531,7 @@ describe("runStart", () => {
 		expect(() =>
 			runStart({
 				configPath: undefined,
+				configServerPort: undefined,
 				containerName: undefined,
 				cwd: "/tmp/project",
 				feeTokenDecimals: undefined,

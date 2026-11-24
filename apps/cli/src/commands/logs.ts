@@ -32,10 +32,12 @@ export const logsCli = Cli.create("logs", {
 		const run = initRun(c.options.container);
 		if (!run) {
 			const container = selectStartContainer(listStartContainers(), c.options.container);
+			const { logs, notes } = readContainerLogs(container.name, tail);
 			return {
 				success: true,
 				container: container.name,
-				lines: readContainerLogs(container.name, tail),
+				lines: logs,
+				...(notes.length > 0 ? { notes } : {}),
 			};
 		}
 

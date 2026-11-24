@@ -41,8 +41,8 @@ inputs:
     description: "Custom L3 fee-token decimals (6, 16, 18, or 20)"
   startup-timeout-seconds:
     required: false
-    default: "300"
-    description: "Maximum time to wait for the published bundle to start"
+    default: ""
+    description: "Seconds to wait for the bundle to become ready, shared by every chain RPC; empty uses the CLI default (360)"
   github-token:
     required: false
     default: ""
@@ -97,8 +97,10 @@ runs:
           --image-ref "$OUTPUT_IMAGE_REF"
           --image-repository "$BASE_IMAGE_REPOSITORY"
           --image-version "$BASE_IMAGE_VERSION"
-          --startup-timeout-seconds "$STARTUP_TIMEOUT_SECONDS"
         )
+        if [ -n "$STARTUP_TIMEOUT_SECONDS" ]; then
+          args+=(--startup-timeout-seconds "$STARTUP_TIMEOUT_SECONDS")
+        fi
         if [ -n "$BASE_IMAGE_REF" ]; then
           args+=(--base-image-ref "$BASE_IMAGE_REF")
         fi

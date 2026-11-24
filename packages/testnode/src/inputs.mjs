@@ -17,7 +17,7 @@ export function toBoolean(value, defaultValue = false) {
 /**
  * @param {number | string | undefined} value
  * @param {string} name option name, for the error message
- * @param {{ integer?: boolean; min: number }} rule
+ * @param {{ integer?: boolean; min: number; max?: number }} rule
  * @returns {number | undefined}
  */
 export function toNumber(value, name, rule) {
@@ -25,11 +25,17 @@ export function toNumber(value, name, rule) {
 		return undefined;
 	}
 	const number = Number(value);
+	const { integer, min, max = Number.POSITIVE_INFINITY } = rule;
 	const valid =
-		Number.isFinite(number) && number >= rule.min && (!rule.integer || Number.isInteger(number));
+		Number.isFinite(number) &&
+		number >= min &&
+		number <= max &&
+		(!integer || Number.isInteger(number));
 	if (!valid) {
+		const range =
+			max === Number.POSITIVE_INFINITY ? `of at least ${min}` : `between ${min} and ${max}`;
 		throw new Error(
-			`${name} must be ${rule.integer ? "an integer" : "a number"} of at least ${rule.min}, got ${value}`,
+			`${name} must be ${integer ? "an integer" : "a number"} ${range}, got ${value}`,
 		);
 	}
 	return number;

@@ -70,6 +70,7 @@ COPY --from=foundry /usr/local/bin/cast /opt/arbitrum-testnode/bin/cast
 COPY docker/fast-feed-relay.mjs /opt/arbitrum-testnode/bin/fast-feed-relay.mjs
 COPY --chmod=755 docker/configure-pga.sh /opt/arbitrum-testnode/bin/configure-pga.sh
 COPY docker/configure-sequencer.mjs /opt/arbitrum-testnode/bin/configure-sequencer.mjs
+COPY docker/processes.sh /opt/arbitrum-testnode/bin/processes.sh
 COPY docker/sequencer-features.sh /opt/arbitrum-testnode/bin/sequencer-features.sh
 COPY docker/observability.sh /opt/arbitrum-testnode/bin/observability.sh
 COPY docker/chain-exporter.mjs /opt/arbitrum-testnode/bin/chain-exporter.mjs

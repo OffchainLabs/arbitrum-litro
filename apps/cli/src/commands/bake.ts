@@ -1,9 +1,12 @@
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import {
+	DEFAULT_STARTUP_TIMEOUT_SECONDS,
+	IMAGE_PULL_TIMEOUT_MS,
 	bootTestnode,
 	buildStartTestnodeState,
 	collectContainerDiagnostics,
+	diagnosticLines,
 	removeContainer,
 	runDocker,
 } from "@arbitrum/testnode";
@@ -90,7 +93,7 @@ function resolveBundleState(options: BundleBakeOptions) {
 
 function pullBundle(imageRef: string, deps: BundleBakeDependencies): void {
 	if (!imageRef.startsWith("local/")) {
-		deps.runDocker(["pull", imageRef], { stdio: "inherit" });
+		deps.runDocker(["pull", imageRef], { stdio: "inherit", timeout: IMAGE_PULL_TIMEOUT_MS });
 	}
 }
 
@@ -114,12 +117,19 @@ function commitBundle(
 }
 
 function logBakeDiagnostics(containerName: string): void {
-	const diagnostics = collectContainerDiagnostics(containerName);
-	if (diagnostics.inspect) {
-		console.error(`[bake] container: ${diagnostics.inspect}`);
+	for (const line of diagnosticLines(collectContainerDiagnostics(containerName))) {
+		console.error(`[bake] ${line}`);
 	}
-	if (diagnostics.logs) {
-		console.error(`[bake] logs:\n${diagnostics.logs}`);
+}
+
+// Throwing from the caller's `finally` would replace the error that is the bake's real outcome.
+function removeQuietly(containerName: string, deps: BundleBakeDependencies): void {
+	try {
+		deps.remove(containerName);
+	} catch (error) {
+		console.error(
+			`[bake] could not remove ${containerName}: ${error instanceof Error ? error.message : String(error)}`,
+		);
 	}
 }
 
@@ -134,7 +144,7 @@ export async function runBundleBake(
 	deps: BundleBakeDependencies = defaultDependencies,
 ) {
 	const state = resolveBundleState(options);
-	const timeoutMs = (options.startupTimeoutSeconds ?? 300) * 1000;
+	const timeoutMs = (options.startupTimeoutSeconds ?? DEFAULT_STARTUP_TIMEOUT_SECONDS) * 1000;
 
 	try {
 		pullBundle(state.imageRef, deps);
@@ -172,7 +182,7 @@ export async function runBundleBake(
 		logBakeDiagnostics(state.containerName);
 		throw error;
 	} finally {
-		deps.remove(state.containerName);
+		removeQuietly(state.containerName, deps);
 	}
 }
 
@@ -192,7 +202,12 @@ export const bakeCli = Cli.create("bake", {
 		push: z.boolean().optional().describe("Push the customized image"),
 		setupCommand: z.string().describe("Shell command run against the booted bundle"),
 		setupWorkingDirectory: z.string().optional().describe("Setup command working directory"),
-		startupTimeoutSeconds: z.number().optional().describe("Bundle startup timeout (default: 300)"),
+		startupTimeoutSeconds: z
+			.number()
+			.optional()
+			.describe(
+				`Seconds to wait for the bundle to become ready, shared by every RPC (default: ${DEFAULT_STARTUP_TIMEOUT_SECONDS})`,
+			),
 		timeboostEnabled: z.boolean().optional().describe("Use the L2 Timeboost bundle"),
 	}),
 	async run(c) {

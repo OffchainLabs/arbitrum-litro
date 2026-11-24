@@ -2,13 +2,16 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import {
 	type ContainerDiagnostics,
+	DEFAULT_STARTUP_TIMEOUT_SECONDS,
 	type ObservabilityOptions,
 	type SequencerOptions,
 	bootTestnode,
 	buildStartTestnodeState,
 	collectContainerDiagnostics,
 	copyNetworkConfigPaths,
+	diagnosticLines,
 	findAsset,
+	isConfigExportFailure,
 	observabilityEndpoints,
 	pruneStaleRebasedImages,
 	rebaseTestnodeImage,
@@ -100,6 +103,7 @@ function mergeObservabilityFlags(
 const startFileSchema = z.object({
 	...sequencerFlags.shape,
 	...observabilityFlags.shape,
+	configServerPort: z.number().optional(),
 	containerName: z.string().optional(),
 	feeTokenDecimals: z.number().optional(),
 	imageRef: z.string().optional(),
@@ -118,6 +122,7 @@ type StartFileConfig = z.infer<typeof startFileSchema>;
 
 interface StartResolvedInput {
 	configPath: string | undefined;
+	configServerPort: number | undefined;
 	containerName: string | undefined;
 	cwd: string;
 	feeTokenDecimals: number | undefined;
@@ -244,10 +249,25 @@ function resolveMergedNetworkConfigPaths(params: {
 	return resolveNetworkConfigPaths(params.configDir, params.fileValue);
 }
 
+function mergeDefaultedOptions(
+	options: Pick<StartFileConfig, "l3Enabled" | "startupTimeoutSeconds" | "timeboostEnabled">,
+	file: StartFileConfig,
+) {
+	return {
+		l3Enabled: options.l3Enabled ?? file.l3Enabled ?? true,
+		startupTimeoutSeconds:
+			options.startupTimeoutSeconds ??
+			file.startupTimeoutSeconds ??
+			DEFAULT_STARTUP_TIMEOUT_SECONDS,
+		timeboostEnabled: options.timeboostEnabled ?? file.timeboostEnabled ?? false,
+	};
+}
+
 export function resolveStartInput(
 	options: SequencerFlags &
 		ObservabilityFlags & {
 			config?: string | undefined;
+			configServerPort?: number | undefined;
 			containerName?: string | undefined;
 			feeTokenDecimals?: number | undefined;
 			imageRef?: string | undefined;
@@ -268,12 +288,12 @@ export function resolveStartInput(
 
 	return {
 		configPath: resolvedConfigPath,
+		configServerPort: options.configServerPort ?? fileConfig.configServerPort,
 		containerName: options.containerName ?? fileConfig.containerName,
 		cwd,
 		feeTokenDecimals: options.feeTokenDecimals ?? fileConfig.feeTokenDecimals,
 		imageRef: options.imageRef ?? fileConfig.imageRef,
 		imageRepository: options.imageRepository ?? fileConfig.imageRepository,
-		l3Enabled: options.l3Enabled ?? fileConfig.l3Enabled ?? true,
 		networkConfigPaths: resolveMergedNetworkConfigPaths({
 			configDir,
 			cwd,
@@ -290,8 +310,7 @@ export function resolveStartInput(
 		}),
 		observability: mergeObservabilityFlags(options, fileConfig),
 		sequencer: mergeSequencerFlags(options, fileConfig),
-		startupTimeoutSeconds: options.startupTimeoutSeconds ?? fileConfig.startupTimeoutSeconds ?? 120,
-		timeboostEnabled: options.timeboostEnabled ?? fileConfig.timeboostEnabled ?? false,
+		...mergeDefaultedOptions(options, fileConfig),
 		version: resolveStartVersion(options.imageVersion, fileConfig.version),
 	};
 }
@@ -343,6 +362,7 @@ export function runStart(
 	}
 
 	const state = buildStartTestnodeState({
+		configServerPort: input.configServerPort,
 		containerName: input.containerName,
 		contractsVersion: input.nitroContractsVersion,
 		cwd: input.cwd,
@@ -370,7 +390,9 @@ export function runStart(
 		return {
 			success: false as const,
 			error: error instanceof Error ? error.message : String(error),
-			diagnostics: deps.collectContainerDiagnostics(state.containerName),
+			diagnostics: deps.collectContainerDiagnostics(state.containerName, {
+				skipLogs: isConfigExportFailure(error),
+			}),
 		};
 	}
 	if (input.networkConfigPaths.length > 0) {
@@ -399,12 +421,24 @@ export function runStart(
 	};
 }
 
+// In the message, not on stderr: an `--mcp` caller receives only the thrown error's message.
+export function startFailureMessage({
+	error,
+	diagnostics,
+}: Extract<StartResult, { success: false }>): string {
+	return [error, ...(diagnostics ? diagnosticLines(diagnostics) : [])].join("\n");
+}
+
 export const startCli = Cli.create("start", {
 	description: "Boot the published testnode image from config with one command",
 	options: z.object({
 		...sequencerFlags.shape,
 		...observabilityFlags.shape,
 		config: z.string().optional().describe("Path to a start JSON config file"),
+		configServerPort: z
+			.number()
+			.optional()
+			.describe("Host port for the container's config and health server (default 8080)"),
 		containerName: z.string().optional().describe("Optional Docker container name override"),
 		feeTokenDecimals: z
 			.number()
@@ -438,7 +472,9 @@ export const startCli = Cli.create("start", {
 		startupTimeoutSeconds: z
 			.number()
 			.optional()
-			.describe("Maximum time to wait for the testnode RPCs to become ready"),
+			.describe(
+				`Seconds to wait for the testnode to become ready, shared by every RPC and, when needed, the healthcheck (default ${DEFAULT_STARTUP_TIMEOUT_SECONDS})`,
+			),
 		timeboostEnabled: z
 			.boolean()
 			.optional()
@@ -449,24 +485,19 @@ export const startCli = Cli.create("start", {
 			.describe("Pinned release version used to resolve the testnode image tag"),
 	}),
 	async run(c) {
-		try {
-			const input = resolveStartInput(c.options);
-			const result = runStart(input);
-			if (!result.success || !result.observability.metrics) {
-				return result;
-			}
-			const stack = await startMetricsStack({
-				containerName: result.containerName,
-				observability: result.observability,
-				targets: result.scrapeTargets,
-				dashboardsDir: findAsset("metrics/dashboards"),
-			});
-			return { ...result, metrics: stack };
-		} catch (error) {
-			return {
-				success: false as const,
-				error: error instanceof Error ? error.message : String(error),
-			};
+		const result = runStart(resolveStartInput(c.options));
+		if (!result.success) {
+			throw new Error(startFailureMessage(result));
 		}
+		if (!result.observability.metrics) {
+			return result;
+		}
+		const stack = await startMetricsStack({
+			containerName: result.containerName,
+			observability: result.observability,
+			targets: result.scrapeTargets,
+			dashboardsDir: findAsset("metrics/dashboards"),
+		});
+		return { ...result, metrics: stack };
 	},
 });

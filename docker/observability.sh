@@ -18,6 +18,6 @@ nitro_observability_args() {
 
 start_observability() {
 	if [ "${TESTNODE_METRICS:-}" = "true" ]; then
-		start_background node "$TESTNODE_BIN/chain-exporter.mjs"
+		start_background chain-exporter node "$TESTNODE_BIN/chain-exporter.mjs"
 	fi
 }

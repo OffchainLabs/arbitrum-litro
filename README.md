@@ -66,8 +66,9 @@ Optional config fields:
 | `nitroContractsVersion` | `v3.2` | Nitro contracts version tag component |
 | `imageRepository` | `ghcr.io/offchainlabs/arbitrum-litro` | testnode image repository |
 | `containerName` | `arbitrum-testnode-<variant>` | Docker container name override |
+| `configServerPort` | `8080` | Host port for the container's config/health server |
 | `outputDir` | `./.arbitrum-testnode/<version>/<variant>` | Export directory for config files |
-| `startupTimeoutSeconds` | `120` | RPC readiness timeout |
+| `startupTimeoutSeconds` | `360` | One readiness budget shared by every chain RPC and, when needed, the healthcheck |
 | `timeboostEnabled` | `false` | Use the L2 Timeboost image variant and enable Timeboost sequencer args plus the `timeboost,auctioneer` HTTP APIs |
 | `fastFeedEnabled` | `false` | Serve the [Fast Feed](#fast-feed) on `ws://127.0.0.1:9646/` and the sequencer feed on `ws://127.0.0.1:9642/feed` |
 | `fastFeedApiKey` | `litro-fast-feed-dev-key` | API key the Fast Feed accepts as `Authorization: Bearer <key>` |
@@ -85,6 +86,7 @@ Start exports config under `outputDir/config` and boots these host RPCs:
 | L1 | `http://127.0.0.1:8545` |
 | L2 | `http://127.0.0.1:8547` |
 | L3 | `http://127.0.0.1:3347` |
+| Config server / health | `http://127.0.0.1:8080` (override with `configServerPort` / `config-server-port` if 8080 is busy) |
 
 ### Docker image configuration
 
@@ -318,11 +320,16 @@ The Nitro image you supply must provide `/usr/local/bin/nitro`, a `user` account
 `offchainlabs/nitro-node` images and Nitro's own `nitro-node-dev` target all
 satisfy this.
 
-Two caveats worth knowing:
+Three caveats worth knowing:
 
 - **Rebasing adds a build step.** The rebase is a thin, cached-friendly image
   build on top of two existing images, but it is not free the way a plain snapshot
   restore is.
+- **The rebase builds on the daemon's own builder.** A `docker-container` buildx
+  driver (such as `docker/setup-buildx-action` selects) cannot see daemon-local
+  images like `nitro-node-dev:latest` and would not load its result into the
+  daemon, so the rebase defaults `BUILDX_BUILDER` to the current docker
+  context's own builder. Set `BUILDX_BUILDER` yourself to override.
 - **It is a startup and compatibility check, not a proving check.** The snapshot's
   chain data and the `wasmModuleRoot` recorded on-chain come from the Nitro that
   produced the snapshot. The stack boots with the block validator disabled, so a
@@ -688,7 +695,8 @@ Derived from the official nitro-testnode mnemonic. All accounts are pre-funded o
 | `nitro-contracts-version` | No | `v3.2` | Nitro contracts version tag component |
 | `output-dir` | No | — | Directory where exported config files should be written |
 | `container-name` | No | — | Docker container name override |
-| `startup-timeout-seconds` | No | `120` | Max wait time for RPC readiness |
+| `config-server-port` | No | `8080` | Host port for the container's config/health server |
+| `startup-timeout-seconds` | No | `360` | One readiness budget shared by every chain RPC and, when needed, the healthcheck |
 | `timeboost-enabled` | No | `false` | Use the L2 Timeboost image variant and enable Timeboost sequencer args plus the `timeboost,auctioneer` HTTP APIs |
 | `network-config-path` | No | — | Comma-separated path(s) to overwrite with exported `localNetwork.json` |
 | `fast-feed-enabled` | No | `false` | Serve the [Fast Feed](#fast-feed) on `ws://127.0.0.1:9646/` and the sequencer feed on 9642 |
@@ -697,6 +705,33 @@ Derived from the official nitro-testnode mnemonic. All accounts are pre-funded o
 | `fast-feed-delay-ms` | No | `0` | One-way delay added to every Fast Feed frame |
 | `pga-rounds-per-block` | No | — | Enable PGA ordering on L2 with this many rounds per block (see [Fast Feed](#fast-feed)) |
 | `l2-max-block-speed` | No | — | L2 sequencer `max-block-speed` as a Go duration, e.g. `250ms` |
+
+### How a failed boot reports
+
+The step (and `litro start`) exits 1 on any boot failure and prints the
+container's state, any caveats about the log capture, then a filtered tail of
+its logs, stdout and stderr merged. `litro start` carries all of it in its
+error message, so an `--mcp` caller sees it too. Three behaviors are worth
+knowing:
+
+- **A crash fails fast, not at the timeout.** The wait checks the container on
+  every pass, so a Nitro that dies during startup reports as
+  `container <name> stopped while waiting for <what> (exited exit=N oom=false)`
+  on the next poll rather than at the timeout. `N` is the exit status of the
+  process that stopped, and the logs end with a line naming it, such as
+  `testnode: sequencer (pid 42) exited with status 2`.
+- **`startup-timeout-seconds` is one budget for readiness**: the chain RPCs in
+  order, then the container healthcheck when Fast Feed or PGA rounds are on.
+  Each wait gets what the previous ones left. Pulling the image, starting the
+  container and exporting config have their own limits. A timeout says why the
+  last attempt failed, for example
+  `RPC at http://127.0.0.1:8547 not ready after 360000ms; last attempt: curl: (7) Failed to connect …`.
+- **A config-export failure still fails the step, even though the node is
+  healthy.** The error says `config export failed after successful boot` and the
+  container's logs are deliberately not dumped; the container state is still
+  printed, and it is what corroborates that the node was healthy. An export
+  failure against a *stopped* container, or one that produced no config at all,
+  keeps its full log dump.
 
 ## Action Outputs
 
